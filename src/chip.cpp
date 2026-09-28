@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -624,6 +625,7 @@ double sanafe::SpikingChip::get_power() const noexcept
 void sanafe::SpikingChip::process_neurons(Timestep &ts)
 {
     auto core_list = cores();
+    std::vector<std::exception_ptr> core_errors(core_list.size());
 
     // Older versions of OpenMP don't support range-based for loops yet...
 #ifdef HAVE_OPENMP
@@ -632,24 +634,40 @@ void sanafe::SpikingChip::process_neurons(Timestep &ts)
     // NOLINTNEXTLINE(modernize-loop-convert)
     for (int idx = 0; idx < static_cast<int>(core_list.size()); idx++)
     {
-        Core &core = core_list.at(idx);
-        for (MappedNeuron &n : core.neurons)
+        try
         {
-            process_neuron(ts, n);
-        }
+            Core &core = core_list.at(idx);
+            for (MappedNeuron &n : core.neurons)
+            {
+                process_neuron(ts, n);
+            }
 
-        // Account for any remaining neuron processing
-        const bool placeholder_event =
-                (core.next_message_generation_delay != 0.0);
-        if (placeholder_event)
+            // Account for any remaining neuron processing
+            const bool placeholder_event =
+                    (core.next_message_generation_delay != 0.0);
+            if (placeholder_event)
+            {
+                const MappedNeuron &last_neuron = core.neurons.back();
+                Message placeholder =
+                        Message(placeholder_mid, *this, last_neuron, ts.timestep);
+                placeholder.generation_delay = core.next_message_generation_delay;
+                // Create a dummy placeholder message
+                auto &message_queue = ts.messages;
+                message_queue.at(core.id).push_back(std::move(placeholder));
+            }
+        }
+        catch (...)
         {
-            const MappedNeuron &last_neuron = core.neurons.back();
-            Message placeholder =
-                    Message(placeholder_mid, *this, last_neuron, ts.timestep);
-            placeholder.generation_delay = core.next_message_generation_delay;
-            // Create a dummy placeholder message
-            auto &message_queue = ts.messages;
-            message_queue.at(core.id).push_back(std::move(placeholder));
+            // Exceptions cannot leave an OpenMP worker region.
+            core_errors.at(idx) = std::current_exception();
+        }
+    }
+    // The parallel loop's implicit barrier makes all captured errors visible.
+    for (const auto &error : core_errors)
+    {
+        if (error)
+        {
+            std::rethrow_exception(error);
         }
     }
 }
@@ -672,6 +690,7 @@ void sanafe::SpikingChip::process_messages(Timestep &ts)
 
     // Now process all messages at receiving cores
     auto core_list = cores();
+    std::vector<std::exception_ptr> core_errors(core_list.size());
     // Older versions of OpenMP don't support range-based for loops yet
 #ifdef HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -679,16 +698,32 @@ void sanafe::SpikingChip::process_messages(Timestep &ts)
     // NOLINTNEXTLINE(modernize-loop-convert)
     for (int idx = 0; idx < static_cast<int>(core_list.size()); idx++)
     {
-        Core &core = core_list.at(idx);
-#ifdef HAVE_OPENMP
-        TRACE3(CHIP, "omp thread:%d\n", omp_get_thread_num());
-#endif
-        TRACE1(CHIP, "Processing %zu message(s) for cid:%zu\n",
-                core.messages_in.size(), core.id);
-        for (auto &m_ref : core.messages_in)
+        try
         {
-            Message &m = m_ref;
-            m.processing_delay += process_message(ts, core, m);
+            Core &core = core_list.at(idx);
+#ifdef HAVE_OPENMP
+            TRACE3(CHIP, "omp thread:%d\n", omp_get_thread_num());
+#endif
+            TRACE1(CHIP, "Processing %zu message(s) for cid:%zu\n",
+                    core.messages_in.size(), core.id);
+            for (auto &m_ref : core.messages_in)
+            {
+                Message &m = m_ref;
+                m.processing_delay += process_message(ts, core, m);
+            }
+        }
+        catch (...)
+        {
+            // Exceptions cannot leave an OpenMP worker region.
+            core_errors.at(idx) = std::current_exception();
+        }
+    }
+    // The parallel loop's implicit barrier makes all captured errors visible.
+    for (const auto &error : core_errors)
+    {
+        if (error)
+        {
+            std::rethrow_exception(error);
         }
     }
 }
@@ -980,50 +1015,67 @@ void sanafe::SpikingChip::forced_updates(const Timestep &ts)
     //  every time-step, regardless of whether it received inputs or not.
     //  Note that energy is accounted for, but latency is not considered here.
     auto core_list = cores();
+    std::vector<std::exception_ptr> core_errors(core_list.size());
 #ifdef HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     // NOLINTNEXTLINE(modernize-loop-convert)
     for (int idx = 0; idx < static_cast<int>(core_list.size()); idx++)
     {
-        Core &core = core_list.at(idx);
-        for (MappedNeuron &n : core.neurons)
+        try
         {
-            // We cache whether to update one or more synapse units for each
-            //  neuron, to avoid costly iterations over all connections every
-            //  time-step
-            if (n.check_for_synapse_updates_every_timestep)
+            Core &core = core_list.at(idx);
+            for (MappedNeuron &n : core.neurons)
             {
-                for (MappedConnection &con : n.connections_out)
+                // We cache whether to update one or more synapse units for each
+                //  neuron, to avoid costly iterations over all connections every
+                //  time-step
+                if (n.check_for_synapse_updates_every_timestep)
                 {
-                    if (con.synapse_hw->update_every_timestep)
+                    for (MappedConnection &con : n.connections_out)
                     {
-                        PipelineResult result = con.synapse_hw->update(
-                                con.mapped_synapse_hw_address, false,
-                                ts.timestep);
-                        if (result.energy.has_value())
+                        if (con.synapse_hw->update_every_timestep)
                         {
-                            con.synapse_hw->energy += result.energy.value();
+                            PipelineResult result = con.synapse_hw->update(
+                                    con.mapped_synapse_hw_address, false,
+                                    ts.timestep);
+                            if (result.energy.has_value())
+                            {
+                                con.synapse_hw->energy += result.energy.value();
+                            }
+                            // Latency is not considered; as it isn't within
+                            //  either neuron processing or message processing
                         }
-                        // Latency is not considered; as it isn't within
-                        //  either neuron processing or message processing
                     }
                 }
-            }
-            if (n.dendrite_hw->update_every_timestep)
-            {
-                sanafe::PipelineResult result =
-                        n.dendrite_hw->update(n.mapped_dendrite_hw_address,
-                                std::nullopt, std::nullopt, ts.timestep);
-                if (result.energy.has_value())
+                if (n.dendrite_hw->update_every_timestep)
                 {
-                    n.dendrite_hw->energy += result.energy.value();
+                    sanafe::PipelineResult result =
+                            n.dendrite_hw->update(n.mapped_dendrite_hw_address,
+                                    std::nullopt, std::nullopt, ts.timestep);
+                    if (result.energy.has_value())
+                    {
+                        n.dendrite_hw->energy += result.energy.value();
+                    }
+                    // Latency is not considered; as it isn't within
+                    //  either neuron processing or message processing
                 }
-                // Latency is not considered; as it isn't within
-                //  either neuron processing or message processing
+                // Note that soma updates will always be handled in the neuron
+                //  processing loop and so don't need to be supported here
             }
-            // Note that soma updates will always be handled in the neuron
-            //  processing loop and so don't need to be supported here
+        }
+        catch (...)
+        {
+            // Exceptions cannot leave an OpenMP worker region.
+            core_errors.at(idx) = std::current_exception();
+        }
+    }
+    // The parallel loop's implicit barrier makes all captured errors visible.
+    for (const auto &error : core_errors)
+    {
+        if (error)
+        {
+            std::rethrow_exception(error);
         }
     }
 }

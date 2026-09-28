@@ -141,6 +141,7 @@ For more details, see:
 - [SNN file format](snn/README.md) — YAML format for describing mapped spiking networks
 - [Architecture file format](arch/README.md) — YAML format for describing neuromorphic hardware
 - [Plugin authoring guide](plugins/README.md) — implementing custom hardware models in C++
+- [Loihi 2 candidate profile](docs/loihi2-profile.md) — integer execution and explicitly assumed resource accounting
 - [Tutorials](tutorial/) — Jupyter notebooks walking through end-to-end use
 
 # Citation

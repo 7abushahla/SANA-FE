@@ -59,9 +59,6 @@ class AccumulatorModel : public DendriteUnit
 {
 public:
     AccumulatorModel()
-            : accumulated_charges(loihi_max_compartments, std::nullopt)
-            , timesteps_simulated(loihi_max_compartments, 0UL)
-
     {
         register_attributes(accumulator_attributes);
     }
@@ -74,7 +71,8 @@ public:
     PipelineResult update(size_t neuron_address, std::optional<double> current, std::optional<size_t> synapse_address, long int simulation_time) override;
     void reset() override
     {
-        accumulated_charges = std::vector<std::optional<double>>(loihi_max_compartments, std::nullopt);
+        accumulated_charges.assign(accumulated_charges.size(), std::nullopt);
+        timesteps_simulated.assign(timesteps_simulated.size(), 0L);
     }
     void set_attribute_hw(const std::string &/*attribute_name*/, const ModelAttribute &/*param*/) override {};
     void set_attribute_neuron(size_t /*neuron_address*/, const std::string &/*attribute_name*/, const ModelAttribute &/*param*/) override {};
@@ -105,14 +103,8 @@ class AccumulatorWithDelayModel : public DendriteUnit
 {
 public:
     AccumulatorWithDelayModel()
-            : accumulated_charges(loihi_max_compartments, std::nullopt)
-            , timesteps_simulated(loihi_max_compartments, 0UL)
     {
         next_accumulated_charges.resize(max_delay + 1UL);
-        for (auto &accumulator : next_accumulated_charges)
-        {
-            accumulator = std::vector<std::optional<double>>(loihi_max_compartments, std::nullopt);
-        }
         register_attributes(accumulator_attributes);
     }
     AccumulatorWithDelayModel(const AccumulatorWithDelayModel &copy) = default;
@@ -124,10 +116,11 @@ public:
     PipelineResult update(size_t neuron_address, std::optional<double> current, std::optional<size_t> synapse_address, long int simulation_time) override;
     void reset() override
     {
-        accumulated_charges = std::vector<std::optional<double>>(loihi_max_compartments, std::nullopt);
+        accumulated_charges.assign(accumulated_charges.size(), std::nullopt);
+        timesteps_simulated.assign(timesteps_simulated.size(), 0L);
         for (auto &accumulator : next_accumulated_charges)
         {
-            accumulator = std::vector<std::optional<double>>(loihi_max_compartments, std::nullopt);
+            accumulator.assign(accumulated_charges.size(), std::nullopt);
         }
     }
     void set_attribute_hw(const std::string &/*attribute_name*/, const ModelAttribute &/*param*/) override {};
@@ -339,6 +332,69 @@ private:
 
     static void truenorth_leak(TrueNorthNeuron &n);
     static bool truenorth_threshold_and_reset(TrueNorthNeuron &n);
+};
+
+// Integer numerical reference models. These do not implement a chip ISA.
+class IntegerCurrentBasedSynapseModel : public SynapseUnit
+{
+public:
+    IntegerCurrentBasedSynapseModel() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_edge(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, bool read, long int timestep) override;
+    void reset() override {}
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"weight", "(int) Effective signed 16-bit synaptic weight."},
+        {"w", "(int) Effective signed 16-bit synaptic weight."},
+    };
+private:
+    std::vector<int16_t> weights;
+};
+
+class IntegerAccumulatorModel : public DendriteUnit
+{
+public:
+    IntegerAccumulatorModel() { register_attributes(AccumulatorModel::accumulator_attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t, const std::string &, const ModelAttribute &) override {}
+    void set_attribute_edge(size_t, const std::string &, const ModelAttribute &) override {}
+    PipelineResult update(size_t address, std::optional<double> current,
+            std::optional<size_t> synapse_address, long int timestep) override;
+    void reset() override;
+private:
+    std::vector<std::optional<int64_t>> charges;
+    std::vector<long int> timestamps;
+};
+
+class Int24IfModel : public SomaUnit
+{
+public:
+    Int24IfModel() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override { return states.at(address).voltage; }
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"threshold", "(int) Positive even signed 24-bit threshold; comparison uses >=."},
+        {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
+        {"bias", "(int) Signed 16-bit constant drive added every update."},
+        {"currents", "(list[int]) Signed 16-bit external current per update, then zero."},
+    };
+private:
+    struct State
+    {
+        int32_t threshold{2};
+        int32_t initial{0};
+        int32_t voltage{0};
+        int16_t bias{0};
+        std::vector<int16_t> currents;
+        size_t cursor{0};
+    };
+    std::vector<State> states;
 };
 
 // A numerical reference model, not a hardware-specific neuron ISA.

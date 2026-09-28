@@ -996,6 +996,83 @@ size_t pyconnect_to_neuron(const PyNeuronRef &ref, const PyNeuronRef &dest_ref,
 } // end of anonymous namespace
 
 // NOLINTBEGIN(readability-function-cognitive-complexity)
+// Complete configuration snapshot for reproducible architectural experiments.
+pybind11::dict pyarchitecture_configuration(const sanafe::Architecture &arch)
+{
+    pybind11::dict result;
+    result["name"] = arch.name;
+    result["core_count"] = arch.core_count;
+    result["max_cores_per_tile"] = arch.max_cores_per_tile;
+    result["width"] = arch.noc_width_in_tiles;
+    result["height"] = arch.noc_height_in_tiles;
+    result["link_buffer_size"] = arch.noc_buffer_size;
+    result["timestep_delay"] = arch.timestep_delay;
+    result["sync_table"] = arch.ts_sync_delay_table.values;
+    pybind11::list tiles;
+    for (const auto &tile : arch.tiles)
+    {
+        pybind11::dict t;
+        t["name"] = tile.name;
+        t["id"] = tile.id;
+        t["x"] = tile.x;
+        t["y"] = tile.y;
+        const auto &power = tile.power_metrics;
+        t["link_costs"] = pybind11::make_tuple(
+                power.energy_north_hop, power.latency_north_hop,
+                power.energy_east_hop, power.latency_east_hop,
+                power.energy_south_hop, power.latency_south_hop,
+                power.energy_west_hop, power.latency_west_hop);
+        t["log_energy"] = power.log_energy;
+        pybind11::list cores;
+        for (const auto &core : tile.cores)
+        {
+            pybind11::dict c;
+            c["name"] = core.name;
+            c["address"] = pybind11::make_tuple(core.address.parent_tile_id,
+                    core.address.offset_within_tile, core.address.id);
+            c["buffer_position"] = static_cast<int>(core.pipeline.buffer_position);
+            c["max_neurons_supported"] = core.pipeline.max_neurons_supported;
+            c["log_energy"] = core.pipeline.log_energy;
+            pybind11::list inputs, outputs, units;
+            for (const auto &axon : core.axon_in)
+            {
+                inputs.append(pybind11::make_tuple(axon.name,
+                        axon.metrics.energy_message_in, axon.metrics.latency_message_in));
+            }
+            for (const auto &axon : core.axon_out)
+            {
+                outputs.append(pybind11::make_tuple(axon.name,
+                        axon.metrics.energy_message_out, axon.metrics.latency_message_out));
+            }
+            for (const auto &unit : core.pipeline_hw)
+            {
+                pybind11::dict u;
+                const auto &model = unit.model_info;
+                u["name"] = unit.name;
+                u["address"] = pybind11::make_tuple(unit.tile_id, unit.core_offset, unit.core_id);
+                u["model"] = model.name;
+                u["plugin"] = model.plugin_library_path.has_value()
+                        ? model.plugin_library_path.value().string() : "";
+                u["attributes"] = pymodel_attributes_to_pydict(model.model_attributes);
+                u["log_energy"] = model.log_energy;
+                u["log_latency"] = model.log_latency;
+                u["update_every_timestep"] = model.update_every_timestep;
+                u["interfaces"] = pybind11::make_tuple(unit.implements_synapse,
+                        unit.implements_dendrite, unit.implements_soma);
+                units.append(u);
+            }
+            c["axon_in"] = inputs;
+            c["axon_out"] = outputs;
+            c["pipeline"] = units;
+            cores.append(c);
+        }
+        t["cores"] = cores;
+        tiles.append(t);
+    }
+    result["tiles"] = tiles;
+    return result;
+}
+
 PYBIND11_MODULE(sanafecpp, m)
 {
     m.doc() = docstrings::module_doc;
@@ -1249,6 +1326,7 @@ PYBIND11_MODULE(sanafecpp, m)
             .def(pybind11::init<std::string,
                     sanafe::NetworkOnChipConfiguration>())
             .def("__repr__", &sanafe::Architecture::info)
+            .def("configuration", &pyarchitecture_configuration)
             .def_readwrite("tiles", &sanafe::Architecture::tiles)
             .def("cores", &sanafe::Architecture::cores);
     pybind11::class_<sanafe::TileConfiguration>(m, "Tile")

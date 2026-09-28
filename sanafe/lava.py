@@ -307,3 +307,7 @@ def qcfs_chain_to_sanafe(layers, connections, currents, arch, placements):
                 groups[index][pre].connect_to_neuron(
                     groups[index + 1][post], {'weight': float(weight)})
     return network
+
+
+# Keep the integer execution contract separate from the legacy and float paths.
+from sanafe.lava_integer import qcfs_fixed_chain_to_sanafe

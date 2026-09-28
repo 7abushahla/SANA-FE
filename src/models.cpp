@@ -74,6 +74,12 @@ sanafe::PipelineResult sanafe::AccumulatorModel::update(size_t neuron_address,
 {
     PipelineResult output;
 
+    if (accumulated_charges.size() <= neuron_address)
+    {
+        accumulated_charges.resize(neuron_address + 1, std::nullopt);
+        timesteps_simulated.resize(neuron_address + 1, 0L);
+    }
+
     if (timesteps_simulated.at(neuron_address) < simulation_time)
     {
         accumulated_charges.at(neuron_address) = 0.0;
@@ -98,6 +104,16 @@ sanafe::PipelineResult sanafe::AccumulatorWithDelayModel::update(
         std::optional<size_t> synapse_address, const long int simulation_time)
 {
     PipelineResult output;
+
+    if (accumulated_charges.size() <= neuron_address)
+    {
+        accumulated_charges.resize(neuron_address + 1, std::nullopt);
+        timesteps_simulated.resize(neuron_address + 1, 0L);
+        for (auto &accumulator : next_accumulated_charges)
+        {
+            accumulator.resize(neuron_address + 1, std::nullopt);
+        }
+    }
 
     while (timesteps_simulated[neuron_address] < simulation_time)
     {
@@ -1024,6 +1040,18 @@ void sanafe::Float32IfModel::reset()
 std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
         const std::string &model_name)
 {
+    if (model_name == "current_based_int")
+    {
+        return std::make_shared<IntegerCurrentBasedSynapseModel>();
+    }
+    if (model_name == "accumulator_int")
+    {
+        return std::make_shared<IntegerAccumulatorModel>();
+    }
+    if (model_name == "integrate_fire_int24")
+    {
+        return std::make_shared<Int24IfModel>();
+    }
     if (model_name == "current_based")
     {
         return std::shared_ptr<PipelineUnit>(new CurrentBasedSynapseModel());
@@ -1070,6 +1098,9 @@ const sanafe::ModelMap &sanafe::get_builtin_models()
             builtin_models = {{"current_based",
                                       &CurrentBasedSynapseModel::
                                               current_based_synapse_attributes},
+                    {"current_based_int", &IntegerCurrentBasedSynapseModel::attributes},
+                    {"accumulator_int", nullptr},
+                    {"integrate_fire_int24", &Int24IfModel::attributes},
                     {"accumulator", nullptr},
                     {"accumulator_with_delay", nullptr},
                     {"taps", &MultiTapModel1D::multitap_attributes},
