@@ -67,6 +67,16 @@ enum NeuronResetModes : uint8_t
     neuron_reset_mode_count = 4U,
 };
 
+struct BookSimParameters
+{
+    int subnets{2};
+    int packet_size{1}; // Flits per spike packet, not payload bits.
+    double clock_period{1.0e-9};
+    int num_vcs{1};
+    int vc_buf_size{8};
+    bool use_noc_latency{false};
+};
+
 class Architecture
 {
 public:
@@ -78,6 +88,7 @@ public:
     size_t noc_width_in_tiles{1UL};
     size_t noc_height_in_tiles{1UL};
     size_t noc_buffer_size{0UL};
+    BookSimParameters booksim{};
 
     double timestep_delay{0.0};
 
@@ -99,6 +110,7 @@ struct NetworkOnChipConfiguration
     size_t width_in_tiles{1UL};
     size_t height_in_tiles{1UL};
     size_t link_buffer_size{0UL};
+    BookSimParameters booksim{};
 
     double timestep_delay{0.0};
 };

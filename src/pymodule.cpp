@@ -1006,6 +1006,18 @@ pybind11::dict pyarchitecture_configuration(const sanafe::Architecture &arch)
     result["width"] = arch.noc_width_in_tiles;
     result["height"] = arch.noc_height_in_tiles;
     result["link_buffer_size"] = arch.noc_buffer_size;
+    pybind11::dict booksim;
+    booksim["topology"] = "cmesh";
+    booksim["x"] = arch.noc_width_in_tiles;
+    booksim["y"] = arch.noc_height_in_tiles;
+    booksim["c"] = 4;
+    booksim["subnets"] = arch.booksim.subnets;
+    booksim["packet_size_flits"] = arch.booksim.packet_size;
+    booksim["clock_period_seconds"] = arch.booksim.clock_period;
+    booksim["num_vcs"] = arch.booksim.num_vcs;
+    booksim["vc_buf_size_flits"] = arch.booksim.vc_buf_size;
+    booksim["use_noc_latency"] = arch.booksim.use_noc_latency;
+    result["booksim"] = booksim;
     result["timestep_delay"] = arch.timestep_delay;
     result["sync_table"] = arch.ts_sync_delay_table.values;
     pybind11::list tiles;

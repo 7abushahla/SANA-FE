@@ -47,7 +47,8 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
     from lava.proc.dense.process import Dense
     from lava.utils.weightutils import (SignMode, determine_sign_mode,
                                        clip_weights, truncate_weights)
-    from sanafe.loihi2 import (candidate_profile, validate_chain_resources,
+    from sanafe.loihi2 import (audit_unit_scale_signed8_weights, candidate_profile,
+                               validate_chain_resources,
                                validate_candidate_architecture)
 
     if not layers or len(connections) != len(layers) - 1:
@@ -85,11 +86,19 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
         theta = _integers(layer.threshold.init, 'threshold', 2, (1 << 23)-1, layer.v.shape)
         if np.any(theta % 2):
             raise ValueError('threshold must be even')
+        start = _integers(layer.valid_start.init, 'valid_start', 0,
+                          (1 << 31)-2)
+        stop = _integers(layer.valid_stop.init, 'valid_stop', 1,
+                         (1 << 31)-1)
+        if start.size != 1 or stop.size != 1 or start.item() >= stop.item():
+            raise ValueError('valid update window must be scalar [start, stop)')
         states.append({
             'threshold': theta,
             'bias': _integers(layer.bias.init, 'bias', -(1 << 15), (1 << 15)-1, layer.v.shape),
             'initial_voltage': _integers(layer.v.init, 'initial voltage', -(1 << 23),
                                          (1 << 23)-1, layer.v.shape),
+            'valid_start': np.full(layer.v.shape, int(start.item()), dtype=np.int64),
+            'valid_stop': np.full(layer.v.shape, int(stop.item()), dtype=np.int64),
         })
     effective, weight_specs = [], []
     for index, dense in enumerate(connections):
@@ -166,14 +175,21 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
                                                     {'weight': int(weight)})
     profile = candidate_profile()
     profile['allocation'] = resources['allocation'].copy()
+    windows = [[int(s['valid_start'].flat[0]), int(s['valid_stop'].flat[0])]
+               for s in states]
+    gated = any(start != 0 or stop != (1 << 31)-1 for start, stop in windows)
     manifest = {
-        'schema_version': 1, 'execution_profile': 'qcfs-if-int24-binary-v1',
+        'schema_version': 1,
+        'execution_profile': ('qcfs-if-int24-binary-windowed-v1' if gated
+                              else 'qcfs-if-int24-binary-v1'),
         'architecture_profile': profile, 'architecture_sha256': fingerprint,
         'hardware_validated': False, 'input_transfer_cost_included': False,
         'lava_models': ['lava.proc.qcfs.models.PyQCFSIFFixed',
                         'lava.proc.dense.models.PyDenseModelBitAcc'],
         'architecture_instance': repr(arch),
         'input': 'external numeric current per update', 'updates': currents.shape[1],
+        'valid_update_windows_zero_based': windows,
+        'scheduling_status': 'candidate numerical retiming, not verified Loihi 2 hardware',
         'dense_delay_updates': 1, 'layer_sizes': sizes,
         'placements': [[int(t), int(c)] for t, c in placements],
         'initial_voltage': [s['initial_voltage'].tolist() for s in states],
@@ -181,6 +197,7 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
         'biases': [s['bias'].tolist() for s in states],
         'currents': currents.tolist(), 'weights': weight_specs,
         'effective_weights': [w.tolist() for w in effective],
+        'unit_scale_signed8_report': audit_unit_scale_signed8_weights(effective),
         'resource_report': resources,
     }
     return network, manifest

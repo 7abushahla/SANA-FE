@@ -39,6 +39,8 @@ class TestIntegerBridge(unittest.TestCase):
         from sanafe.loihi2 import load_loihi2_candidate
         self.assertEqual(manifest['effective_weights'], [[[2, -4]]])
         self.assertFalse(manifest['hardware_validated'])
+        self.assertEqual(manifest['unit_scale_signed8_report']['out_of_range'], 0)
+        self.assertFalse(manifest['unit_scale_signed8_report']['physical_mapping_verified'])
         chip = sanafe.SpikingChip(load_loihi2_candidate())
         chip.load(net)
         self.assertEqual(chip.sim(3, potential_trace=True)['potential_trace'],
@@ -68,6 +70,12 @@ class TestIntegerBridge(unittest.TestCase):
         layers, connections = self.graph(np.array([[127, -127]]), num_weight_bits=4)
         _, manifest = self.export(layers, connections)
         self.assertEqual(manifest['effective_weights'], [[[96, -128]]])
+
+    def test_effective_weight_outside_unit_scale_signed8_is_reported(self):
+        layers, connections = self.graph(np.array([[255, -255]], dtype=np.int32))
+        _, manifest = self.export(layers, connections)
+        self.assertEqual(manifest['effective_weights'], [[[254, -256]]])
+        self.assertEqual(manifest['unit_scale_signed8_report']['out_of_range'], 2)
 
     def test_invalid_current_rejected(self):
         for value in [1.5, np.nan, 32768, -32769, True]:

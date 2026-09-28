@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory> // For shared_ptr<T>
 #include <optional>
@@ -383,6 +384,8 @@ public:
         {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
         {"bias", "(int) Signed 16-bit constant drive added every update."},
         {"currents", "(list[int]) Signed 16-bit external current per update, then zero."},
+        {"valid_start", "(int) Inclusive zero-based update index for candidate IF scheduling."},
+        {"valid_stop", "(int) Exclusive zero-based update index for candidate IF scheduling."},
     };
 private:
     struct State
@@ -391,8 +394,11 @@ private:
         int32_t initial{0};
         int32_t voltage{0};
         int16_t bias{0};
+        int32_t valid_start{0};
+        int32_t valid_stop{std::numeric_limits<int32_t>::max()};
         std::vector<int16_t> currents;
         size_t cursor{0};
+        size_t updates_seen{0};
     };
     std::vector<State> states;
 };

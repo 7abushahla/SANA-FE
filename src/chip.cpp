@@ -15,12 +15,14 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <iomanip>
 #include <iterator>
 #include <list>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -95,6 +97,34 @@ sanafe::SpikingChip::SpikingChip(const Architecture &arch)
 
     std::vector<std::string> booksim_config_vec(
             std::begin(booksim_config_str), std::end(booksim_config_str));
+    const auto set_booksim_setting = [&booksim_config_vec](
+                                             const std::string &key,
+                                             const std::string &value) {
+        const std::string prefix = key + " = ";
+        const auto found = std::find_if(booksim_config_vec.begin(),
+                booksim_config_vec.end(), [&prefix](const std::string &entry) {
+                    return entry.rfind(prefix, 0) == 0;
+                });
+        if (found == booksim_config_vec.end())
+        {
+            throw std::logic_error("Missing BookSim setting: " + key);
+        }
+        *found = prefix + value;
+    };
+    // The bundled concentrated mesh requires four core ports per router.
+    // Other sizes need changes to the BookSim fork's routing implementation.
+    set_booksim_setting("k", std::to_string(arch.noc_width_in_tiles));
+    set_booksim_setting("x", std::to_string(arch.noc_width_in_tiles));
+    set_booksim_setting("y", std::to_string(arch.noc_height_in_tiles));
+    set_booksim_setting("subnets", std::to_string(arch.booksim.subnets));
+    set_booksim_setting("packet_size", std::to_string(arch.booksim.packet_size));
+    set_booksim_setting("num_vcs", std::to_string(arch.booksim.num_vcs));
+    set_booksim_setting("vc_buf_size", std::to_string(arch.booksim.vc_buf_size));
+    set_booksim_setting("use_noc_latency",
+            arch.booksim.use_noc_latency ? "1" : "0");
+    std::ostringstream clock_period;
+    clock_period << std::setprecision(17) << arch.booksim.clock_period;
+    set_booksim_setting("clock_period", clock_period.str());
     const BookSimConfig new_config =
             booksim_load_config(std::move(booksim_config_vec));
     // Use a unique_ptr for the config so that we don't need to include Booksim

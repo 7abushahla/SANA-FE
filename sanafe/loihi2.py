@@ -39,6 +39,43 @@ class Allocation:
             object.__setattr__(self, key, _integer(value, key, 0 if key == 'program_bytes_per_core' else 1))
 
 
+def audit_unit_scale_signed8_weights(matrices):
+    """Check direct signed8 values under an explicit unit-scale hypothesis.
+
+    This is a software representability audit, not a physical Loihi 2 mapping
+    check. Hardware exponents, parallel synapses, rounding, and packing are
+    outside the test. Each matrix is indexed by destination then source.
+    """
+    try:
+        matrix_list = list(matrices)
+        details = []
+        for matrix in matrix_list:
+            rows = list(matrix)
+            if not rows:
+                raise ValueError('Weight matrices must have a nonempty row')
+            width = None
+            values = []
+            for row in rows:
+                entries = list(row)
+                if not entries or (width is not None and len(entries) != width):
+                    raise ValueError('Weight matrices must be rectangular and nonempty')
+                width = len(entries)
+                values.extend(_integer(weight, 'weight', -(1 << 15), (1 << 15)-1)
+                              for weight in entries)
+            details.append({'shape': [len(rows), width], 'entries': len(values),
+                            'nonzero': sum(value != 0 for value in values),
+                            'out_of_range': sum(value < -128 or value > 127
+                                                for value in values),
+                            'minimum': min(values), 'maximum': max(values)})
+    except TypeError as exc:
+        raise ValueError('Weight matrices must be iterable') from exc
+    return {'hypothesis': 'one signed8 stored value per nonzero weight at unit scale',
+            'range': [-128, 127], 'physical_mapping_verified': False,
+            'matrices': details, 'entries': sum(item['entries'] for item in details),
+            'nonzero': sum(item['nonzero'] for item in details),
+            'out_of_range': sum(item['out_of_range'] for item in details)}
+
+
 def candidate_profile():
     """Return a fresh JSON-serializable specification and evidence ledger."""
     return {
@@ -46,7 +83,8 @@ def candidate_profile():
         'numerical_profile': 'qcfs-if-int24-binary-v1', 'physical_fit_verified': False,
         'topology': {'width': 8, 'height': 4, 'cores_per_tile': 4, 'cores': 128},
         'limits': {'neurons_per_core': 8192, 'total_bytes_per_core': 192 * 1024,
-                   'synapse_bytes_per_core': 128 * 1024},
+                   'synapse_bytes_per_core': 128 * 1024,
+                   'native_stored_weight_bits_max': 8},
         'semantics': {'input_bits': 16, 'input_signed': True, 'bias_bits': 16,
                       'effective_weight_transport_bits': 16, 'weight_signed': True,
                       'voltage_bits': 24, 'voltage_signed': True,
@@ -57,6 +95,9 @@ def candidate_profile():
                       'edge_delay_steps': 1},
         'allocation': asdict(Allocation()),
         'storage_layout': 'assumed; not verified Intel allocation or packing',
+        'weight_mapping': 'signed16 effective software weights are not certified as '
+                          'one native stored synapse; wider values may require '
+                          'multiple 8-bit synapses and change workload',
         'timing': 'inherited Loihi 1 costs; not calibrated for Loihi 2',
         'energy': 'inherited Loihi 1 costs; not calibrated for Loihi 2',
         'provenance': {
@@ -67,9 +108,12 @@ def candidate_profile():
                       'locator': 'Comparison of Loihi to Loihi 2 Resources/Features table', 'units': 'cores'},
             'cores_per_tile': {'status': 'documented four NeuroCores per router', 'source': RUNTIME_PAPER,
                                'locator': 'Section II-1 and Figure 1', 'units': 'cores/router'},
-            'mesh_coordinates': {'status': 'inherited 8 by 4 coordinate-shape assumption',
-                                 'source': LOIHI1_COSTS, 'locator': 'architecture.attributes.width/height',
+            'mesh_coordinates': {'status': 'documented 8 by 4 router grid; tile address mapping assumed',
+                                 'source': RUNTIME_PAPER, 'locator': 'Section VI, paragraph on n=8 and m=4',
                                  'units': 'routers'},
+            'native_weight_bits': {'status': 'documented maximum stored weight precision',
+                                   'source': RUNTIME_PAPER, 'locator': 'Section III-5',
+                                   'units': 'bits per native synapse'},
             'semantics': {'status': 'restricted functional candidate; not verified neuron program'},
             'allocation': {'status': 'assumed byte layout'},
             'timing_and_energy': {'status': 'inherited Loihi 1', 'source': LOIHI1_COSTS,

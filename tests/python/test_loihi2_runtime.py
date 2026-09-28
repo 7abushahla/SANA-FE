@@ -3,18 +3,19 @@ import math
 from types import SimpleNamespace
 import unittest
 
-from sanafe.loihi2_runtime import RuntimeRates, analyze_binary_chain, max_affine_runtime
+from sanafe.loihi2_runtime import (RuntimeRates, analyze_binary_chain,
+                                   max_affine_runtime, rescale_binary_packet_bits)
 
 
 def event(layer, offset=0):
     return SimpleNamespace(group_name=f'layer_{layer}', neuron_offset=offset)
 
 
-def message(layer, offset, src_tile, dst_tile, fanout):
+def message(layer, offset, src_tile, dst_tile, fanout, src_core=0, dst_core=0):
     return {'timestep': 1, 'placeholder': False,
             'src_neuron_group_id': f'layer_{layer}', 'src_neuron_offset': offset,
-            'src_tile_id': src_tile, 'src_core_offset': 0,
-            'dest_tile_id': dst_tile, 'dest_core_offset': 0,
+            'src_tile_id': src_tile, 'src_core_offset': src_core,
+            'dest_tile_id': dst_tile, 'dest_core_offset': dst_core,
             'src_x': src_tile // 4, 'src_y': src_tile % 4,
             'dest_x': dst_tile // 4, 'dest_y': dst_tile % 4,
             'spikes': fanout}
@@ -41,10 +42,14 @@ class TestBinaryWorkload(unittest.TestCase):
         work = analyze_binary_chain(manifest(), trace, packet_bits=32)
         first, second = work['steps']
         self.assertEqual(first['maxima'], {'dendops': 2, 'synops': 1,
-                                           'dense_synmem_entries': 2, 'link_bits': 32})
+                                           'dense_synmem_entries': 2,
+                                           'interrouter_link_bits': 32,
+                                           'link_bits': 32})
         self.assertEqual(first['links'], [{'from': [0, 0], 'to': [1, 0], 'bits': 32}])
         self.assertEqual(second['maxima'], {'dendops': 2, 'synops': 0,
-                                            'dense_synmem_entries': 0, 'link_bits': 0})
+                                            'dense_synmem_entries': 0,
+                                            'interrouter_link_bits': 0,
+                                            'link_bits': 0})
         self.assertEqual(work['messages'], 1)
         self.assertEqual(work['packet_bits_assumption'], 32)
 
@@ -55,6 +60,54 @@ class TestBinaryWorkload(unittest.TestCase):
         self.assertEqual(first['maxima']['dendops'], 4)
         self.assertEqual(first['maxima']['synops'], 1)
         self.assertEqual(first['maxima']['link_bits'], 0)
+
+    def test_same_router_different_cores_load_endpoint_links(self):
+        local = manifest(places=((0, 0), (0, 1)))
+        trace = result([[message(0, 0, 0, 0, 2, dst_core=1)], []],
+                       [[event(0)], []])
+        first = analyze_binary_chain(local, trace, packet_bits=32)['steps'][0]
+        self.assertEqual(first['links'], [])
+        self.assertEqual(first['endpoint_links'], [
+            {'kind': 'core_to_router', 'tile': 0, 'core': 0, 'bits': 32},
+            {'kind': 'router_to_core', 'tile': 0, 'core': 1, 'bits': 32},
+        ])
+        self.assertEqual(first['maxima']['link_bits'], 32)
+        self.assertEqual(first['maxima']['interrouter_link_bits'], 0)
+
+    def test_endpoint_load_sums_multiple_source_messages(self):
+        chain = manifest(sizes=(2, 1), places=((0, 0), (0, 1)),
+                         weights=(((1, 1),),))
+        chain['updates'] = 1
+        trace = result([[message(0, 0, 0, 0, 1, dst_core=1),
+                         message(0, 1, 0, 0, 1, dst_core=1)]],
+                       [[event(0, 0), event(0, 1)]], updated=[3])
+        first = analyze_binary_chain(chain, trace, packet_bits=32)['steps'][0]
+        self.assertEqual(first['maxima']['link_bits'], 64)
+        self.assertEqual([link['bits'] for link in first['endpoint_links']], [64, 64])
+
+    def test_packet_width_scenario_rescales_all_links_without_changing_work(self):
+        trace = result([[message(0, 0, 0, 4, 2)], []], [[event(0)], []])
+        original = analyze_binary_chain(manifest(), trace, packet_bits=32)
+        scaled = rescale_binary_packet_bits(original, 80)
+        direct = analyze_binary_chain(manifest(), trace, packet_bits=80)
+        self.assertEqual(scaled, direct)
+        self.assertEqual(original['packet_bits_assumption'], 32)
+        with self.assertRaises(ValueError):
+            rescale_binary_packet_bits(original, 0)
+
+    def test_windowed_layers_count_only_valid_neural_updates(self):
+        chain = manifest(places=((0, 0), (0, 0)))
+        chain['updates'] = 3
+        chain['execution_profile'] = 'qcfs-if-int24-binary-windowed-v1'
+        chain['valid_update_windows_zero_based'] = [[0, 2], [1, 3]]
+        trace = result([[message(0, 0, 0, 0, 2)], [], []],
+                       [[event(0)], [], []], updated=[2, 4, 2])
+        work = analyze_binary_chain(chain, trace, packet_bits=32)
+        self.assertEqual([s['maxima']['dendops'] for s in work['steps']], [2, 4, 2])
+        bad = result([[message(0, 0, 0, 0, 2)], [], []],
+                     [[event(0)], [], []], updated=[4, 4, 2])
+        with self.assertRaisesRegex(ValueError, 'DendOp'):
+            analyze_binary_chain(chain, bad, packet_bits=32)
 
     def test_directed_shared_link_load_is_summed(self):
         chain = manifest(sizes=(1, 1, 1, 1), places=((0, 0), (8, 0), (0, 0), (8, 0)),

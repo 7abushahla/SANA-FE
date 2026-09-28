@@ -6,6 +6,7 @@ packet width, dense-memory packing, and effective rates must be supplied as
 assumptions or measurements before the returned time has numerical meaning.
 """
 from collections import Counter
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 import math
 from numbers import Integral, Real
@@ -74,16 +75,21 @@ def _route_links(src, dest):
 
 
 def analyze_binary_chain(manifest, result, *, packet_bits):
-    """Extract per-step busiest-core work and busiest directed-link traffic.
+    """Extract per-step busiest-core work and directed-link traffic.
 
     Message processing is attributed to the message's sending step, matching
     SANA-FE's trace: it applies synapses before the next numbered soma update.
     DendOps count every mapped IF update. Dense SynMem *entries* count all
     stored weights in a triggered row, including zero; the number of physical
     memory reads depends on packing and is resolved only by RuntimeRates.
+    Distinct cores also load directed core-to-router and router-to-core links,
+    including when they share a router. Same-core connections bypass the NoC
+    in this model. Two physical fabrics are aggregated into one effective link
+    as in the analytical Loihi 2 model; actual fabric assignment is unknown.
     """
     packet_bits = _positive_integer(packet_bits, 'packet_bits')
-    if manifest.get('execution_profile') != 'qcfs-if-int24-binary-v1':
+    if manifest.get('execution_profile') not in ('qcfs-if-int24-binary-v1',
+                                                 'qcfs-if-int24-binary-windowed-v1'):
         raise ValueError('Expected the restricted integer binary chain manifest')
     sizes = manifest['layer_sizes']
     places = [tuple(p) for p in manifest['placements']]
@@ -99,6 +105,18 @@ def analyze_binary_chain(manifest, result, *, packet_bits):
     spikes = result['spike_trace']
     perf = result['perf_trace']
     count = manifest['updates']
+    windows = manifest.get('valid_update_windows_zero_based',
+                           [[0, count] for _ in sizes])
+    if (len(windows) != len(sizes) or
+            any(len(window) != 2 or
+                any(isinstance(value, bool) or not isinstance(value, Integral)
+                    for value in window) or
+                window[0] < 0 or window[1] <= window[0]
+                for window in windows)):
+        raise ValueError('Malformed valid update windows')
+    if (manifest['execution_profile'] == 'qcfs-if-int24-binary-windowed-v1' and
+            'valid_update_windows_zero_based' not in manifest):
+        raise ValueError('Windowed profile requires valid update windows')
     if (len(messages) != count or len(spikes) != count or
             any(len(perf[key]) != count for key in ('timestep', 'updated', 'spikes'))):
         raise ValueError('Trace length does not match manifest updates')
@@ -110,20 +128,27 @@ def analyze_binary_chain(manifest, result, *, packet_bits):
     messages_total = 0
     for index, (row, active) in enumerate(zip(messages, spikes)):
         t = index + 1
-        if perf['timestep'][index] != t or perf['updated'][index] != sum(sizes):
+        valid_layers = [start <= index < stop for start, stop in windows]
+        expected_updates = sum(size for size, valid in zip(sizes, valid_layers)
+                               if valid)
+        if perf['timestep'][index] != t or perf['updated'][index] != expected_updates:
             raise ValueError('Timestep or DendOp trace disagrees with mapped chain')
         fired = [_neuron_address(item) for item in active]
         if len(fired) != len(set(fired)) or any(i < 0 or i >= len(sizes) or
                                                j < 0 or j >= sizes[i] for i, j in fired):
             raise ValueError('Invalid or duplicate emitted spike in trace')
+        if any(not valid_layers[i] for i, _ in fired):
+            raise ValueError('Inactive layer emitted a spike')
         expected_sources = {address for address in fired if address[0] < len(sizes) - 1}
         seen_sources = set()
         core_counts = {p: {'dendops': 0, 'synops': 0,
                            'dense_synmem_entries': 0, 'dense_synmem_accesses': []}
                        for p in places}
-        for size, place in zip(sizes, places):
-            core_counts[place]['dendops'] += size
+        for size, place, valid in zip(sizes, places, valid_layers):
+            if valid:
+                core_counts[place]['dendops'] += size
         link_bits = Counter()
+        endpoint_bits = Counter()
         fanout_total = 0
         real_messages = 0
         for m in row:
@@ -156,6 +181,9 @@ def analyze_binary_chain(manifest, result, *, packet_bits):
             core_counts[dest]['dense_synmem_accesses'].append(sizes[layer + 1])
             core_counts[dest]['synops'] += sum(weights[layer][post][offset] != 0
                                                 for post in range(sizes[layer + 1]))
+            if src != dest:
+                endpoint_bits[('core_to_router', src[0], src[1])] += packet_bits
+                endpoint_bits[('router_to_core', dest[0], dest[1])] += packet_bits
             for link in _route_links(expected_src_xy, expected_dest_xy):
                 link_bits[link] += packet_bits
         if seen_sources != expected_sources:
@@ -167,17 +195,53 @@ def analyze_binary_chain(manifest, result, *, packet_bits):
                          for p, counts in sorted(core_counts.items())]
         links = [{'from': [x1, y1], 'to': [x2, y2], 'bits': bits}
                  for (x1, y1, x2, y2), bits in sorted(link_bits.items())]
+        endpoint_links = [{'kind': kind, 'tile': tile, 'core': core, 'bits': bits}
+                          for (kind, tile, core), bits in sorted(endpoint_bits.items())]
         maxima = {name: max(c[name] for c in core_counts.values())
                   for name in ('dendops', 'synops', 'dense_synmem_entries')}
-        maxima['link_bits'] = max(link_bits.values(), default=0)
+        maxima['interrouter_link_bits'] = max(link_bits.values(), default=0)
+        maxima['link_bits'] = max(maxima['interrouter_link_bits'],
+                                  max(endpoint_bits.values(), default=0))
         steps.append({'timestep': t, 'messages': real_messages,
-                      'cores': ordered_cores, 'links': links, 'maxima': maxima})
-    return {'schema_version': 1, 'source': 'SANA-FE binary message and spike traces',
+                      'cores': ordered_cores, 'links': links,
+                      'endpoint_links': endpoint_links, 'maxima': maxima})
+    return {'schema_version': 2, 'source': 'SANA-FE binary message and spike traces',
             'updates': count, 'messages': messages_total,
             'packet_bits_assumption': packet_bits,
+            'link_scope': 'directed core-router endpoints and XY router-router links; '
+                          'two physical fabrics aggregated; same-core bypass assumed',
             'synmem_measure': 'dense stored entries; physical reads require packing assumption',
             'input_output_transfer_included': False,
             'calibrated_for_loihi2': False, 'steps': steps}
+
+
+def rescale_binary_packet_bits(workload, packet_bits):
+    """Apply another assumed packet width to unchanged binary message counts.
+
+    This is a sensitivity transformation. It does not model physical packet
+    headers, flits, fabric assignment, or a Loihi 2 wire protocol.
+    """
+    packet_bits = _positive_integer(packet_bits, 'packet_bits')
+    if workload.get('schema_version') != 2:
+        raise ValueError('Expected endpoint-aware binary workload schema 2')
+    previous = _positive_integer(workload.get('packet_bits_assumption'),
+                                 'previous packet_bits_assumption')
+    scaled = deepcopy(workload)
+
+    def change(value):
+        if isinstance(value, bool) or not isinstance(value, Integral) or value % previous:
+            raise ValueError('Link bits disagree with original packet width')
+        return int(value // previous * packet_bits)
+
+    for step in scaled['steps']:
+        for link in step['links']:
+            link['bits'] = change(link['bits'])
+        for link in step['endpoint_links']:
+            link['bits'] = change(link['bits'])
+        for key in ('interrouter_link_bits', 'link_bits'):
+            step['maxima'][key] = change(step['maxima'][key])
+    scaled['packet_bits_assumption'] = packet_bits
+    return scaled
 
 
 def max_affine_runtime(workload, rates):

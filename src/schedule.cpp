@@ -161,6 +161,7 @@ double sanafe::schedule_messages_timestep_cycle(
     //  simulation and return simulated time
     TRACE1(SCHEDULER, "Running Booksim2 simulation\n");
     const double booksim_time = booksim_run(scheduler.booksim_config);
+    booksim_close();
 
     ts_data.sim_time = booksim_time;
     // Account for fixed costs per timestep e.g., house-keeping or global sync

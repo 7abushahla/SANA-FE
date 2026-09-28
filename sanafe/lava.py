@@ -311,3 +311,4 @@ def qcfs_chain_to_sanafe(layers, connections, currents, arch, placements):
 
 # Keep the integer execution contract separate from the legacy and float paths.
 from sanafe.lava_integer import qcfs_fixed_chain_to_sanafe
+from sanafe.lava_conv_integer import qcfs_fixed_conv_to_sanafe

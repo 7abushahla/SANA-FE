@@ -2,10 +2,22 @@
 import json
 import unittest
 import numpy as np
-from sanafe.loihi2 import Allocation, candidate_profile, load_loihi2_candidate, validate_chain_resources
+from sanafe.loihi2 import (Allocation, audit_unit_scale_signed8_weights,
+                          candidate_profile, load_loihi2_candidate,
+                          validate_chain_resources)
 
 
 class TestLoihi2Profile(unittest.TestCase):
+    def test_unit_scale_weight_audit_is_not_a_physical_mapping_certificate(self):
+        report = audit_unit_scale_signed8_weights([[[127, -128, 255, -256, 0]]])
+        self.assertFalse(report['physical_mapping_verified'])
+        self.assertEqual(report['out_of_range'], 2)
+        self.assertEqual(report['nonzero'], 4)
+        self.assertEqual(report['matrices'][0]['out_of_range'], 2)
+        self.assertEqual(report['range'], [-128, 127])
+        with self.assertRaises(ValueError):
+            audit_unit_scale_signed8_weights([[[1.5]]])
+
     def test_small_chain_and_dense_zero_accounting(self):
         report = validate_chain_resources([2, 3], [np.zeros((3, 2), dtype=int)], [(0, 0), (1, 0)])
         self.assertFalse(report['physical_fit_verified'])
@@ -49,6 +61,11 @@ class TestLoihi2Profile(unittest.TestCase):
                 Allocation(**kwargs)
 
     def test_candidate_architecture_uses_only_integer_models(self):
+        profile = candidate_profile()
+        self.assertEqual(profile['limits']['native_stored_weight_bits_max'], 8)
+        self.assertFalse(profile['physical_fit_verified'])
+        self.assertIn('multiple 8-bit synapses', profile['weight_mapping'])
+        self.assertIn('documented 8 by 4', profile['provenance']['mesh_coordinates']['status'])
         arch = load_loihi2_candidate()
         self.assertEqual(len(arch.tiles), 32)
         for tile in arch.tiles:

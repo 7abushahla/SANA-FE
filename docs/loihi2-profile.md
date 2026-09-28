@@ -2,7 +2,7 @@
 
 `sanafe.loihi2.load_loihi2_candidate()` returns an architectural candidate with 128 cores in an 8 × 4 mesh of four-core tiles. It selects `integrate_fire_int24`, `accumulator_int`, and `current_based_int` with an external pre-soma buffer. All timing, synchronization, and energy coefficients remain inherited from the bundled Loihi 1 configuration. They are not Loihi 2 measurements or calibrated predictions.
 
-`candidate_profile()` returns a serializable specification with parameter provenance, profile version 1, and numerical profile identifier `qcfs-if-int24-binary-v1`. The restricted numerical contract uses signed 16-bit effective weight transport, input, and bias, signed 32-bit accumulation with overflow rejection, and signed 24-bit voltage clipping before a `>=` threshold comparison. Effective weight transport is not a statement of physical Loihi 2 weight precision. Each update emits at most one binary event and subtracts the threshold once. Connections have one logical update of delay. These are candidate software semantics, not a verified Loihi 2 neuron program or a complete implementation of Loihi 2 capabilities.
+`candidate_profile()` returns a serializable specification with parameter provenance, profile version 1, and numerical profile identifier `qcfs-if-int24-binary-v1`. The restricted numerical contract uses signed 16-bit effective weight transport, input, and bias, signed 32-bit accumulation with overflow rejection, and signed 24-bit voltage clipping before a `>=` threshold comparison. Effective weight transport is not a statement of physical Loihi 2 weight precision. Documented native stored synapses have at most 8-bit weights [2]. `audit_unit_scale_signed8_weights()` flags effective software values outside a direct signed8 unit-scale scenario; it does not test exponent selection, parallel synapses, or physical packing. Each valid update emits at most one binary event and subtracts the threshold once. Connections have one logical update of delay. These are candidate software semantics, not a verified Loihi 2 neuron program or a complete implementation of Loihi 2 capabilities.
 
 ## Resource validation
 
@@ -27,7 +27,7 @@ A successful report means **model-feasible under the assumed layout**. It does n
 
 [1] Intel, “Taking Neuromorphic Computing to the Next Level with Loihi 2,” technology brief. [Public document](https://www.intel.com/content/dam/www/central-libraries/us/en/documents/neuromorphic-computing-loihi-2-brief.pdf). Source for resource ceilings. Maximum neuron counts remain conditional on state and storage requirements.
 
-[2] J. Timcheck, A. Pierro, and S. B. Shrestha, “A Compute and Communication Runtime Model for Loihi 2,” arXiv:2601.10035v2, 2026. [Paper](https://arxiv.org/html/2601.10035v2). Section II-1 and Figure 1 document four-core routers and dimension-order routing. The 8 × 4 coordinate shape is an inherited assumption from the bundled configuration, distinct from the documented core count and cores per router. The candidate does not implement or claim validation against this paper's runtime model.
+[2] J. Timcheck, A. Pierro, and S. B. Shrestha, “A Compute and Communication Runtime Model for Loihi 2,” arXiv:2601.10035v2, 2026. [Paper](https://arxiv.org/html/2601.10035v2). Section II-1 and Figure 1 document four-core routers and dimension-order routing. Section VI documents the 8 × 4 router grid and counts core-to-router links in its heaviest-link load. The candidate tile address mapping and physical fabric assignment remain unverified.
 
 [3] SLAM Lab, “SANA-FE,” bundled Loihi configuration. [Pinned source](https://github.com/SLAM-Lab/SANA-FE/blob/93926ec8019206c1c6e6709448ac4c67f46d57db/sanafe/examples/loihi.yaml). Source for all inherited cost coefficients, attributed there to Davies et al. (2018).
 
@@ -40,6 +40,10 @@ The optional Lava integration requires the `QCFSIFFixed` Process extension. Expo
 The adapter supports binary Dense input, zero weight exponent, and 1–8 configured weight bits. It applies the selected Lava Dense clipping and truncation rules before storing effective integer weights. Positive and negative row sums must independently fit signed16, guaranteeing every binary fan-in combination fits the IF interface. Nonzero initial Dense buffers, branching, recurrent graphs, virtual ports, already compiled Processes, fractional values, and unsupported models are rejected. Explicit neuron initial voltages are preserved.
 
 The exporter validates shared resource budgets before network construction. These checks currently cover the supported chain adapter. Direct use of the general SANA-FE Network API does not automatically enforce this Python resource profile.
+
+`sanafe.lava_conv_integer` adds a restricted fixed IF/Conv/IF export for small spatial tests. It uses Lava's effective Conv weights and expands the spatial connections into mapped synapses. This is a numerical graph translation, not a claim that a physical Loihi 2 Conv program uses the same memory layout. The tested path excludes grouped and dilated convolutions, pooling, residual connections, and a trained classifier.
+
+An opt-in zero-based `[valid_start, valid_stop)` window gates each fixed IF layer. Outside its window, the neuron consumes arriving input, preserves voltage, omits bias integration, and emits no spike. This candidate retimes a buffered feedforward chain to match original QCFS across nonzero-bias test cases. Hardware realization of that gate and its compiler schedule remain unverified.
 
 `Architecture.configuration()` provides a complete configuration snapshot for provenance. The candidate adapter verifies its fingerprint, including topology, buffering, pipeline parameters, synchronization, and costs, against the loader's configuration. Modified architectures are rejected rather than receiving incorrect provenance. The manifest records the fingerprint, numerical model classes, effective weights, state, currents, placement, and actual allocation assumptions. Save the configuration snapshot alongside experiment results.
 
@@ -67,8 +71,31 @@ rates = RuntimeRates(
 estimate = max_affine_runtime(workload, rates)
 ```
 
-The workload report gives each numbered step's operations on every occupied core and bits on every directed XY mesh link. It also reports the busiest core and link. DendOps count each IF state update. SynOps count nonzero effective weights reached by an emitted binary message. Dense SynMem entries include stored zero weights. The `dense_entries_per_read` assumption converts each incoming axon's dense entries to an assumed number of reads, with rounding per axon. The packet-width assumption turns message counts into link bits. Neither conversion is a verified Intel packing or packet format.
+The workload report gives each numbered step's operations on every occupied core and bits on directed endpoint and XY mesh links. It also reports the busiest core and link. DendOps count active IF state updates under the candidate valid-update windows. SynOps count nonzero effective weights reached by an emitted binary message. Dense SynMem entries include stored zero weights. The `dense_entries_per_read` assumption converts each incoming axon's dense entries to an assumed number of reads, with rounding per axon. The packet-width assumption turns message counts into link bits. Neither conversion is a verified Intel packing or packet format.
 
 `max_affine_runtime` evaluates the five-term maximum in Timcheck *et al.* [2], Equation (1), on each step. It adds the resulting step bounds for a whole run. The model is separate from SANA-FE's inherited Loihi 1 `sim_time`. Its coefficients have no defaults; the module rejects missing, nonfinite, or nonpositive rates. Published Loihi 2 microbenchmarks characterize simple programs on specified hardware and software revisions [2]. Applying their rates to this custom IF program requires validation. The current output is a conditional lower bound, not calibrated Loihi 2 latency. It excludes host input and output transfer, physical instruction costs outside the five terms, and energy.
 
-The trace analyzer supports the restricted unbranched binary dense chain and its one-step buffered update convention. It checks spike/message correspondence, mapped source and destination cores, dense fanout, and simulation update counts. It does not model general multicast, graded spikes, or the full Loihi 2 packet protocol. Two parallel physical meshes are represented by an assumed effective link bandwidth, not assigned individual traffic by this analyzer. The existing BookSim configuration is unchanged.
+The trace analyzer supports the restricted unbranched binary dense chain and its one-step buffered update convention. It checks spike/message correspondence, mapped source and destination cores, dense fanout, and simulation update counts. It counts directed core-to-router and router-to-core endpoint traffic separately from XY router-to-router traffic. Its heaviest-link term takes the maximum over both, consistent with the scope of Timcheck *et al.* [2]. Same-core connections bypass the NoC in this candidate, which is an assumption. Two physical meshes are aggregated into one effective link, without modeling fabric assignment. The analyzer does not model general multicast, graded spikes, or the full Loihi 2 packet protocol. `rescale_binary_packet_bits()` changes an explicit packet-width scenario without rerunning the numerical simulation; it does not convert bits to BookSim flits.
+
+## BookSim network timing controls
+
+The optional `timing_model="cycle"` path uses the modified BookSim library. Its settings can be supplied under `architecture.attributes.booksim` in an architecture YAML file:
+
+```yaml
+architecture:
+  attributes:
+    width: 8
+    height: 4
+    link_buffer_size: 16
+    booksim:
+      subnets: 2
+      packet_size: 1
+      clock_period: 1.0e-9
+      num_vcs: 1
+      vc_buf_size: 8
+      use_noc_latency: false
+```
+
+All `booksim` fields are optional and retain the previous values when omitted. `width` and `height` set the concentrated mesh dimensions; its four endpoint ports per router remain fixed by this BookSim fork. The 8 × 4 router grid is documented for a single Loihi 2 chip [2]; the candidate's tile address mapping is still an assumption. `Architecture.configuration()["booksim"]` records the effective settings.
+
+`packet_size` is **flits per spike packet**, and `vc_buf_size` is flits per virtual-channel buffer. `clock_period` is seconds per simulated BookSim cycle. These parameters define a research network model and have no calibrated Loihi 2 values. In particular, `packet_size` does not specify packet bits and is independent of the `packet_bits` assumption supplied to `analyze_binary_chain`. BookSim's `channel_width` setting does not automatically convert payload bits to extra flits. The `link_buffer_size` field belongs to SANA-FE's other network timing model; it does not set BookSim's virtual-channel buffer size. Cycle scheduling releases BookSim state after each numbered step so repeated calls can execute independently.

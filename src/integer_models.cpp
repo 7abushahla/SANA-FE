@@ -139,6 +139,20 @@ void sanafe::Int24IfModel::set_attribute_neuron(const size_t address,
                 static_cast<double>(param), current_min, current_max,
                 "IF signed 16-bit bias"));
     }
+    else if (name == "valid_start")
+    {
+        state.valid_start = static_cast<int32_t>(checked_integer(
+                static_cast<double>(param), 0,
+                std::numeric_limits<int32_t>::max() - 1,
+                "IF valid_start"));
+    }
+    else if (name == "valid_stop")
+    {
+        state.valid_stop = static_cast<int32_t>(checked_integer(
+                static_cast<double>(param), 1,
+                std::numeric_limits<int32_t>::max(),
+                "IF valid_stop"));
+    }
 }
 
 sanafe::PipelineResult sanafe::Int24IfModel::update(const size_t address,
@@ -151,6 +165,23 @@ sanafe::PipelineResult sanafe::Int24IfModel::update(const size_t address,
     State &state = states.at(address);
     const int64_t incoming = checked_integer(current.value_or(0.0),
             current_min, current_max, "IF signed 16-bit input current");
+    if (state.valid_stop <= state.valid_start)
+    {
+        throw std::invalid_argument("IF valid update window requires start < stop");
+    }
+    // chip.sim() may be called in chunks. Its supplied timestep restarts for
+    // each call, whereas the IF state persists. Track this neuron's absolute
+    // update index until reset instead of using the per-call timestep.
+    const size_t update_index = state.updates_seen++;
+    if (update_index < static_cast<size_t>(state.valid_start) ||
+            update_index >= static_cast<size_t>(state.valid_stop))
+    {
+        if (state.cursor < state.currents.size())
+        {
+            ++state.cursor;
+        }
+        return {std::nullopt, idle, std::nullopt, std::nullopt};
+    }
     const int64_t external = state.cursor < state.currents.size()
             ? state.currents.at(state.cursor) : 0;
     // The stream and synaptic current jointly form the signed 16-bit input.
@@ -176,5 +207,6 @@ void sanafe::Int24IfModel::reset()
     {
         state.voltage = state.initial;
         state.cursor = 0;
+        state.updates_seen = 0;
     }
 }

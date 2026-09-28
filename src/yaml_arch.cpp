@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cmath>
 #include <fstream>
 #include <ios>
 #include <iosfwd>
@@ -438,6 +439,41 @@ sanafe::description_parse_noc_configuration_yaml(
             yaml_required_field<int>(parser, noc_attributes, "height");
     noc.link_buffer_size = yaml_required_field<int>(
             parser, noc_attributes, "link_buffer_size");
+
+    const ryml::ConstNodeRef booksim = noc_attributes.find_child("booksim");
+    if (!booksim.invalid())
+    {
+        if (!booksim.is_map())
+        {
+            throw YamlDescriptionParsingError(
+                    "booksim must be a mapping", parser, booksim);
+        }
+        noc.booksim.subnets = yaml_optional_field<int>(booksim, "subnets")
+                                      .value_or(noc.booksim.subnets);
+        noc.booksim.packet_size =
+                yaml_optional_field<int>(booksim, "packet_size")
+                        .value_or(noc.booksim.packet_size);
+        noc.booksim.clock_period =
+                yaml_optional_field<double>(booksim, "clock_period")
+                        .value_or(noc.booksim.clock_period);
+        noc.booksim.num_vcs = yaml_optional_field<int>(booksim, "num_vcs")
+                                     .value_or(noc.booksim.num_vcs);
+        noc.booksim.vc_buf_size =
+                yaml_optional_field<int>(booksim, "vc_buf_size")
+                        .value_or(noc.booksim.vc_buf_size);
+        noc.booksim.use_noc_latency =
+                yaml_optional_field<bool>(booksim, "use_noc_latency")
+                        .value_or(noc.booksim.use_noc_latency);
+        if (noc.booksim.subnets < 1 || noc.booksim.packet_size < 1 ||
+                noc.booksim.num_vcs < 1 || noc.booksim.vc_buf_size < 1 ||
+                !std::isfinite(noc.booksim.clock_period) ||
+                noc.booksim.clock_period <= 0.0)
+        {
+            throw YamlDescriptionParsingError(
+                    "booksim sizes and clock period must be positive",
+                    parser, booksim);
+        }
+    }
 
     const std::string model_type =
             yaml_optional_field<std::string>(noc_attributes, "sync_model")

@@ -57,6 +57,30 @@ def connected_chip(weights, **kwargs):
 
 
 class TestIntegerIF(unittest.TestCase):
+    def test_candidate_valid_window_gates_bias_and_reset(self):
+        chip = chip_for([{'threshold': 4, 'initial_voltage': 2, 'bias': 2,
+                         'valid_start': 1, 'valid_stop': 3,
+                         'currents': [0, 0, 0, 0]}])
+        full = chip.sim(4, potential_trace=True, spike_trace=True)
+        self.assertEqual(full['potential_trace'], [[2], [0], [2], [2]])
+        self.assertEqual([len(s) for s in full['spike_trace']], [0, 1, 0, 0])
+        chip.reset()
+        first = chip.sim(1, potential_trace=True, spike_trace=True)
+        rest = chip.sim(3, potential_trace=True, spike_trace=True)
+        self.assertEqual(first['potential_trace'] + rest['potential_trace'],
+                         full['potential_trace'])
+        self.assertEqual([len(s) for s in first['spike_trace'] + rest['spike_trace']],
+                         [0, 1, 0, 0])
+
+    def test_candidate_valid_window_rejects_invalid_bounds(self):
+        for name, value in [('valid_start', -1), ('valid_start', .5),
+                            ('valid_stop', 0), ('valid_stop', 1 << 31)]:
+            with self.subTest(name=name, value=value), self.assertRaises((ValueError, RuntimeError)):
+                chip_for([{'threshold': 4, name: value}])
+        chip = chip_for([{'threshold': 4, 'valid_start': 2, 'valid_stop': 2}])
+        with self.assertRaisesRegex((ValueError, RuntimeError), 'window'):
+            chip.sim(1)
+
     def test_equality_negative_voltage_and_single_subtraction(self):
         chip = chip_for([
             {'threshold': 2, 'initial_voltage': 1, 'currents': [1, -4, 6, 0]},
