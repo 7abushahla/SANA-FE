@@ -21,6 +21,7 @@
 #include "attribute.hpp"
 #include "mapped.hpp"
 #include "models.hpp"
+#include "loihi1_compartments.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 
@@ -1040,6 +1041,10 @@ void sanafe::Float32IfModel::reset()
 std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
         const std::string &model_name)
 {
+    if (model_name == "paired_compartment_if")
+    {
+        return std::make_shared<PairedCompartmentIfModel>();
+    }
     if (model_name == "current_based_int")
     {
         return std::make_shared<IntegerCurrentBasedSynapseModel>();
@@ -1095,7 +1100,8 @@ const sanafe::ModelMap &sanafe::get_builtin_models()
     //  models and their attributes (with helpful descriptions)
     static const std::map<std::string,
             const std::unordered_map<std::string, std::string> *>
-            builtin_models = {{"current_based",
+            builtin_models = {{"paired_compartment_if", &PairedCompartmentIfModel::attributes},
+                    {"current_based",
                                       &CurrentBasedSynapseModel::
                                               current_based_synapse_attributes},
                     {"current_based_int", &IntegerCurrentBasedSynapseModel::attributes},
