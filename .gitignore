@@ -34,3 +34,5 @@ compile_commands.json
 test_venv/
 *.so
 logs/*
+.venv/
+*.dylib

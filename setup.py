@@ -89,6 +89,6 @@ class CMakeBuild(build_ext):
         subprocess.check_call(["cmake", "--build", "."] + build_args, cwd=self.build_temp)
 
 setup(
-    ext_modules=[CMakeExtension("sanafe")],
+    ext_modules=[CMakeExtension("sanafecpp")],
     cmdclass={"build_ext": CMakeBuild}
 )

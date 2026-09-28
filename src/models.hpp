@@ -341,6 +341,39 @@ private:
     static bool truenorth_threshold_and_reset(TrueNorthNeuron &n);
 };
 
+// A numerical reference model, not a hardware-specific neuron ISA.
+class Float32IfModel : public SomaUnit
+{
+public:
+    Float32IfModel() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override { return states.at(address).voltage; }
+
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"threshold", "(float) Positive firing threshold; comparison uses >=."},
+        {"initial_voltage", "(float) Initial voltage, also restored on reset."},
+        {"bias", "(float) Constant drive added on every update."},
+        {"currents", "(list[float]) External current per update, then zero; excludes I/O cost."},
+    };
+
+private:
+    struct State
+    {
+        float threshold{1.0F};
+        float initial{0.0F};
+        float voltage{0.0F};
+        float bias{0.0F};
+        std::vector<float> currents;
+        size_t cursor{0};
+    };
+    std::vector<State> states;
+};
+
 class InputModel : public SomaUnit
 {
 public:

@@ -74,6 +74,7 @@ These tutorials can be run locally or using Google Colab.
 
    api
    layers
+   lava
    models
    data
    viz

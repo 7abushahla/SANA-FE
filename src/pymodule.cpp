@@ -1284,6 +1284,14 @@ PYBIND11_MODULE(sanafecpp, m)
                     pybind11::arg("log_energy") = false)
             .def("__repr__", &pycore_config_repr)
             .def_readonly("name", &sanafe::CoreConfiguration::name)
+            .def_property_readonly("max_neurons_supported",
+                    [](const sanafe::CoreConfiguration &self) {
+                        return self.pipeline.max_neurons_supported;
+                    })
+            .def_property_readonly("buffer_position",
+                    [](const sanafe::CoreConfiguration &self) {
+                        return self.pipeline.buffer_position;
+                    })
             .def_readonly("axon_in", &sanafe::CoreConfiguration::axon_in)
             .def_readonly(
                     "pipeline_hw", &sanafe::CoreConfiguration::pipeline_hw)

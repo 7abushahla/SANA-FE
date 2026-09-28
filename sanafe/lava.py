@@ -206,3 +206,104 @@ def process_to_sanafe(
     _greedy_map_to_arch(network, arch)
     network.save(save_path)
     return network
+
+
+def qcfs_chain_to_sanafe(layers, connections, currents, arch, placements):
+    """Export a fresh, explicitly connected QCFSIF/Dense float chain.
+
+    This restricted bridge requires the optional Lava fork providing QCFSIF.
+    ``currents`` is [first-layer neurons, updates], including any drain steps.
+    The first input must be unconnected. Every other input and output must
+    form exactly the supplied chain. Observer ports can be attached afterward.
+    ``placements`` supplies one (tile, core) pair per layer. The architecture
+    must use integrate_fire_float32 somas and a buffer before each soma.
+
+    Dense weights are copied as configured, including any threshold scaling.
+    Edges have one logical update of delay. This is a numerical export, not a
+    Loihi compiler. Accumulation uses SANA-FE's double-precision dendrite, so
+    arbitrary floating-point Dense reductions are not guaranteed bit-identical.
+    External current injection has no modeled host/encoder transfer cost.
+    """
+    import numpy as np
+    from lava.proc.dense.process import Dense
+    from lava.proc.qcfs import QCFSIF
+
+    if not layers or len(connections) != len(layers) - 1:
+        raise ValueError('Expected one Dense connection between each pair of layers')
+    if len(placements) != len(layers):
+        raise ValueError('Expected one placement per layer')
+    if len({id(p) for p in [*layers, *connections]}) != len(layers) + len(connections):
+        raise ValueError('Each Process must appear once')
+    for layer in layers:
+        if type(layer) is not QCFSIF or len(layer.v.shape) != 1:
+            raise ValueError('Only one-dimensional QCFSIF layers are supported')
+    for process in [*layers, *connections]:
+        if process.runtime is not None or process._is_compiled:
+            raise ValueError('Export fresh, uncompiled Processes only')
+    if layers[0].a_in.in_connections:
+        raise ValueError('Supply first-layer currents explicitly, before attaching an input')
+    for i, dense in enumerate(connections):
+        if type(dense) is not Dense:
+            raise ValueError('Only plain Dense connections are supported')
+        if (dense.s_in.in_connections != [layers[i].s_out] or
+                layers[i].s_out.out_connections != [dense.s_in] or
+                dense.a_out.out_connections != [layers[i + 1].a_in] or
+                layers[i + 1].a_in.in_connections != [dense.a_out]):
+            raise ValueError('Only direct, unbranched chains are supported')
+    if layers[-1].s_out.out_connections:
+        raise ValueError('Attach observers after export')
+    currents = np.asarray(currents, dtype=np.float32)
+    if (currents.ndim != 2 or currents.shape[0] != layers[0].v.shape[0]
+            or currents.shape[1] < 1 or not np.isfinite(currents).all()):
+        raise ValueError('currents must be a finite [neurons, updates] array')
+    counts = {}
+    cores = []
+    for layer, (tile_id, core_id) in zip(layers, placements):
+        if not (0 <= tile_id < len(arch.tiles)):
+            raise ValueError('Tile index outside architecture')
+        tile = arch.tiles[tile_id]
+        if not (0 <= core_id < len(tile.cores)):
+            raise ValueError('Core index outside tile')
+        core = tile.cores[core_id]
+        somas = [unit for unit in core.pipeline_hw if unit.implements_soma]
+        dendrites = [unit for unit in core.pipeline_hw if unit.implements_dendrite]
+        synapses = [unit for unit in core.pipeline_hw if unit.implements_synapse]
+        if (not somas or somas[0].model_info.name != 'integrate_fire_float32'
+                or core.buffer_position != sanafe.BufferPosition.buffer_before_soma_unit):
+            raise ValueError('Expected float32 IF soma with an external pre-soma buffer')
+        if (not dendrites or dendrites[0].model_info.name != 'accumulator'
+                or not synapses or synapses[0].model_info.name != 'current_based'):
+            raise ValueError('Expected accumulator dendrite and current_based synapse')
+        key = (tile_id, core_id)
+        counts[key] = counts.get(key, 0) + layer.v.shape[0]
+        if counts[key] > core.max_neurons_supported:
+            raise ValueError('Placement exceeds core neuron capacity')
+        cores.append(core)
+    network = sanafe.Network()
+    groups = []
+    for index, (layer, core) in enumerate(zip(layers, cores)):
+        group = network.create_neuron_group(
+            f'layer_{index}', layer.v.shape[0], log_spikes=True, log_potential=True)
+        values = {name: np.broadcast_to(getattr(layer, name).init, layer.v.shape)
+                  for name in ('threshold', 'bias', 'v')}
+        for offset, neuron in enumerate(group):
+            attributes = {'threshold': float(values['threshold'][offset]),
+                          'bias': float(values['bias'][offset]),
+                          'initial_voltage': float(values['v'][offset])}
+            if index == 0:
+                attributes['currents'] = currents[offset].tolist()
+            neuron.set_attributes(model_attributes=attributes)
+            neuron.map_to_core(core)
+        groups.append(group)
+    for index, dense in enumerate(connections):
+        weights = np.asarray(dense.weights.init, dtype=np.float64)
+        if weights.shape != (len(groups[index + 1]), len(groups[index])):
+            raise ValueError('Dense matrix shape does not match adjacent layers')
+        if not np.isfinite(weights).all():
+            raise ValueError('Dense weights must be finite')
+        for post, row in enumerate(weights):
+            for pre, weight in enumerate(row):
+                # Keep zero-weight connections, matching the declared dense graph.
+                groups[index][pre].connect_to_neuron(
+                    groups[index + 1][post], {'weight': float(weight)})
+    return network

@@ -947,6 +947,80 @@ sanafe::NeuronResetModes sanafe::model_parse_reset_mode(const std::string &str)
     return reset_mode;
 }
 
+void sanafe::Float32IfModel::set_attribute_neuron(const size_t address,
+        const std::string &name, const ModelAttribute &param)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    const auto checked_float = [](const ModelAttribute &value) {
+        const float result = static_cast<float>(static_cast<double>(value));
+        if (!std::isfinite(result))
+        {
+            throw std::invalid_argument("IF attributes must be finite float32 values");
+        }
+        return result;
+    };
+    if (name == "currents")
+    {
+        state.currents.clear();
+        for (const auto &value : std::get<std::vector<ModelAttribute>>(param.value))
+        {
+            state.currents.push_back(checked_float(value));
+        }
+    }
+    else if (name == "threshold")
+    {
+        state.threshold = checked_float(param);
+        if (state.threshold <= 0.0F)
+        {
+            throw std::invalid_argument("IF threshold must be positive");
+        }
+    }
+    else if (name == "initial_voltage")
+    {
+        state.initial = checked_float(param);
+        state.voltage = state.initial;
+    }
+    else if (name == "bias")
+    {
+        state.bias = checked_float(param);
+    }
+}
+
+sanafe::PipelineResult sanafe::Float32IfModel::update(const size_t address,
+        const std::optional<double> current, const long int /*timestep*/)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    const float external = state.cursor < state.currents.size()
+            ? state.currents.at(state.cursor) : 0.0F;
+    ++state.cursor;
+    const float input = static_cast<float>(current.value_or(0.0)) + external;
+    const float drive = input + state.bias;
+    state.voltage = state.voltage + drive;
+    const bool spike = state.voltage >= state.threshold;
+    if (spike)
+    {
+        state.voltage -= state.threshold;
+    }
+    return {std::nullopt, spike ? fired : updated, std::nullopt, std::nullopt};
+}
+
+void sanafe::Float32IfModel::reset()
+{
+    for (State &state : states)
+    {
+        state.voltage = state.initial;
+        state.cursor = 0;
+    }
+}
+
 std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
         const std::string &model_name)
 {
@@ -974,6 +1048,10 @@ std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
     {
         return std::shared_ptr<PipelineUnit>(new LoihiLifModel());
     }
+    if (model_name == "integrate_fire_float32")
+    {
+        return std::make_shared<Float32IfModel>();
+    }
     if (model_name == "truenorth")
     {
         return std::shared_ptr<PipelineUnit>(new TrueNorthModel());
@@ -996,6 +1074,7 @@ const sanafe::ModelMap &sanafe::get_builtin_models()
                     {"accumulator_with_delay", nullptr},
                     {"taps", &MultiTapModel1D::multitap_attributes},
                     {"input", &InputModel::input_attributes},
+                    {"integrate_fire_float32", &Float32IfModel::attributes},
                     {"leaky_integrate_fire",
                             &LoihiLifModel::loihi_lif_attributes},
                     {"truenorth", &TrueNorthModel::truenorth_attributes}};
