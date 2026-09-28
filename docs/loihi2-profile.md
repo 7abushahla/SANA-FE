@@ -46,3 +46,29 @@ The exporter validates shared resource budgets before network construction. Thes
 The integer pipeline carries bounded integers through SANA-FE's existing double-valued pipeline interface. All transported signed32 values are exactly representable. Neuron integration uses widened integer arithmetic, with explicit clipping at the voltage boundary. This does not add graded emitted messages.
 
 Range errors in core processing are captured inside worker loops and rethrown after synchronization. After an execution error, discard or reset the simulation before reuse. The implementation has been checked on a macOS build without OpenMP; an OpenMP-enabled Linux runtime remains a separate portability check.
+
+## Trace-derived workload and conditional runtime bound
+
+The reusable Loihi 2 candidate modules live beside each other in `sanafe/`. `loihi2.py` defines the architectural and resource candidate. `lava_integer.py` exports the supported numerical graph. `loihi2_runtime.py` analyzes a mapped simulation and applies an independent runtime equation. The C++ scheduler remains in `src/`; `sanafe/data.py` prepares generic trace tables and `sanafe/viz/` plots them. The thesis-specific sweep and evidence files belong outside this public package.
+
+Run the integer chain with `spike_trace=True`, `message_trace=True`, and `perf_trace=True`, then call:
+
+```python
+from sanafe.loihi2_runtime import analyze_binary_chain, RuntimeRates, max_affine_runtime
+
+workload = analyze_binary_chain(manifest, result, packet_bits=64)
+# The 64-bit packet size is an explicit hypothesis, not a Loihi 2 specification.
+# Supply source-qualified coefficients before requesting a numerical bound.
+rates = RuntimeRates(
+    dendop_seconds=..., synop_seconds=..., synmem_read_seconds=...,
+    link_bits_per_second=..., barrier_seconds=...,
+    dense_entries_per_read=...,
+)
+estimate = max_affine_runtime(workload, rates)
+```
+
+The workload report gives each numbered step's operations on every occupied core and bits on every directed XY mesh link. It also reports the busiest core and link. DendOps count each IF state update. SynOps count nonzero effective weights reached by an emitted binary message. Dense SynMem entries include stored zero weights. The `dense_entries_per_read` assumption converts each incoming axon's dense entries to an assumed number of reads, with rounding per axon. The packet-width assumption turns message counts into link bits. Neither conversion is a verified Intel packing or packet format.
+
+`max_affine_runtime` evaluates the five-term maximum in Timcheck *et al.* [2], Equation (1), on each step. It adds the resulting step bounds for a whole run. The model is separate from SANA-FE's inherited Loihi 1 `sim_time`. Its coefficients have no defaults; the module rejects missing, nonfinite, or nonpositive rates. Published Loihi 2 microbenchmarks characterize simple programs on specified hardware and software revisions [2]. Applying their rates to this custom IF program requires validation. The current output is a conditional lower bound, not calibrated Loihi 2 latency. It excludes host input and output transfer, physical instruction costs outside the five terms, and energy.
+
+The trace analyzer supports the restricted unbranched binary dense chain and its one-step buffered update convention. It checks spike/message correspondence, mapped source and destination cores, dense fanout, and simulation update counts. It does not model general multicast, graded spikes, or the full Loihi 2 packet protocol. Two parallel physical meshes are represented by an assumed effective link bandwidth, not assigned individual traffic by this analyzer. The existing BookSim configuration is unchanged.

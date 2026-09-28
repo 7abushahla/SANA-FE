@@ -44,6 +44,26 @@ class TestIntegerBridge(unittest.TestCase):
         self.assertEqual(chip.sim(3, potential_trace=True)['potential_trace'],
                          [[0, 0, 2], [2, 2, 0], [0, 0, 0]])
 
+    def test_real_message_trace_yields_mapped_workload(self):
+        import sanafe
+        from sanafe.loihi2 import load_loihi2_candidate
+        from sanafe.loihi2_runtime import analyze_binary_chain
+        layers, dense = self.graph()
+        arch = load_loihi2_candidate()
+        net, manifest = bridge.qcfs_fixed_chain_to_sanafe(
+            layers, dense, np.full((2, 3), 2, dtype=np.int32), arch,
+            [(0, 0), (4, 0)])
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        result = chip.sim(3, timing_model='detailed', spike_trace=True,
+                          message_trace=True, perf_trace=True)
+        work = analyze_binary_chain(manifest, result, packet_bits=64)
+        self.assertEqual(work['updates'], 3)
+        self.assertEqual(work['messages'], 4)
+        self.assertEqual(work['steps'][0]['maxima']['link_bits'], 128)
+        self.assertEqual(work['steps'][0]['maxima']['synops'], 2)
+        self.assertEqual(work['steps'][0]['maxima']['dense_synmem_entries'], 2)
+
     def test_configured_weight_precision_is_honored(self):
         layers, connections = self.graph(np.array([[127, -127]]), num_weight_bits=4)
         _, manifest = self.export(layers, connections)
