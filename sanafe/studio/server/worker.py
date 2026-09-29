@@ -46,6 +46,10 @@ def _answer(session, message):
     try:
         if message.get('op') == 'breakpoints':
             reply['data'] = session.set_breakpoints(message.get('specs'))
+        elif message.get('op') == 'watch':
+            reply['data'] = session.watch(message.get('keys'))
+        elif message.get('what') == 'core_state':
+            reply['data'] = session.core_state(message.get('core'), message.get('update'))
         elif message.get('what') == 'neuron':
             reply['data'] = session.neuron_detail(message['group'], int(message['offset']))
         else:
@@ -75,7 +79,7 @@ def run_worker(conn, ref, parameters, options):
 
     try:
         session = Session(ref.load(), parameters,
-                          trace_level=options.get('trace_level', 'full'),
+                          trace_level=options.get('trace_level'),
                           horizon=options.get('horizon'),
                           store_dir=options.get('store_dir'),
                           core_map=options.get('core_map'))
@@ -100,7 +104,7 @@ def run_worker(conn, ref, parameters, options):
                 commands.put({'op': 'close'})
                 return
             op = message.get('op')
-            if op in ('query', 'breakpoints'):
+            if op in ('query', 'breakpoints', 'watch'):
                 send(_answer(session, message))
                 continue
             with control:

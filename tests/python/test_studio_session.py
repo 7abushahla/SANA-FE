@@ -163,7 +163,8 @@ class TestSession(unittest.TestCase):
         described = session.describe()
         self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
                                           'metadata', 'state', 'update', 'core_map',
-                                          'breakpoints', 'breakpoint_warnings', 'run'})
+                                          'breakpoints', 'breakpoint_warnings', 'run',
+                                          'trace_level', 'watched'})
         self.assertEqual((described['state'], described['update'], described['horizon']),
                          ('idle', 0, 6))
         import json
@@ -178,9 +179,9 @@ class TestSession(unittest.TestCase):
         self.assertEqual(session.badge(),
                          'example_chip.yaml · modeled costs from this file · not measurements')
 
-    def test_aggregate_trace_level_is_stage_five(self):
-        with self.assertRaisesRegex(ValueError, 'stage 5'):
-            Session(ChainWorkload(), {}, trace_level='aggregate')
+    def test_unknown_trace_level(self):
+        with self.assertRaisesRegex(ValueError, 'full, aggregate'):
+            Session(ChainWorkload(), {}, trace_level='sparse')
 
     def test_horizon_override(self):
         session = self.session(horizon=2)

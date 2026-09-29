@@ -7,6 +7,7 @@ import tempfile
 import threading
 import uuid
 
+import numpy as np
 import sanafe
 from sanafe.loihi2 import (architecture_fingerprint, load_loihi2_candidate,
                            validate_core_budgets)
@@ -15,11 +16,11 @@ from .breakpoints import Breakpoints
 from .connectivity import Connectivity
 from .instrument import instrument_arch_yaml
 from .layout import ChipLayout
-from .records import build_update_record, neuron_map
+from .records import RecordCache, build_aggregate_record, build_update_record, neuron_map
 from .store import TraceStore
 from .workload import ParameterSpec, resolve_parameters
 
-TRACE_LEVELS = ('full',)
+TRACE_LEVELS = ('full', 'aggregate')
 TRACES = dict(spike_trace=True, potential_trace=True, message_trace=True,
               perf_trace=True)
 
@@ -60,11 +61,13 @@ def _jsonable(value):
 
 
 class Session:
-    def __init__(self, workload, parameters=None, *, trace_level='full',
+    def __init__(self, workload, parameters=None, *, trace_level=None,
                  horizon=None, store_dir=None, core_map=None):
+        if trace_level is None:
+            trace_level = getattr(workload, 'default_trace_level', 'full')
         if trace_level not in TRACE_LEVELS:
             raise ValueError(f"trace level {trace_level!r} is not available; "
-                             "'aggregate' arrives in stage 5, use 'full'")
+                             f"choose one of {', '.join(TRACE_LEVELS)}")
         if horizon is not None:
             ParameterSpec('horizon', 'int', minimum=1).validate(horizon)
         self.workload = workload
@@ -78,6 +81,7 @@ class Session:
         self._pause = threading.Event()
         self._scratch = None
         self.breakpoints = Breakpoints()
+        self.watched = []
         try:
             self._build()
         except BaseException:
@@ -111,6 +115,9 @@ class Session:
             self.core_budgets = {f'{stat["tile"]}.{stat["core"]}': stat for stat in
                                  validate_core_budgets(self.connectivity.core_stats())}
         self.records = []
+        self._cache = RecordCache(self.neurons, self.layout)
+        self._history = []  # aggregate level: (membranes, fired indices) per update
+        self.watched = [key for key in self.watched if key in self._cache.logged_pos]
         # Keep the breakpoints that still apply after a rebuild; say which did not.
         self.breakpoints, self.breakpoint_warnings = Breakpoints.compile_valid(
             self.breakpoints.specs, self)
@@ -194,9 +201,59 @@ class Session:
                 'group_attributes': connectivity.group_attributes,
                 'core_budgets': self.core_budgets}
 
+    def watch(self, keys):
+        """Choose the neurons whose membranes and spikes every record carries."""
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            raise ValueError('watches: expected a list of "group.offset" names')
+        for key in keys:
+            group, _, offset = key.rpartition('.')
+            if not offset.isdigit() or (group, int(offset)) not in self._cache.index:
+                raise ValueError(f'watch: no neuron {key!r}')
+            if key not in self._cache.logged_pos:
+                raise ValueError(f'watch: {key} does not log its potential, so its '
+                                 'membrane is not recorded')
+        self.watched = list(dict.fromkeys(keys))
+        return self.watched
+
+    def _membranes(self, update):
+        """(membrane vector in logged order, fired neuron indices) after an update."""
+        if not isinstance(update, int) or not 1 <= update <= self.update:
+            raise ValueError(f'update must be between 1 and {self.update}, got {update!r}')
+        if self.trace_level == 'aggregate':
+            return self._history[update - 1]
+        record = self.records[update - 1]
+        values = np.array([record.potentials[self._cache.keys[i]] for i in self._cache.logged])
+        fired = np.array([self._cache.index[tuple(a)] for a in record.fired], dtype=np.int32)
+        return values, fired
+
+    def core_state(self, core, update):
+        """Membranes and firing of one core's neurons after one update."""
+        if core not in self.connectivity.core_neurons:
+            raise KeyError(f'no neurons on core {core!r}')
+        values, fired = self._membranes(update)
+        fired = set(fired.tolist())
+        keys = [f'{group}.{offset}' for group, first, last in
+                self.connectivity.core_neurons[core] for offset in range(first, last + 1)]
+        position = self._cache.logged_pos
+        return {'update': update, 'core': core, 'neurons': keys,
+                'potentials': [float(values[position[k]]) if k in position else None
+                               for k in keys],
+                'fired': sorted(k for k in keys
+                                if self._cache.index[(k.rpartition('.')[0],
+                                                      int(k.rpartition('.')[2]))] in fired)}
+
     def neuron_detail(self, group, offset):
-        """One neuron's placement, attributes, connections, and reference traces."""
+        """One neuron's placement, attributes, connections, history, and references."""
         detail = self.connectivity.neuron(group, offset)
+        key = f'{group}.{int(offset)}'
+        index = self._cache.index[(group, int(offset))]
+        position = self._cache.logged_pos.get(key)
+        potential, fired = [], []
+        for update in range(1, self.update + 1):
+            values, spikes = self._membranes(update)
+            potential.append(float(values[position]) if position is not None else None)
+            fired.append(bool(index in spikes))
+        detail['history'] = {'potential': potential, 'fired': fired}
         series = getattr(self.built.reference, 'series', None)
         if series is not None:
             detail['reference'] = series(f'{group}.{int(offset)}')
@@ -218,6 +275,7 @@ class Session:
                 'core_map': dict(self.core_map),
                 'breakpoints': list(self.breakpoints.specs),
                 'breakpoint_warnings': list(self.breakpoint_warnings),
+                'trace_level': self.trace_level, 'watched': list(self.watched),
                 'run': self.store.directory.name if self.store is not None else None}
 
     def carry_breakpoints(self, specs):
@@ -270,14 +328,22 @@ class Session:
             # must fault the session, or update numbers would shift silently.
             try:
                 result = self._simulate()
-                record = build_update_record(self.update + 1, result, self.layout,
-                                             self.neurons)
+                if self.trace_level == 'aggregate':
+                    record = build_aggregate_record(self.update + 1, result, self.layout,
+                                                    self._cache, list(self.watched))
+                else:
+                    record = build_update_record(self.update + 1, result, self.layout,
+                                                 self.neurons, self._cache)
                 if self.built.reference is not None:
                     record.reference = self.built.reference.check(record)
                 if self.store is not None:
                     self.store.append(record)
             except Exception as error:
                 self._set_fault(error)
+            if self.trace_level == 'aggregate':
+                state = record.__dict__.pop('state')  # kept here, never serialized
+                self._history.append((state['potentials'],
+                                      np.flatnonzero(state['fired']).astype(np.int32)))
             self.records.append(record)
             produced.append(record)
             try:

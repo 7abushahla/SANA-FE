@@ -226,7 +226,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             return _json({'error': f'unknown workload {name!r}'}, 404)
         parameters = body.get('parameters') or {}
         horizon = body.get('horizon')
-        trace_level = body.get('trace_level', 'full')
+        trace_level = body.get('trace_level')
         core_map = body.get('core_map') or None
         carried = body.get('breakpoints') or None
         try:
@@ -240,9 +240,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             resolve_parameters(manager.workload(name), parameters)
             if horizon is not None:
                 ParameterSpec('horizon', 'int', minimum=1).validate(horizon)
-            if trace_level != 'full':
+            if trace_level not in (None, 'full', 'aggregate'):
                 raise ValueError(f"trace level {trace_level!r} is not available; "
-                                 "'aggregate' arrives in stage 5, use 'full'")
+                                 "choose full or aggregate")
         except ValueError as error:
             return _json({'error': str(error)}, 400)
         session_id = uuid.uuid4().hex[:12]
@@ -349,6 +349,32 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
                 session.ready['breakpoints'] = data
                 session.ready['breakpoint_warnings'] = []
         return _json({'breakpoints': data})
+
+    async def watches(request):
+        session = lookup(request)
+        if session is None:
+            return _json({'error': 'no such session'}, 404)
+        if not session.alive:
+            return _json({'error': 'session worker has exited; start a new session'}, 409)
+        body = await _body(request)
+        if body is None or not isinstance(body.get('watches'), list):
+            return _json({'error': 'body: expected {"watches": [...]}'}, 400)
+        data, failure = await ask(session, {'op': 'watch', 'keys': body['watches']})
+        return failure if failure is not None else _json({'watches': data})
+
+    async def core_state(request):
+        session = lookup(request)
+        if session is None:
+            return _json({'error': 'no such session'}, 404)
+        if not session.alive:
+            return _json({'error': 'session worker has exited; start a new session'}, 409)
+        try:
+            update = int(request.query_params.get('update', ''))
+        except ValueError:
+            return _json({'error': 'update: expected an integer'}, 400)
+        data, failure = await ask(session, {'what': 'core_state', 'update': update,
+                                            'core': request.path_params['core']})
+        return failure if failure is not None else _json(data)
 
     async def neuron(request):
         session = lookup(request)
@@ -480,6 +506,8 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/reset', reset, methods=['POST']),
         Route('/api/sessions/{session_id}/updates', updates),
         Route('/api/sessions/{session_id}/breakpoints', breakpoints, methods=['PUT']),
+        Route('/api/sessions/{session_id}/watches', watches, methods=['PUT']),
+        Route('/api/sessions/{session_id}/cores/{core}', core_state),
         Route('/api/sessions/{session_id}/neurons/{group}/{offset}', neuron),
         Route('/api/sessions/{session_id}/architecture', architecture),
         Route('/api/architectures', architectures),

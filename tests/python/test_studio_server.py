@@ -271,6 +271,33 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.post('/api/sessions', json={
             'workload': 'test-chain', 'breakpoints': 'b1'}).status_code, 400)
 
+    def test_aggregate_watches_and_core_state(self):
+        response = self.client.post('/api/sessions', json={'workload': 'test-chain',
+                                                            'trace_level': 'aggregate'})
+        self.assertEqual(response.status_code, 201, response.text)
+        sid = response.json()['id']
+        self.assertEqual(response.json()['trace_level'], 'aggregate')
+        watched = self.client.put(f'/api/sessions/{sid}/watches', json={'watches': ['layer_2.1']})
+        self.assertEqual((watched.status_code, watched.json()), (200, {'watches': ['layer_2.1']}))
+        self.assertEqual(self.client.put(f'/api/sessions/{sid}/watches',
+                                         json={'watches': ['layer_9.1']}).status_code, 400)
+        with self.client.websocket_connect(f'/ws/sessions/{sid}') as socket:
+            socket.receive_json()
+            self.client.post(f'/api/sessions/{sid}/step', json={'n': 3})
+            seen = until_settled(socket)
+        records = [m['record'] for m in seen if m['type'] == 'update']
+        self.assertEqual([list(r['potentials']) for r in records], [['layer_2.1']] * 3)
+        self.assertEqual(records[0]['messages'], [])
+        state = self.client.get(f'/api/sessions/{sid}/cores/31.0?update=2')
+        self.assertEqual(state.status_code, 200, state.text)
+        self.assertEqual(state.json()['neurons'], ['layer_2.0', 'layer_2.1'])
+        self.assertEqual(state.json()['potentials'][1], records[1]['potentials']['layer_2.1'])
+        for url in (f'/api/sessions/{sid}/cores/31.0?update=9', f'/api/sessions/{sid}/cores/31.0'):
+            self.assertEqual(self.client.get(url).status_code, 400, url)
+        self.assertEqual(self.client.get(f'/api/sessions/{sid}/cores/99.0?update=1').status_code, 404)
+        self.assertEqual(self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'trace_level': 'sparse'}).status_code, 400)
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)
