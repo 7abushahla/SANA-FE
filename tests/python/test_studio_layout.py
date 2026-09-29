@@ -25,6 +25,14 @@ class TestChipLayout(unittest.TestCase):
                 self.assertEqual(len(layout.tiles), width * height)
                 self.assertEqual(len(layout.tiles[0].cores), cores)
 
+    def test_partially_filled_mesh(self):
+        # demo_with_dendrites.yaml declares a 2 x 1 mesh but defines one tile.
+        layout = layout_for('demo_with_dendrites')
+        self.assertEqual((layout.width, layout.height, len(layout.tiles)), (2, 1, 1))
+        self.assertEqual(layout.tile_at(0, 0).tile_id, 0)
+        with self.assertRaisesRegex(ValueError, r'no tile at \(1, 0\)'):
+            layout.tile_at(1, 0)
+
     def test_tile_coordinates_follow_arch_cpp(self):
         layout = layout_for('loihi2')
         self.assertEqual((layout.tiles[16].x, layout.tiles[16].y), (4, 0))

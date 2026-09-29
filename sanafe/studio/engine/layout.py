@@ -35,8 +35,9 @@ class ChipLayout:
         described = chip.describe()
         width = int(described['noc_width_in_tiles'])
         height = int(described['noc_height_in_tiles'])
-        if width * height != len(described['tiles']):
-            raise ValueError(f'{len(described["tiles"])} tiles do not fill a '
+        # SANA-FE accepts meshes with unused positions (e.g. one tile in 2 x 1).
+        if len(described['tiles']) > width * height:
+            raise ValueError(f'{len(described["tiles"])} tiles exceed a '
                              f'{width} x {height} mesh')
         tiles = []
         for index, tile in enumerate(described['tiles']):
@@ -52,7 +53,10 @@ class ChipLayout:
         return cls(width, height, tuple(tiles))
 
     def tile_at(self, x, y):
-        return self.tiles[x * self.height + y]
+        index = x * self.height + y
+        if not (0 <= x < self.width and 0 <= y < self.height) or index >= len(self.tiles):
+            raise ValueError(f'no tile at ({x}, {y})')
+        return self.tiles[index]
 
     def core(self, key):
         tile, offset = (int(part) for part in key.split('.'))
