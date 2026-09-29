@@ -218,8 +218,14 @@ drive it.
 - **Architecture.** The loaded YAML and its differences from a bundled
   baseline, such as the Loihi 1 file.
 - **Debugger rail.** Breakpoints (add by kind, enable or disable, remove;
-  the one that stopped the run is highlighted), watches, the placement core
-  map with pending edits, and saved runs with export links.
+  the one that stopped the run is highlighted), watches, and the placement
+  core map with pending edits.
+- **Saved runs.** A dock tab with every stored run and its export links. It
+  lives in the dock because the list grows with every run.
+- **Layout.** The center view sets the height of the main row, so the dock
+  starts directly below it. The rail and inspector keep that height and
+  scroll inside it. Long names wrap inside their pane, and no view scrolls
+  sideways.
 - **Neuron actions.** Watch, Break when it fires, and Highlight connections
   (fan-in cores in blue, fan-out cores in green on the chip).
 - **Compare.** Two saved runs: spike-train identity, totals, a step-time
@@ -233,7 +239,9 @@ drive it.
 
 Run through this list in a real browser after changes to the web files.
 The headless smoke test (`tests/js/studio_smoke.cjs`) covers the same path
-without a display.
+without a display. jsdom does no layout, so it cannot see overflow or
+overlap; `SANA-FE-thesis/studio_workloads/smoke_layout.cjs` measures that in
+headless Chrome for every view and tab of both QCFS workloads.
 
 1. Start the thesis launcher and open the page. The badge reads "Loihi 2
    candidate · costs inherited from Loihi 1 · not hardware".
@@ -287,7 +295,7 @@ without a display.
     stays "match".
 20. Open Compare. A is the edited run and B the previous run of the same
     length. The summary reads "spike trains identical"; the hops differ.
-21. In Saved runs, open the raster export of a run. The SVG shows the
+21. In the Saved runs tab, open the raster export of a run. The SVG shows the
     spikes, titled as modeled, not measured.
 22. Start `qcfs-resnet20` with `T = 2` (the build takes about 30 s). 109
     cores are colored, the chip note says "Aggregate trace level", and the

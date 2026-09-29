@@ -222,14 +222,11 @@ async function waitFor(check, what, timeout = 120000) {
       /empty/.test(at('16.0').getAttribute('class')) && $('btnApplyEdits').disabled && text('uNum') === '0', 'rebuilt with the swap');
     $('btnRun').click();
     await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'edited placement runs');
-    await waitFor(() => document.querySelectorAll('#runsRail li.run').length >= 4, 'saved runs listed');
-    document.querySelector('#tabs button[data-tab="compare"]').click();
-    await waitFor(() => $('btnCompare'), 'compare controls');
-    $('btnCompare').click();
-    await waitFor(() => $('cmpSummary') && /spike trains identical/.test(text('cmpSummary')), 'placements compare identical')
-      .catch((e) => { throw new Error(e.message + ': ' + ($('cmpSummary') ? text('cmpSummary') : 'no summary; result: ' + ($('cmpResult') ? text('cmpResult') : 'none') + '; dock: ' + text('dock').slice(0, 200))); });
-    if (document.querySelectorAll('#dock tr.cmprow').length !== 6) throw new Error('compare table should have 6 rows');
-    const edited = document.querySelector('#runsRail li.run.current');
+    // Saved runs live in their own dock tab, so the list never lengthens the rail.
+    if (document.querySelector('.rail li.run')) throw new Error('saved runs must not be listed in the rail');
+    document.querySelector('#tabs button[data-tab="runs"]').click();
+    await waitFor(() => document.querySelectorAll('#runList li.run').length >= 4, 'saved runs listed in their tab');
+    const edited = document.querySelector('#runList li.run.current');
     if (!edited || !/edited placement/.test(edited.textContent) || !/6 updates/.test(edited.textContent)) {
       throw new Error('the current run should be the edited one with 6 updates: ' + (edited ? edited.textContent : 'none'));
     }
@@ -237,6 +234,12 @@ async function waitFor(check, what, timeout = 120000) {
     const exported = await fetch(new URL(link.getAttribute('href'), BASE));
     const exportedBody = await exported.text();
     if (exported.status !== 200 || !/svg/.test(exportedBody)) throw new Error('raster export failed: ' + exported.status + ' ' + exportedBody.slice(0, 300) + ' ' + link.getAttribute('href'));
+    document.querySelector('#tabs button[data-tab="compare"]').click();
+    await waitFor(() => $('btnCompare'), 'compare controls');
+    $('btnCompare').click();
+    await waitFor(() => $('cmpSummary') && /spike trains identical/.test(text('cmpSummary')), 'placements compare identical')
+      .catch((e) => { throw new Error(e.message + ': ' + ($('cmpSummary') ? text('cmpSummary') : 'no summary; result: ' + ($('cmpResult') ? text('cmpResult') : 'none') + '; dock: ' + text('dock').slice(0, 200))); });
+    if (document.querySelectorAll('#dock tr.cmprow').length !== 6) throw new Error('compare table should have 6 rows');
 
     $('params').querySelector('[data-param="steps"]').value = '3000';
     $('btnStart').click();

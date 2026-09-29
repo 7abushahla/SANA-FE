@@ -1,4 +1,5 @@
-/* Left-rail debugger sections: breakpoints, watches, placement edits, saved runs. */
+/* Debugger sections: breakpoints, watches, and placement edits in the left
+   rail; saved runs in their dock tab. */
 (function () {
   const S = window.Studio;
   const FIELDS = {
@@ -91,7 +92,7 @@
     renderRuns(list, runs, currentRun) {
       list.innerHTML = '';
       if (!runs.length) { S.html(list, 'li', { class: 'muted' }, 'none saved (server started with --no-store?)'); return; }
-      for (const run of runs.slice(0, 12)) {
+      for (const run of runs) {
         const item = S.html(list, 'li', { class: 'run' + (run.id === currentRun ? ' current' : ''), 'data-run': run.id });
         const params = Object.keys(run.parameters || {}).map((k) => k + '=' + run.parameters[k]).join(' ');
         const edits = Object.keys(run.core_map || {}).length ? ' · edited placement' : '';

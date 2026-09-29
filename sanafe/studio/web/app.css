@@ -18,7 +18,14 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sa
 .state.stopped { background: #c77622; }
 .state.faulted { background: #b8445a; }
 .badge { background: #fff3cd; color: #7a5a00; font-size: 11px; padding: 3px 12px; border-bottom: 1px solid #eadca8; }
-.main { display: grid; grid-template-columns: 230px 1fr 290px; gap: 8px; padding: 8px; }
+/* The center column sets the row height (at least 520px). The side panes take
+   that height and scroll inside it, so a long rail or inspector can never
+   stretch blank space into the center or push the dock down. */
+.main { display: grid; grid-template-columns: 230px 1fr 290px; grid-template-rows: minmax(520px, auto); gap: 8px; padding: 8px; }
+.main > aside.pane { contain: size; overflow-y: auto; scrollbar-width: thin; }
+/* A visible thumb (macOS hides overlay scrollbars) shows that the pane scrolls. */
+.main > aside.pane::-webkit-scrollbar { width: 8px; }
+.main > aside.pane::-webkit-scrollbar-thumb { background: #c3d1da; border-radius: 4px; }
 .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
 .pane h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #40596a; }
 .rail label { display: block; margin: 6px 0; color: var(--muted); }
@@ -178,6 +185,7 @@ pre.yaml { max-height: 260px; overflow: auto; background: #f8fafb; border: 1px s
 .raillist { list-style: none; margin: 4px 0; padding: 0; font-size: 11px; }
 .raillist li { padding: 3px 4px; border-bottom: 1px solid #eef2f5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .raillist li.run { display: block; }
+.runlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 14px; margin: 0; }
 .raillist li.run.current { background: #eef6f3; }
 .raillist li.watch { cursor: pointer; color: #2368a0; }
 .raillist li.bp.hit { background: #fff0d9; font-weight: 600; }

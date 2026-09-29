@@ -96,7 +96,16 @@
       discard: () => { app.pending = Object.assign({}, app.applied); renderRail(); previewPlacement(); },
       reset: () => { app.pending = {}; renderRail(); previewPlacement(); },
     });
-    S.rail.renderRuns($('runsRail'), app.runs, app.session && app.session.run);
+  }
+
+  /* Saved runs have their own dock tab: the list grows with every run, so it
+     must not lengthen the rail. */
+  function renderRunsTab() {
+    if (app.tab !== 'runs') return;
+    const dock = $('dock');
+    let list = $('runList');
+    if (!list) { dock.innerHTML = ''; list = S.html(dock, 'ul', { id: 'runList', class: 'raillist runlist' }); }
+    S.rail.renderRuns(list, app.runs, app.session && app.session.run);
   }
 
   async function saveBreakpoints(specs) {
@@ -133,6 +142,7 @@
       app.runs = [];
     }
     renderRail();
+    renderRunsTab();
     if (app.tab === 'compare') redraw();
   }
 
@@ -321,6 +331,7 @@
     const highlight = $('btnHighlight');
     if (highlight) highlight.addEventListener('click', () => highlightConnections(sel.key));
     if (app.tab === 'compare') S.compare.render($('dock'), app.runs, app.session && app.session.run);
+    renderRunsTab();
     $('uNum').textContent = player.records.length;
     showSpeed();
     const scrub = $('scrub');
