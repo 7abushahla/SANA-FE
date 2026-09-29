@@ -8,8 +8,10 @@ import threading
 import uuid
 
 import sanafe
-from sanafe.loihi2 import architecture_fingerprint, load_loihi2_candidate
+from sanafe.loihi2 import (architecture_fingerprint, load_loihi2_candidate,
+                           validate_core_budgets)
 
+from .connectivity import Connectivity
 from .instrument import instrument_arch_yaml
 from .layout import ChipLayout
 from .records import build_update_record, neuron_map
@@ -71,7 +73,11 @@ class Session:
         self._store_dir = Path(store_dir) if store_dir is not None else None
         self._pause = threading.Event()
         self._scratch = None
-        self._build()
+        try:
+            self._build()
+        except BaseException:
+            self.close()
+            raise
 
     def _build(self):
         self._pause.clear()
@@ -87,6 +93,12 @@ class Session:
         self.chip.load(self.built.network)
         self.layout = ChipLayout.from_chip(self.chip)
         self.neurons = neuron_map(self.chip)
+        self.connectivity = Connectivity.from_network(self.built.network, self.neurons)
+        self._candidate = (architecture_fingerprint(self.built.arch) ==
+                           architecture_fingerprint(load_loihi2_candidate()))
+        if self._candidate:
+            # The budgets are Loihi 2 figures, so only the candidate is held to them.
+            validate_core_budgets(self.connectivity.core_stats())
         self.records = []
         self.state = SessionState.IDLE
         self.stop_reason = None
@@ -125,13 +137,25 @@ class Session:
                                       {'name': neuron.group, 'size': 0, 'cores': {}})
             entry['size'] += 1
             entry['cores'][neuron.core] = entry['cores'].get(neuron.core, 0) + 1
+        connectivity = self.connectivity
         return {'groups': list(groups.values()),
-                'occupied': sorted({neuron.core for neuron in self.neurons})}
+                'occupied': sorted({neuron.core for neuron in self.neurons}),
+                'connections': connectivity.group_edges,
+                'core_links': connectivity.core_links,
+                'core_neurons': connectivity.core_neurons,
+                'group_attributes': connectivity.group_attributes}
+
+    def neuron_detail(self, group, offset):
+        """One neuron's placement, attributes, connections, and reference traces."""
+        detail = self.connectivity.neuron(group, offset)
+        series = getattr(self.built.reference, 'series', None)
+        if series is not None:
+            detail['reference'] = series(f'{group}.{int(offset)}')
+        return detail
 
     def badge(self):
         """The provenance line every view must show for this architecture."""
-        candidate = architecture_fingerprint(load_loihi2_candidate())
-        if architecture_fingerprint(self.built.arch) == candidate:
+        if self._candidate:
             return 'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware'
         return (f'{Path(self.built.arch_yaml).name} · modeled costs from this file · '
                 'not measurements')

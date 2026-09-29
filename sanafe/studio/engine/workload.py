@@ -51,8 +51,18 @@ class BuiltWorkload:
 
 
 class ReferenceChecker(Protocol):
-    def check(self, record) -> Optional[dict]:
-        """Return None when the record agrees, or a dict naming the first mismatch."""
+    """Compares each update with reference executions of the same network.
+
+    ``check`` returns ``{'status': 'match', 'references': [...]}``,
+    ``{'status': 'unchecked', 'reason': ...}``, or ``{'status': 'mismatch',
+    'reference', 'neuron', 'quantity', 'expected', 'actual', 'mismatches'}``
+    naming the first differing neuron. A checker may also offer
+    ``series(key)``: ``{reference: {'potential': [...], 'spike': [...]}}``
+    indexed from update 1, with None where that reference has no value.
+    """
+
+    def check(self, record) -> dict:
+        ...
 
 
 class Workload(Protocol):
