@@ -7,6 +7,10 @@
   function counters(record, key, t) {
     const c = { pin: 0, sin: 0, pout: 0, fired: 0, busy: false, done: true, mapped: false };
     if (!record) return c;
+    if (S.isAggregate(record)) {  // no messages kept: totals for the whole update
+      const totals = record.core_counts[key];
+      if (totals) { c.pin = totals.packets_in; c.sin = totals.spikes_in; c.pout = totals.packets_out; }
+    }
     for (const m of record.messages) {
       if (m.dst === key && m.receive <= t) { c.pin += 1; c.sin += m.spikes; }
       if (m.src === key && m.send <= t) c.pout += 1;
@@ -106,7 +110,8 @@
     const ranges = ctx.network.core_neurons[key] || [];
     const box = this.container;
     const head = S.html(box, 'div', { class: 'title' });
-    head.innerHTML = 'pipeline this update, SANA-FE order · counters at the playhead ' + S.mark('D');
+    head.innerHTML = 'pipeline this update, SANA-FE order · counters at the playhead ' + S.mark('D') +
+      ' (whole-update totals at the aggregate trace level)';
     this.panels = [{ key: key, cells: buildStrip(box, core) }];
     const cols = S.html(box, 'div', { class: 'corecols' });
     const left = S.html(cols, 'div', { class: 'pane' });
@@ -181,14 +186,22 @@
       '<div class="small muted">connections ' + S.mark('R') + ' · packets sent by the playhead ' + S.mark('D') + '</div>' : 'no outgoing connections; spikes are read from the trace';
 
     const c = counters(record, key, t);
-    const fired = new Set(record ? record.fired.map((f) => f[0] + '.' + f[1]) : []);
+    let potentials = record ? record.potentials : {};
+    let fired = new Set(record ? record.fired.map((f) => f[0] + '.' + f[1]) : []);
+    if (S.isAggregate(record)) {
+      // Membranes of this core are fetched from the worker for the shown update.
+      const state = this.handlers.coreState(key, record.update);
+      potentials = {};
+      fired = new Set(state ? state.fired : []);
+      if (state) state.neurons.forEach((n, i) => { if (state.potentials[i] !== null) potentials[n] = state.potentials[i]; });
+    }
     const thresholds = this.ctx.network.group_attributes || {};
     let scale = 0;
-    if (record) for (const n of this.neurons) scale = Math.max(scale, Math.abs(record.potentials[n] || 0));
+    if (record) for (const n of this.neurons) scale = Math.max(scale, Math.abs(potentials[n] || 0));
     for (const cell of this.cells) {
       let sum = 0, count = 0, spiked = false;
       for (const n of cell.members) {
-        const v = record ? record.potentials[n] : undefined;
+        const v = potentials[n];
         if (typeof v === 'number') {
           const group = n.slice(0, n.lastIndexOf('.'));
           const theta = thresholds[group] && thresholds[group].threshold;

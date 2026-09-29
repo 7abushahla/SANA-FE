@@ -6,12 +6,32 @@
     workloads: [], session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
     renderKey: null, alive: true, view: { mode: 'chip', level: 'chip', tile: null, core: null },
     details: {}, detailVersion: 0, watches: [],
-    breakpoints: [], hitId: null, runs: [], applied: {}, pending: {},
+    breakpoints: [], hitId: null, runs: [], applied: {}, pending: {}, coreStates: {},
   };
+  const CHIP_NOTE = $('chipNote').innerHTML;
 
   const chip = new S.Chip($('chip'), select, zoomTo, { onDrag: dragCore });
   const mini = new S.Chip($('minimap'), null, null, { mini: true });
-  const zoom = new S.Zoom($('zoom'), { openCore: openCore, selectNeuron: (key) => select({ kind: 'neuron', key: key }) });
+  const zoom = new S.Zoom($('zoom'), { openCore: openCore, selectNeuron: (key) => select({ kind: 'neuron', key: key }),
+    coreState: coreState });
+
+  /* Aggregate sessions keep a core's membranes in the worker; fetch them per
+     shown update and redraw when they arrive. */
+  function coreState(core, update) {
+    const key = core + '@' + update;
+    if (key in app.coreStates) return app.coreStates[key];
+    app.coreStates[key] = null;
+    const sessionId = app.session.id;
+    S.api.coreState(sessionId, core, update).then((state) => {
+      if (app.session && app.session.id === sessionId) { app.coreStates[key] = state; redraw(); }
+    }).catch(() => { delete app.coreStates[key]; });
+    return null;
+  }
+
+  function syncWatches() {
+    if (!app.session) return;
+    S.api.setWatches(app.session.id, app.watches).catch((error) => { $('formError').textContent = error.message; });
+  }
   const player = new S.Player(frame);
 
   function context() {
@@ -159,6 +179,8 @@
 
   function addWatch(key) {
     if (app.watches.indexOf(key) < 0) app.watches.push(key);
+    syncWatches();
+    delete app.details[key];  // refetch, so its history is current
     loadDetail(key);
     renderRail();
     redraw();
@@ -166,6 +188,7 @@
 
   function removeWatch(key) {
     app.watches = app.watches.filter((k) => k !== key);
+    syncWatches();
     renderRail();
     redraw();
   }
@@ -309,7 +332,11 @@
     const hit = info.state === 'stopped' && /^breakpoint ([^:]+):/.exec(info.reason || '');
     const hitId = hit ? hit[1] : null;
     if (hitId !== app.hitId) { app.hitId = hitId; renderRail(); }
-    if (['finished', 'stopped', 'paused'].indexOf(info.state) >= 0) refreshRuns();
+    if (['finished', 'stopped', 'paused'].indexOf(info.state) >= 0) {
+      refreshRuns();
+      // A settled run: refresh watched neurons' histories from the worker.
+      for (const key of app.watches) { delete app.details[key]; loadDetail(key); }
+    }
     const node = $('state');
     node.textContent = describeState(info);
     node.className = 'state ' + info.state;
@@ -335,7 +362,12 @@
       return Number(key.slice(cut + 1)) < (sizes[key.slice(0, cut)] || 0);
     });
     app.details = {};
+    app.coreStates = {};
     app.detailVersion += 1;
+    $('chipNote').innerHTML = ready.trace_level === 'aggregate'
+      ? 'Aggregate trace level: link width shows packets per mesh link over the update, following the reconstructed x-then-y route ' +
+        S.mark('X') + '; no individual packets are kept. Core finish times ' + S.mark('D') + ' still animate.'
+      : CHIP_NOTE;
     chip.selected = null;
     chip.route = null;
     app.selection = { kind: 'chip' };
@@ -363,6 +395,7 @@
     renderRail();
     refreshRuns();
     for (const key of app.watches) loadDetail(key);
+    if (app.watches.length) syncWatches();
     setView(same ? app.view : { level: 'chip' });
   }
 
@@ -408,6 +441,7 @@
     const horizon = $('horizon').value.trim();
     if (horizon) body.horizon = /^\d+$/.test(horizon) ? Number(horizon) : horizon;
     if (coreMap && Object.keys(coreMap).length) body.core_map = coreMap;
+    if ($('traceLevel').value) body.trace_level = $('traceLevel').value;
     if (app.breakpoints.length) body.breakpoints = app.breakpoints;
     try {
       const created = await S.api.create(body);

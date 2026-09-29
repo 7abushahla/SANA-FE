@@ -11,6 +11,7 @@
 
     render(container, record, selectedMid, onPick) {
       if (!record) { container.innerHTML = ''; container.textContent = 'No update yet.'; return; }
+      if (S.isAggregate(record)) { S.messages.links(container, record); return; }
       let input = container.querySelector('#msgFilter');
       if (!input) {
         container.innerHTML = '';
@@ -25,6 +26,21 @@
       container._selected = selectedMid;
       container._pick = onPick;
       S.messages.rows(container, record, selectedMid, onPick);
+    },
+
+    links(container, record) {
+      container.innerHTML = '';
+      const note = S.html(container, 'div', { class: 'small muted' });
+      note.innerHTML = 'Update ' + record.update + ': ' + record.counts.messages + ' messages ' + S.mark('R') +
+        ', not kept at the aggregate trace level. Packets per mesh link follow the reconstructed x-then-y route ' + S.mark('X') + '.';
+      const table = S.html(container, 'table', { id: 'linkTable' });
+      const head = S.html(table, 'tr');
+      ['link (tile > tile)', 'packets'].forEach((h) => S.html(head, 'th', {}, h));
+      Object.keys(record.links).sort((a, b) => record.links[b] - record.links[a]).slice(0, 200).forEach((hop) => {
+        const row = S.html(table, 'tr', { class: 'linkrow' });
+        S.html(row, 'td', {}, hop.replace('>', ' → '));
+        S.html(row, 'td', {}, String(record.links[hop]));
+      });
     },
 
     rows(container, record, selectedMid, onPick) {

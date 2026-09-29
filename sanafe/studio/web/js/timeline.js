@@ -42,6 +42,10 @@
         }
       }
 
+      if (S.isAggregate(record)) {
+        S.svg(svg, 'text', { x: left, y: 17, class: 'axis' }, 'aggregate trace level: ' + record.counts.messages +
+          ' messages counted, not kept, so no message rows');
+      }
       S.svg(svg, 'line', { x1: x(t), y1: 2, x2: x(t), y2: bottom, class: 'playhead' });
       S.svg(svg, 'text', { x: left, y: height - 10, class: 'axis' }, '0');
       S.svg(svg, 'text', { x: left + width, y: height - 10, 'text-anchor': 'end', class: 'axis' }, S.fmtTime(step) + ' modeled');

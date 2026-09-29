@@ -28,7 +28,9 @@
     <label>workload <select id="workload"></select></label>
     <div id="params"></div>
     <label>horizon override <input id="horizon" type="number" min="1" step="1" placeholder="workload default"></label>
-    <div class="muted small">trace level: full</div>
+    <label>trace level <select id="traceLevel"><option value="">workload default</option>
+      <option value="full">full: every message</option>
+      <option value="aggregate">aggregate: counts per core and link</option></select></label>
     <button id="btnStart" class="go">Start session</button>
     <div id="formError" class="error"></div>
     <div id="sessionInfo" class="small"></div>

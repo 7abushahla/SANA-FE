@@ -32,6 +32,8 @@
     architectures: () => request('GET', '/api/architectures'),
     setBreakpoints: (id, specs) => request('PUT', '/api/sessions/' + id + '/breakpoints', { breakpoints: specs }),
     runs: () => request('GET', '/api/runs'),
+    setWatches: (id, keys) => request('PUT', '/api/sessions/' + id + '/watches', { watches: keys }),
+    coreState: (id, core, update) => request('GET', '/api/sessions/' + id + '/cores/' + core + '?update=' + update),
     compare: (a, b) => request('POST', '/api/compare', { a: a, b: b }),
     architecture: (id, baseline) => request('GET', '/api/sessions/' + id + '/architecture' +
       (baseline ? '?baseline=' + encodeURIComponent(baseline) : '')),

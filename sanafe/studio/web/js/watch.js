@@ -11,7 +11,10 @@
       (detail && detail.reference ? ' · reference executions ' + S.mark('ref') + ' dashed' : '') + ' · red ticks: SANA-FE spikes';
     const remove = S.html(head, 'button', { class: 'linkbtn', 'data-remove': key }, 'remove');
     remove.addEventListener('click', () => onRemove(key));
-    const series = { 'SANA-FE': records.map((r) => (key in r.potentials ? r.potentials[key] : null)) };
+    // History from the worker covers updates before the watch; records add the rest.
+    const history = (detail && detail.history) || { potential: [], fired: [] };
+    const series = { 'SANA-FE': records.map((r, i) => (key in r.potentials ? r.potentials[key] :
+      (history.potential[i] !== undefined ? history.potential[i] : null))) };
     const references = (detail && detail.reference) || {};
     for (const name in references) series[name] = references[name].potential;
     const count = Math.max(1, ...Object.values(series).map((s) => s.length));
@@ -40,7 +43,7 @@
     });
     records.forEach((r, i) => {
       const group = key.slice(0, key.lastIndexOf('.')), offset = Number(key.slice(key.lastIndexOf('.') + 1));
-      if (r.fired.some((f) => f[0] === group && f[1] === offset)) {
+      if (r.fired.some((f) => f[0] === group && f[1] === offset) || history.fired[i]) {
         S.svg(svg, 'line', { x1: x(i), y1: H - BOTTOM + 2, x2: x(i), y2: H - BOTTOM + 10, class: 'spiketick' });
       }
     });

@@ -46,7 +46,11 @@
       const mapped = keys.filter((k) => session.network.occupied.indexOf(k) >= 0).length;
       const out = record.messages.filter((m) => keys.indexOf(m.src) >= 0).length;
       const inn = record.messages.filter((m) => keys.indexOf(m.dst) >= 0).length;
-      const through = record.messages.filter((m) => m.path.indexOf(tile.id) >= 0).length;
+      let through = record.messages.filter((m) => m.path.indexOf(tile.id) >= 0).length;
+      if (S.isAggregate(record)) {  // packets entering or leaving this router on mesh links
+        through = 0;
+        for (const hop in record.links) if (hop.split('>').map(Number).indexOf(tile.id) >= 0) through += record.links[hop];
+      }
       return ['Inspector · tile ' + tile.id, rows([
         ['position (x, y)', tile.x + ', ' + tile.y, 'R'],
         ['mapped cores', mapped + ' / ' + keys.length, 'R'],
@@ -119,8 +123,12 @@
       if (!record) {
         items.push(['this update', 'no update yet', '']);
       } else {
-        const v = record.potentials[key];
-        const fired = record.fired.some((f) => f[0] === group && f[1] === offset);
+        const past = detail.history && detail.history.potential.length >= record.update;
+        let v = record.potentials[key];
+        if (v === undefined && past) v = detail.history.potential[record.update - 1];
+        if (v === null) v = undefined;
+        const fired = record.fired.some((f) => f[0] === group && f[1] === offset) ||
+          (past && detail.history.fired[record.update - 1]);
         items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
         items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
       }

@@ -35,6 +35,11 @@
     return (nj * 1000).toFixed(2) + ' pJ';
   };
 
+  /* Aggregate records keep counts per core and link, not individual messages. */
+  S.isAggregate = function (record) {
+    return !!record && record.provenance && record.provenance.messages === 'not kept (aggregate)';
+  };
+
   S.escape = function (text) {
     return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   };

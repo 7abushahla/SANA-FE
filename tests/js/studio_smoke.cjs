@@ -255,8 +255,39 @@ async function waitFor(check, what, timeout = 120000) {
     q('btnPause').click();
     await waitFor(() => q('state').textContent === 'paused', 'paused after reload');
     await waitFor(async () => Number(q('uNum').textContent) === (await serverUpdate()), 'no missing or duplicate updates');
+    // Aggregate trace level: link heat, link table, on-demand core state, late watch.
+    q('horizon').value = '';
+    q('params').querySelector('[data-param="steps"]').value = '6';
+    q('traceLevel').value = 'aggregate';
+    q('btnStart').click();
+    await waitFor(() => q('uHorizon').textContent === '6' && q('uNum').textContent === '0', 'aggregate session');
+    if (!/aggregate/i.test(q('chipNote').textContent)) throw new Error('chip note must say aggregate: ' + q('chipNote').textContent);
+    q('btnRun').click();
+    await waitFor(() => q('state').textContent === 'finished' && q('uNum').textContent === '6', 'aggregate run');
+    await waitFor(() => page.window.document.querySelectorAll('#chip line.link.heat').length > 0, 'link heat on the chip');
+    page.window.document.querySelector('#tabs button[data-tab="messages"]').click();
+    await waitFor(() => page.window.document.querySelectorAll('#linkTable tr.linkrow').length > 0, 'per-link table');
+    const pageClick = (node) => node.dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    pageClick(q('mNet'));
+    // The drag edit is still applied, so find layer_1's core (4 neurons) by its chip.
+    const layer1Chip = () => [...page.window.document.querySelectorAll('#network rect.corechip')]
+      .find((r) => / 4 neurons/.test(r.textContent));
+    await waitFor(layer1Chip, 'aggregate network chips');
+    pageClick(layer1Chip());
+    await waitFor(() => {
+      const cells = [...page.window.document.querySelectorAll('#zoom .ncell i')];
+      return cells.length === 4 && cells.some((i) => i.style.height && i.style.height !== '0%');
+    }, 'core state fetched for the core view');
+    pageClick(page.window.document.querySelector('#zoom .ncell[data-neuron="layer_1.2"]'));
+    await waitFor(() => q('btnWatch'), 'aggregate neuron inspector');
+    q('btnWatch').click();
+    page.window.document.querySelector('#tabs button[data-tab="watch"]').click();
+    await waitFor(() => {
+      const line = page.window.document.querySelector('#dock svg.watchplot polyline.trace.t0');
+      return line && line.getAttribute('points').trim().split(/\s+/).length === 6;
+    }, 'late watch shows all 6 updates');
     if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume)');
+    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume, aggregate level)');
     page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);

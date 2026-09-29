@@ -185,7 +185,28 @@
     if (!this.overlay) return;
     const overlay = this.overlay;
     while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
-    for (const key in this.links) this.links[key].setAttribute('class', 'link');
+    for (const key in this.links) {
+      this.links[key].setAttribute('class', 'link');
+      this.links[key].removeAttribute('style');
+    }
+    if (record && S.isAggregate(record)) {
+      // Packet counts per mesh link over the whole update, both directions (X).
+      const load = {};
+      for (const hop in record.links) {
+        const [a, b] = hop.split('>').map(Number);
+        const key = linkKey(a, b);
+        load[key] = (load[key] || 0) + record.links[hop];
+      }
+      const peak = Math.max(1, ...Object.values(load));
+      for (const key in load) {
+        const line = this.links[key];
+        if (!line) continue;
+        line.setAttribute('class', 'link heat');
+        line.setAttribute('style', 'stroke-width:' + (2 + 9 * load[key] / peak).toFixed(1) +
+          ';stroke-opacity:' + (0.35 + 0.65 * load[key] / peak).toFixed(2));
+        S.svg(line, 'title', {}, load[key] + ' packets over this link (reconstructed route, X)');
+      }
+    }
     if (record) {
       for (const message of record.messages) {
         if (t >= message.send && t <= message.receive) {
