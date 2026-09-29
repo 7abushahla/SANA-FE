@@ -184,7 +184,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
         manager.sessions[session_id] = session
         ready = await asyncio.to_thread(session.ready_event.wait, manager.build_timeout)
         if session.error or not ready:
-            manager.close(session_id)
+            await asyncio.to_thread(manager.close, session_id)
             if session.error:
                 return _json({'error': session.error}, 400)
             return _json({'error': f'session build exceeded {manager.build_timeout:.0f} s'}, 504)
@@ -199,7 +199,8 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
     async def delete_session(request):
         if lookup(request) is None:
             return _json({'error': 'no such session'}, 404)
-        manager.close(request.path_params['session_id'])
+        # Closing waits for the worker to exit; keep the event loop free.
+        await asyncio.to_thread(manager.close, request.path_params['session_id'])
         return Response(status_code=204)
 
     async def command(request, op, **extra):

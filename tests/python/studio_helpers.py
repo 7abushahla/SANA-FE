@@ -79,3 +79,22 @@ class CrashOnSecondUpdate(ChainWorkload):
         built = super().build(params)
         built.reference = _ExitOnUpdateTwo()
         return built
+
+
+class _SlowFirstUpdate:
+    def check(self, record):
+        if record.update == 1:
+            import time
+            time.sleep(3)  # one update that takes a while, as a large network would
+        return None
+
+
+class SlowFirstUpdate(ChainWorkload):
+    """The test chain, whose first update takes three seconds."""
+
+    name = 'test-slow'
+
+    def build(self, params):
+        built = super().build(params)
+        built.reference = _SlowFirstUpdate()
+        return built

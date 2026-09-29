@@ -21,6 +21,7 @@ REGISTRY = {
     'sanafe-files': WorkloadRef('sanafe.studio.engine.workload:SanafeFiles'),
     'test-chain': WorkloadRef('studio_helpers:ChainWorkload', (TESTS,)),
     'test-crash': WorkloadRef('studio_helpers:CrashOnSecondUpdate', (TESTS,)),
+    'test-slow': WorkloadRef('studio_helpers:SlowFirstUpdate', (TESTS,)),
 }
 
 
@@ -139,6 +140,22 @@ class TestServer(unittest.TestCase):
             with self.subTest(script=script):
                 self.assertEqual(self.client.get(f'/js/{script}.js').status_code, 200)
         self.assertEqual(self.client.get('/app.css').status_code, 200)
+
+    def test_closing_a_busy_session_does_not_block_the_server(self):
+        import threading
+        sid = self.create('test-slow')['id']
+        with self.client.websocket_connect(f'/ws/sessions/{sid}') as socket:
+            socket.receive_json()
+            self.client.post(f'/api/sessions/{sid}/run')
+            while socket.receive_json().get('state') != 'running':
+                pass
+        deleter = threading.Thread(target=self.client.delete, args=(f'/api/sessions/{sid}',))
+        deleter.start()
+        time.sleep(0.3)
+        started = time.monotonic()
+        self.assertEqual(self.client.get('/api/workloads').status_code, 200)
+        self.assertLess(time.monotonic() - started, 1.0)
+        deleter.join(timeout=30)
 
     def test_delete(self):
         sid = self.create()['id']

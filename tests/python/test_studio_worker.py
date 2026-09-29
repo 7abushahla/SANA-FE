@@ -104,6 +104,16 @@ class TestWorker(unittest.TestCase):
         self.assertEqual([m['record']['update'] for m in seen if m['type'] == 'update'], [1])
         self.assertEqual(seen[-1]['exitcode'], 7)
 
+    def test_close_during_a_run_is_prompt(self):
+        handle, events = self.start(CHAIN, {'steps': 200000})
+        events.next()
+        handle.send({'op': 'run'})
+        events.until(lambda m: m['type'] == 'update')
+        import time
+        started = time.monotonic()
+        handle.close()
+        self.assertLess(time.monotonic() - started, 2.0)
+
     def test_workload_setting_start_method_at_import_loads(self):
         # Lava calls multiprocessing.set_start_method('fork') at import; a
         # spawned worker already has a start method, so that used to raise.

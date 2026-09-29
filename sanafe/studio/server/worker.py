@@ -76,6 +76,8 @@ def run_worker(conn, ref, parameters, options):
                     continue
                 if op in ('step', 'run'):
                     pending[0] += 1
+                if op == 'close' and pending[0]:
+                    session.pause()  # stop a running command at the next boundary
             commands.put(message)
             if op == 'close':
                 return
