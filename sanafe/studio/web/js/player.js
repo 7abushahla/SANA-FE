@@ -94,6 +94,7 @@
 
   /* Modeled seconds per millisecond of playback at the playhead. */
   Player.prototype.rate = function (record, inFlight) {
+    if (this.duration <= 0) return Infinity;  // instant: no animation
     const modeled = record.step_time / this.duration;
     if (this.clock !== 'slow') return modeled;
     if (!this.flight.has(record)) this.flight.set(record, flightTime(record));
@@ -109,8 +110,12 @@
     this.last = now;
     const record = this.current();
     if (this.playing && record) {
-      const inFlight = S.flying(record).some((m) => this.t >= m.send && this.t <= S.flightEnd(m, record, this.clock));
-      this.t += dt * this.rate(record, inFlight);
+      if (this.duration <= 0) {
+        this.t = record.step_time;  // instant: skip straight to the end of the update
+      } else {
+        const inFlight = S.flying(record).some((m) => this.t >= m.send && this.t <= S.flightEnd(m, record, this.clock));
+        this.t += dt * this.rate(record, inFlight);
+      }
       if (this.t >= record.step_time) {
         this.t = record.step_time;
         if (this.follow && this.index < this.records.length - 1) this.advance();

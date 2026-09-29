@@ -184,6 +184,13 @@ drive it.
 - **Clock.** "Modeled time" keeps true proportions, so packets appear only
   briefly. "Slow motion around packets" slows the clock only while packets
   fly. Both keep the recorded order.
+- **Playback.** Wall-clock seconds spent on each update, from 6 s down to
+  0.15 s, plus "instant", which draws each update once and moves on without
+  animating it. The hint beside the control gives the playback time for the
+  whole horizon, which is what makes a 20-update ResNet-20 session feel
+  slower than a 5-update compact one at the same setting. Playback speed
+  never changes the simulation, only how long you watch it; an update that
+  has not been computed yet is still waited for.
 - **Timeline.** One row per occupied core. Bars show neuron processing,
   purple marks show message processing, lines join send to receive, and the
   gray band is the barrier.
@@ -292,6 +299,11 @@ without a display.
     1,024-bin heatmap of that update's membranes.
 25. Rebuild with `T = 8` (a larger, user-entered horizon). The run plays
     26 updates with the reference pill at "match".
+26. With the ResNet-20 session still loaded, read the playback hint: at 3 s
+    an update it prices the horizon at about a minute. Set playback to
+    "instant". The remaining updates draw one after another with no
+    animation, and the hint reads "no animation". Set it back to 1.2 s and
+    press Replay; packets move again.
 
 ## Coverage of the Streamlit workbench
 

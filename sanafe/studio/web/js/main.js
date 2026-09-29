@@ -322,6 +322,7 @@
     if (highlight) highlight.addEventListener('click', () => highlightConnections(sel.key));
     if (app.tab === 'compare') S.compare.render($('dock'), app.runs, app.session && app.session.run);
     $('uNum').textContent = player.records.length;
+    showSpeed();
     const scrub = $('scrub');
     scrub.max = Math.max(1, player.records.length);
     scrub.value = player.index + 1;
@@ -546,7 +547,22 @@
     chip.clock = mini.clock = $('clock').value;
     redraw();
   });
-  $('speed').addEventListener('change', () => { player.duration = Number($('speed').value); });
+  /* How long the whole run takes to watch. A 20-update ResNet session at 3 s
+     an update is a minute of playback; a 5-update one is fifteen seconds. */
+  function showSpeed() {
+    const ms = Number($('speed').value);
+    const horizon = Number($('uHorizon').textContent);
+    const n = horizon > 0 ? horizon : player.records.length;
+    if (!n) { $('speedHint').textContent = ''; return; }
+    const total = n * ms / 1000;
+    $('speedHint').textContent = ms <= 0 ? n + ' updates, no animation'
+      : n + ' updates \u2248 ' + (total < 10 ? total.toFixed(1) : Math.round(total)) + ' s';
+  }
+
+  $('speed').addEventListener('change', () => {
+    player.duration = Number($('speed').value);
+    showSpeed();
+  });
   $('scrub').addEventListener('input', () => player.show(Number($('scrub').value) - 1));
   $('follow').addEventListener('change', () => { if ($('follow').checked) player.latest(); else player.follow = false; });
   $('btnReplay').addEventListener('click', () => player.replay());

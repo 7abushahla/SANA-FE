@@ -17,7 +17,7 @@
   <button id="btnPause" disabled>❚❚ Pause</button>
   <span class="counter">update <b id="uNum">0</b> / <b id="uHorizon">–</b></span>
   <label class="small">clock <select id="clock"><option value="slow">slow motion around packets</option><option value="modeled">modeled time (true proportions)</option></select></label>
-  <label class="small">playback <select id="speed"><option value="6000">slow</option><option value="3000" selected>normal</option><option value="1200">fast</option></select></label>
+  <label class="small">playback <select id="speed"><option value="6000">6 s per update</option><option value="3000" selected>3 s per update</option><option value="1200">1.2 s per update</option><option value="500">0.5 s per update</option><option value="150">0.15 s per update</option><option value="0">instant (no animation)</option></select> <span id="speedHint" class="hint"></span></label>
   <span id="refPill" class="refpill none" title="Per-update comparison with reference executions (QCFS workloads)">reference: –</span>
   <span id="state" class="state idle">idle</span>
 </header>

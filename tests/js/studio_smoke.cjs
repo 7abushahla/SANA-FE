@@ -56,6 +56,8 @@ async function waitFor(check, what, timeout = 120000) {
     $('speed').dispatchEvent(new Event('change'));
     $('btnStart').click();
     await waitFor(() => text('uHorizon') === '6', 'session ready');
+    // Playback speed prices the whole horizon, not one update.
+    if (text('speedHint') !== '6 updates \u2248 7.2 s') throw new Error('speed hint: ' + text('speedHint'));
     const used = document.querySelectorAll('#chip rect.core.used').length;
     if (used !== 3) throw new Error('expected 3 occupied cores, found ' + used);
     // Group names live in a legend under the chip, not on top of the mesh.
@@ -71,6 +73,23 @@ async function waitFor(check, what, timeout = 120000) {
     $('btnRun').click();
     await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'run to finish');
     await waitFor(() => /^update 6 ·/.test(text('clockText')), 'playback of update 6', 90000);
+
+    // Instant playback draws each update once instead of animating it: a replay
+    // lands at the end of the update within a frame, far inside 1.2 s.
+    $('speed').value = '0';
+    $('speed').dispatchEvent(new Event('change'));
+    if (text('speedHint') !== '6 updates, no animation') throw new Error('speed hint: ' + text('speedHint'));
+    $('scrub').value = '3';
+    $('scrub').dispatchEvent(new Event('input'));
+    $('btnReplay').click();
+    await waitFor(() => {
+      const shown = /^update 3 · modeled time (.+) of (.+)$/.exec(text('clockText'));
+      return shown && shown[1] === shown[2];
+    }, 'instant replay to finish update 3', 600);
+    $('speed').value = '1200';
+    $('speed').dispatchEvent(new Event('change'));
+    $('follow').click();
+    await waitFor(() => /^update 6 ·/.test(text('clockText')), 'back at the latest update');
     const rows = document.querySelectorAll('#dock text.rowlabel').length;
     if (rows !== 3) throw new Error('expected 3 timeline rows, found ' + rows);
 
