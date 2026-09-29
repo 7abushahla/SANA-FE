@@ -176,14 +176,29 @@
     if (this.level !== 'core') return;
     const key = this.key;
     const owners = (core) => this.ctx.network.groups.filter((g) => g.cores[core]).map((g) => g.name).join(', ');
+    if (S.isAggregate(record)) {  // packets between a pair of cores are not kept
+      const summary = (links, label) => links.length
+        ? '<table><tr><th>' + label + '</th><th>mapped</th></tr>' + links.map((link) => {
+          const other = label === 'source core' ? link.src : link.dst;
+          return '<tr><td>' + S.escape(other) + ' <span class="muted">' + S.escape(owners(other)) + '</span></td><td>' +
+            link.synapses + ' syn · ' + link.axons + ' axons</td></tr>';
+        }).join('') + '</table>' : '';
+      const note = '<div class="small muted">connections ' + S.mark('R') + ' · packets per core pair: not kept (aggregate); ' +
+        'this core\'s totals are in the pipeline strip ' + S.mark('D') + '</div>';
+      this.axonIn.innerHTML = (this.hostDriven ? '<div class="small">host: constant current each update (not packets, not simulated)</div>' : '') +
+        (summary(this.inLinks, 'source core') || (this.hostDriven ? '' : 'no incoming connections')) + note;
+      this.axonOut.innerHTML = (summary(this.outLinks, 'destination core') || 'no outgoing connections') + note;
+    }
     let inside = '';
     if (this.hostDriven) inside += '<tr><td colspan="3">host: constant current each update (not packets, not simulated)</td></tr>';
-    inside += linkRows(this.axonIn, this.inLinks, record, t, 'in', key, owners);
-    this.axonIn.innerHTML = inside ? '<table><tr><th>source core</th><th>mapped</th><th>packets</th></tr>' + inside + '</table>' +
-      '<div class="small muted">connections ' + S.mark('R') + ' · packets arrived by the playhead ' + S.mark('D') + '</div>' : 'no incoming connections';
-    const outside = linkRows(this.axonOut, this.outLinks, record, t, 'out', key, owners);
-    this.axonOut.innerHTML = outside ? '<table><tr><th>destination core</th><th>mapped</th><th>packets</th></tr>' + outside + '</table>' +
-      '<div class="small muted">connections ' + S.mark('R') + ' · packets sent by the playhead ' + S.mark('D') + '</div>' : 'no outgoing connections; spikes are read from the trace';
+    if (!S.isAggregate(record)) {
+      inside += linkRows(this.axonIn, this.inLinks, record, t, 'in', key, owners);
+      this.axonIn.innerHTML = inside ? '<table><tr><th>source core</th><th>mapped</th><th>packets</th></tr>' + inside + '</table>' +
+        '<div class="small muted">connections ' + S.mark('R') + ' · packets arrived by the playhead ' + S.mark('D') + '</div>' : 'no incoming connections';
+      const outside = linkRows(this.axonOut, this.outLinks, record, t, 'out', key, owners);
+      this.axonOut.innerHTML = outside ? '<table><tr><th>destination core</th><th>mapped</th><th>packets</th></tr>' + outside + '</table>' +
+        '<div class="small muted">connections ' + S.mark('R') + ' · packets sent by the playhead ' + S.mark('D') + '</div>' : 'no outgoing connections; spikes are read from the trace';
+    }
 
     const c = counters(record, key, t);
     let potentials = record ? record.potentials : {};
@@ -212,7 +227,8 @@
       }
       const level = count ? Math.max(0, Math.min(1, sum / count)) : 0;
       cell.fill.style.height = Math.round(level * 100) + '%';
-      cell.cell.className = 'ncell' + (spiked && c.done ? ' fired' : '') + (count ? '' : ' unlogged');
+      const loading = S.isAggregate(record) && !this.handlers.coreState(key, record.update);
+      cell.cell.className = 'ncell' + (spiked && c.done ? ' fired' : '') + (count || loading ? '' : ' unlogged');
     }
   };
 

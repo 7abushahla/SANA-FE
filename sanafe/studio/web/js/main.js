@@ -24,13 +24,23 @@
     const sessionId = app.session.id;
     S.api.coreState(sessionId, core, update).then((state) => {
       if (app.session && app.session.id === sessionId) { app.coreStates[key] = state; redraw(); }
-    }).catch(() => { delete app.coreStates[key]; });
+    }).catch(() => { app.coreStates[key] = { failed: true, neurons: [], potentials: [], fired: [] }; });
     return null;
   }
 
-  function syncWatches() {
+  /* The worker validates watches; on refusal the list goes back to what it
+     accepted, so one bad key cannot block every later sync. */
+  function syncWatches(previous) {
     if (!app.session) return;
-    S.api.setWatches(app.session.id, app.watches).catch((error) => { $('formError').textContent = error.message; });
+    S.api.setWatches(app.session.id, app.watches).then((reply) => {
+      app.watches = reply.watches;
+      renderRail();
+    }).catch((error) => {
+      $('formError').textContent = error.message;
+      app.watches = previous || [];
+      renderRail();
+      redraw();
+    });
   }
   const player = new S.Player(frame);
 
@@ -178,8 +188,9 @@
   }
 
   function addWatch(key) {
+    const previous = app.watches.slice();
     if (app.watches.indexOf(key) < 0) app.watches.push(key);
-    syncWatches();
+    syncWatches(previous);
     delete app.details[key];  // refetch, so its history is current
     loadDetail(key);
     renderRail();
@@ -187,8 +198,9 @@
   }
 
   function removeWatch(key) {
+    const previous = app.watches.slice();
     app.watches = app.watches.filter((k) => k !== key);
-    syncWatches();
+    syncWatches(previous);
     renderRail();
     redraw();
   }
@@ -334,8 +346,10 @@
     if (hitId !== app.hitId) { app.hitId = hitId; renderRail(); }
     if (['finished', 'stopped', 'paused'].indexOf(info.state) >= 0) {
       refreshRuns();
-      // A settled run: refresh watched neurons' histories from the worker.
-      for (const key of app.watches) { delete app.details[key]; loadDetail(key); }
+      // A settled run: refresh the histories of watched and selected neurons.
+      const keys = app.watches.slice();
+      if (app.selection.kind === 'neuron' && keys.indexOf(app.selection.key) < 0) keys.push(app.selection.key);
+      for (const key of keys) { delete app.details[key]; loadDetail(key); }
     }
     const node = $('state');
     node.textContent = describeState(info);
@@ -395,7 +409,7 @@
     renderRail();
     refreshRuns();
     for (const key of app.watches) loadDetail(key);
-    if (app.watches.length) syncWatches();
+    if (app.watches.length) syncWatches([]);
     setView(same ? app.view : { level: 'chip' });
   }
 

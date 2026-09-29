@@ -40,8 +40,11 @@ def describe(spec):
 
 
 class Breakpoints:
-    def __init__(self, specs=()):
+    def __init__(self, specs=(), neuron_index=None):
         self.specs = list(specs)
+        # Aggregate records ship only watched neurons, so neuron_fires reads the
+        # full spike mask (record.state) at these neuron indices.
+        self._neuron_index = dict(neuron_index or {})
 
     @classmethod
     def compile(cls, specs, session):
@@ -88,7 +91,14 @@ class Breakpoints:
             if kind == 'update':
                 clean['equals'] = _number(spec, 'equals', integer=True, minimum=1)
             checked.append(clean)
-        return cls(checked)
+        lookup = getattr(session, 'lookup', None)
+        index = {}
+        if lookup is not None:
+            for spec in checked:
+                if spec['kind'] == 'neuron_fires':
+                    group, _, offset = spec['neuron'].rpartition('.')
+                    index[spec['id']] = lookup.index[(group, int(offset))]
+        return cls(checked, index)
 
     @classmethod
     def compile_valid(cls, specs, session):
@@ -99,19 +109,22 @@ class Breakpoints:
                 kept.extend(cls.compile(kept + [spec], session).specs[len(kept):])
             except ValueError as error:
                 rejected.append(str(error))
-        return cls(kept), rejected
+        return cls.compile(kept, session), rejected
 
     def check(self, record):
         """The first enabled breakpoint this record hits, as a reason, or None."""
         for spec in self.specs:
-            if spec['enabled'] and self._hit(spec, record):
+            if spec['enabled'] and self._hit(spec, record, self._neuron_index.get(spec['id'])):
                 return f'breakpoint {spec["id"]}: {describe(spec)}'
         return None
 
     @staticmethod
-    def _hit(spec, record):
+    def _hit(spec, record, neuron_index=None):
         kind = spec['kind']
         if kind == 'neuron_fires':
+            state = getattr(record, 'state', None)
+            if state is not None and neuron_index is not None:
+                return bool(state['fired'][neuron_index])
             group, _, offset = spec['neuron'].rpartition('.')
             return any(g == group and int(o) == int(offset) for g, o in record.fired)
         if kind == 'core_sends':

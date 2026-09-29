@@ -118,9 +118,16 @@ The stage 5 probe (ResNet-20, T = 2, 109 cores, 286,720 neurons) measured
 0.1 to 2.4 s per `chip.sim(1)`, but 1.5 to 9.4 s to build a full record and
 6 to 12 MB of JSON per update, against a 5 s and live-playback budget. The
 simulator was not the bottleneck, so the aggregate level was added instead
-of C++ counters. On the same network it takes at most 0.7 s per update at
-T = 2 and 1.7 s at T = 8, with records of about 30 kB and a peak of about
-2 GB.
+of C++ counters. On the same network the slowest update (simulation, record,
+and reference check) takes 0.3 s at T = 2 and 1.3 s at T = 8, records are
+about 30 kB, and the test process's memory high-water mark, over both runs
+in turn, is 2.3 GB.
+
+The aggregate level keeps only watched neurons' spikes, so Compare does not
+claim spike-train identity for aggregate runs (it still compares time,
+energy, hops, and per-core load), and raster and membrane exports of an
+aggregate run show the watched neurons only. A `neuron_fires` breakpoint
+still reads every neuron's spikes in the worker.
 
 At the aggregate level the chip draws link width by packets per link, the
 timeline keeps core finish bars and the barrier, Messages lists packets per

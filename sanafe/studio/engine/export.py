@@ -34,8 +34,12 @@ def _messages(records):
                          for r in records for m in r.messages])
 
 
-def export_plot(records, kind):
-    """SVG bytes of one sanafe.viz plot. Raises KeyError or ValueError."""
+def export_plot(records, kind, manifest=None):
+    """SVG bytes of one sanafe.viz plot. Raises KeyError or ValueError.
+
+    Aggregate runs keep only watched neurons' spikes and membranes, so their
+    raster and potential plots say so, and refuse when nothing was watched.
+    """
     if kind not in EXPORT_KINDS:
         raise KeyError(f'unknown plot {kind!r}; choose one of {", ".join(EXPORT_KINDS)}')
     if not records:
@@ -46,16 +50,20 @@ def export_plot(records, kind):
     import matplotlib.pyplot as plt
 
     title = 'modeled by SANA-FE, not measured'
+    aggregate = (manifest or {}).get('trace_level') == 'aggregate'
+    which = 'watched neurons of an aggregate run, ' if aggregate else ''
     if kind == 'raster':
         frame = _spikes(records)
         if frame.empty:
-            raise ValueError('no logged neuron fired in this run')
-        figure, _ = viz.plot_raster(frame, title=f'Spikes ({title})')
+            raise ValueError('this aggregate run keeps only watched neurons, and none fired'
+                             if aggregate else 'no logged neuron fired in this run')
+        figure, _ = viz.plot_raster(frame, title=f'Spikes ({which}{title})')
     elif kind == 'potential':
         frame = _potentials(records)
         if frame.empty or frame.shape[1] == 0:
-            raise ValueError('no neuron in this run logs its membrane')
-        figure, _ = viz.plot_potential(frame, title=f'Membranes ({title})')
+            raise ValueError('this aggregate run keeps only watched neurons, and none were watched'
+                             if aggregate else 'no neuron in this run logs its membrane')
+        figure, _ = viz.plot_potential(frame, title=f'Membranes ({which}{title})')
     elif kind == 'energy':
         figure, _ = viz.plot_energy(_performance(records), title=f'Energy ({title})')
     elif kind == 'throughput':

@@ -268,6 +268,15 @@ async function waitFor(check, what, timeout = 120000) {
     page.window.document.querySelector('#tabs button[data-tab="messages"]').click();
     await waitFor(() => page.window.document.querySelectorAll('#linkTable tr.linkrow').length > 0, 'per-link table');
     const pageClick = (node) => node.dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    const heated = [...page.window.document.querySelectorAll('#chip line.link.heat')];
+    if (!heated.every((l) => l.querySelectorAll('title').length === 1)) throw new Error('link heat titles accumulate');
+    pageClick(page.window.document.querySelector('#chip rect.tile[data-tile="0"]'));
+    await waitFor(() => /tile 0/.test(q('insTitle').textContent), 'aggregate tile inspector');
+    const tileRow = (label) => {
+      const cell = [...page.window.document.querySelectorAll('#inspector .kv i')].find((i) => i.textContent.trim() === label);
+      return cell ? cell.nextElementSibling.textContent : 'missing';
+    };
+    if (!(Number(tileRow('packets out')) > 0)) throw new Error('aggregate tile packets out: ' + tileRow('packets out'));
     pageClick(q('mNet'));
     // The drag edit is still applied, so find layer_1's core (4 neurons) by its chip.
     const layer1Chip = () => [...page.window.document.querySelectorAll('#network rect.corechip')]
@@ -278,6 +287,7 @@ async function waitFor(check, what, timeout = 120000) {
       const cells = [...page.window.document.querySelectorAll('#zoom .ncell i')];
       return cells.length === 4 && cells.some((i) => i.style.height && i.style.height !== '0%');
     }, 'core state fetched for the core view');
+    await waitFor(() => /not kept/.test(q('axonIn').textContent), 'axon tables say per-link counts are not kept');
     pageClick(page.window.document.querySelector('#zoom .ncell[data-neuron="layer_1.2"]'));
     await waitFor(() => q('btnWatch'), 'aggregate neuron inspector');
     q('btnWatch').click();

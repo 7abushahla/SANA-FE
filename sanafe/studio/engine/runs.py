@@ -65,9 +65,11 @@ def compare_runs(a, b):
     """Spike-train identity and per-update differences between two runs."""
     (manifest_a, records_a), (manifest_b, records_b) = a, b
     comparable = _network(manifest_a, records_a) == _network(manifest_b, records_b)
+    # Aggregate stores keep only watched neurons' spikes: no identity claim.
+    aggregate = 'aggregate' in (manifest_a.get('trace_level'), manifest_b.get('trace_level'))
     first = None
     common = min(len(records_a), len(records_b))
-    if comparable:
+    if comparable and not aggregate:
         for index in range(common):
             left = {f'{g}.{o}' for g, o in records_a[index].fired}
             right = {f'{g}.{o}' for g, o in records_b[index].fired}
@@ -87,8 +89,11 @@ def compare_runs(a, b):
                 for key in ('step_time', 'energy', 'hops', 'messages')}
 
     note = 'no updates to compare' if common == 0 else None
+    if aggregate and note is None:
+        note = ('spike trains not compared: aggregate runs keep only watched neurons; '
+                'time, energy, hops, and per-core load are compared')
     return {'comparable': comparable, 'note': note,
-            'identical_spikes': comparable and first is None and common > 0,
+            'identical_spikes': comparable and not aggregate and first is None and common > 0,
             'first_difference': first, 'updates': updates,
             'updates_a': len(records_a), 'updates_b': len(records_b),
             'totals': {'a': totals(records_a), 'b': totals(records_b)},

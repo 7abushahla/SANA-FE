@@ -453,7 +453,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         if failure is not None:
             return failure
         try:
-            svg = await asyncio.to_thread(export_plot, run[1], kind)
+            svg = await asyncio.to_thread(export_plot, run[1], kind, run[0])
         except ValueError as error:
             return _json({'error': str(error)}, 409)
         return Response(svg, media_type='image/svg+xml')

@@ -117,6 +117,17 @@ class TestAggregate(unittest.TestCase):
         self.assertEqual(seen['values'], [r.potentials['layer_0.3'] for r in self.full])
         self.assertFalse(hasattr(records[0], 'state'))
 
+    def test_neuron_fires_breakpoint_at_the_aggregate_level(self):
+        full = Session(ChainWorkload(), {'placement': 'far'})
+        self.addCleanup(full.close)
+        full.set_breakpoints([{'id': 'b1', 'kind': 'neuron_fires', 'neuron': 'layer_2.0'}])
+        full.run_to_horizon()
+        session = self.session()
+        session.set_breakpoints([{'id': 'b1', 'kind': 'neuron_fires', 'neuron': 'layer_2.0'}])
+        session.run_to_horizon()
+        self.assertEqual((session.state.value, session.update, session.stop_reason),
+                         ('stopped', full.update, 'breakpoint b1: layer_2.0 fires'))
+
     def test_full_level_core_state_and_history(self):
         session = Session(ChainWorkload(), {'placement': 'far'})
         self.addCleanup(session.close)

@@ -344,7 +344,7 @@ class Session:
             except Exception as error:
                 self._set_fault(error)
             if self.trace_level == 'aggregate':
-                state = record.__dict__.pop('state')  # kept here, never serialized
+                state = record.state  # the full arrays stay here, never serialized
                 self._history.append((state['potentials'],
                                       np.flatnonzero(state['fired']).astype(np.int32)))
             self.records.append(record)
@@ -353,7 +353,8 @@ class Session:
                 reason = stop_when(record) if stop_when is not None else None
             except Exception as error:
                 self._set_fault(error)
-            reason = reason or self.breakpoints.check(record)
+            reason = reason or self.breakpoints.check(record)  # may read record.state
+            record.__dict__.pop('state', None)
             if reason:
                 self._pause.clear()
                 self.state = SessionState.STOPPED

@@ -94,6 +94,26 @@ class TestRuns(unittest.TestCase):
                               text=True, timeout=120)
         self.assertEqual(done.returncode, 0, done.stderr[-1500:])
 
+    def test_aggregate_runs_do_not_claim_spike_identity(self):
+        store = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, store)
+        ids = []
+        for placement in ('far', 'near'):
+            session = Session(ChainWorkload(), {'placement': placement}, store_dir=store,
+                              trace_level='aggregate')
+            session.run_to_horizon()
+            ids.append(session.store.directory.name)
+            session.close()
+        result = compare_runs(load_run(store, ids[0]), load_run(store, ids[1]))
+        self.assertFalse(result['identical_spikes'])
+        self.assertIsNone(result['first_difference'])
+        self.assertIn('aggregate', result['note'])
+        self.assertEqual(len(result['updates']), 6)
+        with self.assertRaisesRegex(ValueError, 'aggregate'):
+            export_plot(load_run(store, ids[0])[1], 'raster', load_run(store, ids[0])[0])
+        self.assertTrue(export_plot(load_run(store, ids[0])[1], 'energy').lstrip().startswith(
+            (b'<?xml', b'<svg')))
+
     def test_unsafe_or_unknown_ids(self):
         for bad in ('../x', 'a/b', '', '.', '..'):
             with self.subTest(run_id=bad), self.assertRaises(ValueError):

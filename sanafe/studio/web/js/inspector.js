@@ -44,8 +44,15 @@
       const tile = session.layout.tiles[selection.tile];
       const keys = tile.cores.map((c) => c.key);
       const mapped = keys.filter((k) => session.network.occupied.indexOf(k) >= 0).length;
-      const out = record.messages.filter((m) => keys.indexOf(m.src) >= 0).length;
-      const inn = record.messages.filter((m) => keys.indexOf(m.dst) >= 0).length;
+      let out = record.messages.filter((m) => keys.indexOf(m.src) >= 0).length;
+      let inn = record.messages.filter((m) => keys.indexOf(m.dst) >= 0).length;
+      if (S.isAggregate(record)) {  // no messages kept: sum the per-core counts
+        out = 0; inn = 0;
+        for (const key of keys) {
+          const counts = record.core_counts[key];
+          if (counts) { out += counts.packets_out; inn += counts.packets_in; }
+        }
+      }
       let through = record.messages.filter((m) => m.path.indexOf(tile.id) >= 0).length;
       if (S.isAggregate(record)) {  // packets entering or leaving this router on mesh links
         through = 0;
@@ -97,8 +104,9 @@
       const theta = (session.network.group_attributes[group.name] || {}).threshold;
       const inn = session.network.connections.filter((c) => c.dst === group.name);
       const out = session.network.connections.filter((c) => c.src === group.name);
-      const logged = (session.network.group_attributes[group.name] || {}).log_spikes;
-      const fired = logged ? record.fired.filter((f) => f[0] === group.name).length : 'unknown (neurons without log_spikes)';
+      const logged = (session.network.group_attributes[group.name] || {}).log_spikes && !S.isAggregate(record);
+      const fired = logged ? record.fired.filter((f) => f[0] === group.name).length
+        : (S.isAggregate(record) ? 'not kept (aggregate; see core counts)' : 'unknown (neurons without log_spikes)');
       return ['Inspector · group ' + group.name, rows([
         ['neurons', group.size, 'R'],
         ['cores', Object.keys(group.cores).length, 'R'],
@@ -124,13 +132,21 @@
         items.push(['this update', 'no update yet', '']);
       } else {
         const past = detail.history && detail.history.potential.length >= record.update;
-        let v = record.potentials[key];
-        if (v === undefined && past) v = detail.history.potential[record.update - 1];
+        const inRecord = key in record.potentials;
+        // Aggregate records carry only watched neurons; older updates come from the
+        // history fetched with the detail, which is refreshed when a run settles.
+        const pending = S.isAggregate(record) && !inRecord && !past;
+        let v = inRecord ? record.potentials[key] : (past ? detail.history.potential[record.update - 1] : undefined);
         if (v === null) v = undefined;
         const fired = record.fired.some((f) => f[0] === group && f[1] === offset) ||
           (past && detail.history.fired[record.update - 1]);
-        items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
-        items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
+        if (pending) {
+          items.push(['membrane after update ' + record.update, 'loading (refreshes when the run settles)', '']);
+          items.push(['fired this update', 'loading', '']);
+        } else {
+          items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
+          items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
+        }
       }
       if (detail.reference && record) {
         // Reference executions are not SANA-FE records: they carry their own mark.
@@ -142,7 +158,9 @@
       }
       items.push(['fan-in', edges(detail.fan_in, detail.fan_in_total), 'R']);
       items.push(['fan-out', edges(detail.fan_out, detail.fan_out_total), 'R']);
-      const actions = '<div class="actions"><button id="btnWatch" class="watchbtn">＋ Watch this neuron</button>' +
+      const actions = '<div class="actions">' + (detail.log_potential
+        ? '<button id="btnWatch" class="watchbtn">＋ Watch this neuron</button>'
+        : '<div class="hint">Not watchable: this neuron does not log its membrane.</div>') +
         (detail.log_spikes ? '<button id="btnBreakFire" class="watchbtn">⏸ Break when it fires</button>' : '') +
         '<button id="btnHighlight" class="watchbtn">◎ Highlight connections</button></div>';
       return [title, rows(items) + actions];

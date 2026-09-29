@@ -186,8 +186,10 @@
     const overlay = this.overlay;
     while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
     for (const key in this.links) {
-      this.links[key].setAttribute('class', 'link');
-      this.links[key].removeAttribute('style');
+      const line = this.links[key];
+      line.setAttribute('class', 'link');
+      line.removeAttribute('style');
+      while (line.firstChild) line.removeChild(line.firstChild);  // last frame's tooltip
     }
     if (record && S.isAggregate(record)) {
       // Packet counts per mesh link over the whole update, both directions (X).
