@@ -1,4 +1,5 @@
 """Workload parameters, the generic file workload, and JSON Lines storage."""
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -79,13 +80,20 @@ class TestTraceStore(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 TraceStore.create(run, {'workload': 'test'})
 
-    def test_rejects_non_finite_values(self):
+    def test_non_finite_values_round_trip(self):
+        # A diverging float membrane reaches -inf; a debugger must keep it.
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore.create(Path(directory) / 'run', {})
-            bad = self.record(1)
-            bad.step_time = float('inf')
-            with self.assertRaises(ValueError):
-                store.append(bad)
+            record = self.record(1)
+            record.step_time = float('inf')
+            record.potentials = {'a.0': float('-inf'), 'a.1': float('nan')}
+            store.append(record)
+            line = (Path(directory) / 'run' / 'records.jsonl').read_text()
+            self.assertNotIn('Infinity', line)  # stays strict JSON for browsers
+            _, (loaded,) = TraceStore.load(Path(directory) / 'run')
+            self.assertEqual(loaded.step_time, float('inf'))
+            self.assertEqual(loaded.potentials['a.0'], float('-inf'))
+            self.assertTrue(math.isnan(loaded.potentials['a.1']))
 
 
 if __name__ == '__main__':
