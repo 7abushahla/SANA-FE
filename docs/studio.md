@@ -64,6 +64,10 @@ SANA-FE/.venv/bin/python SANA-FE-thesis/studio_workloads/launch.py
 
 Each session runs in its own worker process. A crash in SANA-FE faults that
 session only; the page says so and offers a new session.
+The address carries the session id (`#session=...`), so reloading the page
+rejoins the session and catches up on updates it missed. The server accepts
+only JSON POSTs with a loopback Host header, so other web pages cannot
+drive it.
 
 ## What the page shows
 
