@@ -1,5 +1,6 @@
 """Shared fixtures for the Studio engine tests (not a test module)."""
 from importlib.resources import files
+import os
 from pathlib import Path
 
 import sanafe
@@ -60,3 +61,21 @@ class ChainWorkload:
         return BuiltWorkload(arch_yaml=candidate_yaml(), arch=arch, network=network,
                              horizon=params['steps'],
                              metadata={'placement': params['placement']})
+
+
+class _ExitOnUpdateTwo:
+    def check(self, record):
+        if record.update == 2:
+            os._exit(7)  # simulate a native crash inside the worker
+        return None
+
+
+class CrashOnSecondUpdate(ChainWorkload):
+    """The test chain, whose worker process dies during update 2."""
+
+    name = 'test-crash'
+
+    def build(self, params):
+        built = super().build(params)
+        built.reference = _ExitOnUpdateTwo()
+        return built

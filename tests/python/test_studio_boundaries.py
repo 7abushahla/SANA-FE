@@ -4,9 +4,11 @@ from pathlib import Path
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[2] / 'sanafe' / 'studio'
-ALLOWED = {'__future__', 'ast', 'collections', 'dataclasses', 'datetime', 'enum',
-           'json', 'math', 'pathlib', 're', 'subprocess', 'tempfile', 'threading',
-           'typing', 'uuid', 'numpy', 'pandas', 'yaml', 'sanafe', 'sanafecpp'}
+ALLOWED = {'__future__', 'argparse', 'ast', 'asyncio', 'collections', 'contextlib',
+           'dataclasses', 'datetime', 'enum', 'importlib', 'json', 'math',
+           'multiprocessing', 'os', 'pathlib', 'queue', 're', 'subprocess', 'sys',
+           'tempfile', 'threading', 'typing', 'uuid', 'numpy', 'pandas', 'yaml',
+           'sanafe', 'sanafecpp', 'starlette', 'uvicorn'}
 
 
 class TestStudioBoundaries(unittest.TestCase):
