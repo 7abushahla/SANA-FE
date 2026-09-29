@@ -254,16 +254,32 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
             return
         subscriber = asyncio.Queue()
         session.subscribers.add(subscriber)
+
+        async def until_disconnect():
+            # The client sends nothing, so receiving only ever returns the
+            # disconnect. Without it, a closed socket stays open to uvicorn
+            # and blocks graceful shutdown.
+            while (await websocket.receive())['type'] != 'websocket.disconnect':
+                pass
+
+        watcher = asyncio.create_task(until_disconnect())
         try:
             with session.lock:
                 hello = {'type': 'hello', 'update': len(session.records),
                          'state': session.state}
             await websocket.send_text(_dumps(hello))
             while True:
-                await websocket.send_text(_dumps(await subscriber.get()))
+                getter = asyncio.create_task(subscriber.get())
+                done, _ = await asyncio.wait({getter, watcher},
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if watcher in done:
+                    getter.cancel()
+                    break
+                await websocket.send_text(_dumps(getter.result()))
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            watcher.cancel()
             session.subscribers.discard(subscriber)
 
     routes = [

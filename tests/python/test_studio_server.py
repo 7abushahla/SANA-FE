@@ -1,6 +1,15 @@
 """HTTP commands, WebSocket events, reconnect, and fault isolation."""
+import json
 from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import time
 import unittest
+import urllib.request
+
+from websockets.sync.client import connect as ws_connect
 
 from starlette.testclient import TestClient
 
@@ -121,10 +130,62 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.post(f'/api/sessions/{other}/step',
                                           json={'n': 1}).status_code, 202)
 
+    def test_static_page_served(self):
+        page = self.client.get('/')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('<title>SANA-FE Studio</title>', page.text)
+        for script in ('util', 'api', 'params', 'chip', 'timeline', 'perf', 'messages',
+                       'inspector', 'player', 'main'):
+            with self.subTest(script=script):
+                self.assertEqual(self.client.get(f'/js/{script}.js').status_code, 200)
+        self.assertEqual(self.client.get('/app.css').status_code, 200)
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)
         self.assertEqual(self.client.get(f'/api/sessions/{sid}').status_code, 404)
+
+
+class TestServerProcess(unittest.TestCase):
+    """Behavior only a real uvicorn process shows (the test client hides it)."""
+
+    def test_shutdown_after_a_client_disconnects(self):
+        # Found by the headless smoke test: a handler that never notices a
+        # disconnect keeps the connection open, so SIGTERM never finishes.
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        base = f'http://127.0.0.1:{port}'
+        process = subprocess.Popen(
+            [sys.executable, '-m', 'sanafe.studio', '--port', str(port), '--path', TESTS,
+             '--workload', 'test-chain=studio_helpers:ChainWorkload'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    urllib.request.urlopen(base + '/api/workloads', timeout=2).read()
+                    break
+                except OSError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.2)
+            request = urllib.request.Request(
+                base + '/api/sessions', method='POST',
+                data=json.dumps({'workload': 'test-chain', 'parameters': {}}).encode(),
+                headers={'Content-Type': 'application/json'})
+            sid = json.loads(urllib.request.urlopen(request, timeout=120).read())['id']
+            with ws_connect(f'ws://127.0.0.1:{port}/ws/sessions/{sid}') as client:
+                self.assertEqual(json.loads(client.recv(timeout=10))['type'], 'hello')
+            time.sleep(0.5)
+            process.send_signal(signal.SIGTERM)
+            # uvicorn finishes its graceful shutdown, then re-raises SIGTERM,
+            # so the status is 0 or -SIGTERM. Hanging here was the bug.
+            self.assertIn(process.wait(timeout=20), (0, -signal.SIGTERM))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
 
 
 if __name__ == '__main__':
