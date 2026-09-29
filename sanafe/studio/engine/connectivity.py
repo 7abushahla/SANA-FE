@@ -41,8 +41,11 @@ class Connectivity:
                     link_axons[(src_core, dst_core)].add((name, offset))
                     incoming[dst_core] += 1
                     outgoing[src_core].add((name, offset))
-            uniform = len(values) == 1 and isinstance(next(iter(values)), int)
-            thresholds[name] = {'threshold': next(iter(values)) if uniform else None}
+            only = next(iter(values)) if len(values) == 1 else None
+            uniform = isinstance(only, (int, float)) and not isinstance(only, bool)
+            thresholds[name] = {'threshold': only if uniform else None,
+                                'log_spikes': all(self._flags[(name, offset)][0]
+                                                  for offset in range(len(group)))}
         self.group_edges = [{'src': src, 'dst': dst, 'synapses': count}
                             for (src, dst), count in group_edges.items()]
         self.core_links = [{'src': src, 'dst': dst, 'synapses': count,

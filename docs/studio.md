@@ -136,7 +136,9 @@ drive it.
 - **Architecture.** The loaded YAML and its differences from a bundled
   baseline, such as the Loihi 1 file.
 - **Reference pill.** match, mismatch, unchecked, or none for the displayed
-  update. A mismatch also appears in the phase banner.
+  update. A mismatch also appears in the phase banner. Reference values
+  carry their own mark, `ref`: they come from Lava or SpikingJelly, not from
+  SANA-FE.
 
 ## Browser checklist
 
@@ -187,7 +189,7 @@ without a display.
 ## Coverage of the Streamlit workbench
 
 `SANA-FE-thesis/virtual_loihi_ui.py` is retired once every feature below
-has a Studio home.
+has a Studio home (end of stage 5).
 
 | Streamlit feature | Studio | Stage |
 | --- | --- | --- |
@@ -196,7 +198,8 @@ has a Studio home.
 | Animated machine | Chip with both clocks | 2 |
 | Performance figure | Live performance | 2 |
 | Per-core activity | Timeline rows and the core inspector | 2 |
-| Three paths, one aligned computation | Reference pill, per-update check, reference traces in neuron watch | 3 |
+| Three paths, one aligned computation: per-neuron agreement | Reference pill, per-update check of every neuron, reference traces in neuron watch | 3 |
+| Three paths, one aligned computation: the layer spike raster | Raster export from a saved run | 4 |
 | Network graph | Network mode | 3 |
 | Membrane of one neuron | Neuron watch | 3 |
 | Mapped cores and assumed resources | Core inspector on the candidate | 3 |

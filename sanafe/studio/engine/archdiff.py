@@ -47,12 +47,16 @@ def _compare(path, in_baseline, baseline, in_loaded, loaded, rows):
         _walk(path, baseline, loaded, rows)
 
 
+def diff_texts(loaded_name, loaded_text, baseline_name, baseline_text):
+    rows = []
+    _walk('', yaml.safe_load(baseline_text), yaml.safe_load(loaded_text), rows)
+    return {'loaded': loaded_name, 'baseline': baseline_name, 'rows': rows}
+
+
 def architecture_diff(loaded_path, baseline_path):
     loaded_path, baseline_path = Path(loaded_path), Path(baseline_path)
-    rows = []
-    _walk('', yaml.safe_load(baseline_path.read_text()),
-          yaml.safe_load(loaded_path.read_text()), rows)
-    return {'loaded': loaded_path.name, 'baseline': baseline_path.name, 'rows': rows}
+    return diff_texts(loaded_path.name, loaded_path.read_text(),
+                      baseline_path.name, baseline_path.read_text())
 
 
 def bundled_architectures():

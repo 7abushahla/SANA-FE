@@ -35,7 +35,7 @@ class TestConnectivity(unittest.TestCase):
         self.assertEqual(stats[(0, 0)]['edges'], 0)
         self.assertEqual(stats[(31, 0)]['outgoing_neurons'], 0)
         self.assertEqual(far.core_neurons['0.0'], [['layer_0', 0, 7]])
-        self.assertEqual(far.group_attributes['layer_1'], {'threshold': 4})
+        self.assertEqual(far.group_attributes['layer_1'], {'threshold': 4, 'log_spikes': True})
 
     def test_neuron_detail(self):
         detail = loaded('far').neuron('layer_1', 2)
@@ -77,7 +77,7 @@ class TestSessionConnectivity(unittest.TestCase):
         self.assertEqual(len(summary['connections']), 2)
         self.assertEqual(summary['core_links'][0]['src'], '0.0')
         self.assertEqual(summary['core_neurons']['31.0'], [['layer_2', 0, 1]])
-        self.assertEqual(summary['group_attributes']['layer_0'], {'threshold': 4})
+        self.assertEqual(summary['group_attributes']['layer_0'], {'threshold': 4, 'log_spikes': True})
         self.assertEqual(session.neuron_detail('layer_2', 1)['fan_in_total'], 4)
         self.assertNotIn('reference', session.neuron_detail('layer_2', 1))
 
@@ -104,7 +104,23 @@ class TestSessionConnectivity(unittest.TestCase):
             'arch_yaml': str(REPO / 'arch' / 'example_chip.yaml'),
             'net_file': str(REPO / 'snn' / 'example.net')})
         self.addCleanup(session.close)
-        self.assertEqual(sorted(session.network_summary()['core_neurons']), ['0.0', '0.1'])
+        summary = session.network_summary()
+        self.assertEqual(sorted(summary['core_neurons']), ['0.0', '0.1'])
+        # Float thresholds are uniform too (example.net uses 1.0 and 2.0).
+        self.assertEqual(summary['group_attributes']['0']['threshold'], 1.0)
+        self.assertEqual(summary['group_attributes']['1']['threshold'], 2.0)
+
+    def test_group_spike_logging_is_summarized(self):
+        arch = load_loihi2_candidate()
+        network = chain_network(arch, PLACEMENTS['far'], 6)
+        for neuron in network.groups['layer_1']:
+            if neuron.get_id() == 0:
+                neuron.set_attributes(log_spikes=False)
+        chip = sanafe.SpikingChip(arch)
+        chip.load(network)
+        attributes = Connectivity.from_network(network, neuron_map(chip)).group_attributes
+        self.assertTrue(attributes['layer_0']['log_spikes'])
+        self.assertFalse(attributes['layer_1']['log_spikes'])
 
     def test_series_is_offered_when_the_checker_has_it(self):
         class Series:

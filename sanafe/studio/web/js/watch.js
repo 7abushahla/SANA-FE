@@ -8,7 +8,7 @@
   function plot(container, key, records, detail, current, onRemove) {
     const head = S.html(container, 'div', { class: 'watchhead' });
     head.innerHTML = '<b>' + S.escape(key) + '</b> · membrane after each update: SANA-FE ' + S.mark('R') +
-      (detail && detail.reference ? ' · references ' + S.mark('R') + ' dashed' : '') + ' · red ticks: spikes';
+      (detail && detail.reference ? ' · reference executions ' + S.mark('ref') + ' dashed' : '') + ' · red ticks: SANA-FE spikes';
     const remove = S.html(head, 'button', { class: 'linkbtn', 'data-remove': key }, 'remove');
     remove.addEventListener('click', () => onRemove(key));
     const series = { 'SANA-FE': records.map((r) => (key in r.potentials ? r.potentials[key] : null)) };

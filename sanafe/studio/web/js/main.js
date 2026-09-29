@@ -139,7 +139,8 @@
       : '–';
     const phase = $('phase');
     if (record && record.reference && record.reference.status === 'mismatch') {
-      phase.textContent = 'reference mismatch: ' + record.reference.neuron + ' ' + record.reference.quantity + ' (' + record.reference.reference + ')';
+      phase.textContent = 'reference mismatch at update ' + record.update + ': ' + record.reference.neuron + ' ' +
+        record.reference.quantity + ' (' + record.reference.reference + ')';
       phase.className = 'phase mismatch';
     } else if (record) {
       const barrier = player.t >= record.last_activity;
@@ -200,7 +201,13 @@
   function applyReady(ready) {
     const same = app.session && app.session.id === ready.id;
     app.session = Object.assign({}, app.session, ready);
-    if (!same) { app.watches = []; }
+    // A rebuild keeps the watches whose neurons still exist.
+    const sizes = {};
+    for (const group of ready.network.groups) sizes[group.name] = group.size;
+    app.watches = app.watches.filter((key) => {
+      const cut = key.lastIndexOf('.');
+      return Number(key.slice(cut + 1)) < (sizes[key.slice(0, cut)] || 0);
+    });
     app.details = {};
     app.detailVersion += 1;
     chip.selected = null;
@@ -276,7 +283,7 @@
   /* Show a session and follow it. The id goes in the URL so a reload resumes
      the same session; the WebSocket hello then triggers the catch-up fetch. */
   function open(snapshot) {
-    app.session = null;
+    app.session = null;  // a different session: applyReady keeps only matching watches
     player.reset();
     applyReady(snapshot);
     history.replaceState(null, '', '#session=' + snapshot.id);

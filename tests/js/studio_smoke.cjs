@@ -97,6 +97,13 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => document.querySelectorAll('#network g.group').length === 3, 'network groups');
     const labels = [...document.querySelectorAll('#network text.edgelabel')].map((n) => n.textContent).join(' | ');
     if (!/32 synapses/.test(labels) || !/8 synapses/.test(labels)) throw new Error('edge labels: ' + labels);
+    const markOf = (label) => {
+      const cell = [...document.querySelectorAll('#inspector .kv i')].find((i) => i.textContent.trim() === label);
+      return cell ? cell.nextElementSibling.nextElementSibling.className : 'missing';
+    };
+    click(document.querySelector('#network g.group[data-group="layer_1"] rect'));
+    await waitFor(() => /group layer_1/.test(text('insTitle')), 'group inspector');
+    if (markOf('fired this update') !== 'm D') throw new Error('group fired count must be marked D: ' + markOf('fired this update'));
     click(document.querySelector('#network [data-core="16.0"]'));
     await waitFor(() => shown('zoom') && /Tile 16/.test(text('crumb')) && /Core 0/.test(text('crumb')), 'network chip opens the core');
 
@@ -130,6 +137,8 @@ async function waitFor(check, what, timeout = 120000) {
     $('params').querySelector('[data-param="steps"]').value = '3000';
     $('btnStart').click();
     await waitFor(() => text('uHorizon') === '3000', 'rebuilt session');
+    document.querySelector('#tabs button[data-tab="watch"]').click();
+    await waitFor(() => document.querySelectorAll('#dock svg.watchplot').length === 1, 'watch kept across a rebuild');
     $('btnRun').click();
     await waitFor(() => text('state') === 'running', 'running');
     $('btnPause').click();

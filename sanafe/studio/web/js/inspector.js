@@ -93,14 +93,15 @@
       const theta = (session.network.group_attributes[group.name] || {}).threshold;
       const inn = session.network.connections.filter((c) => c.dst === group.name);
       const out = session.network.connections.filter((c) => c.src === group.name);
-      const fired = record.fired.filter((f) => f[0] === group.name).length;
+      const logged = (session.network.group_attributes[group.name] || {}).log_spikes;
+      const fired = logged ? record.fired.filter((f) => f[0] === group.name).length : 'unknown (neurons without log_spikes)';
       return ['Inspector · group ' + group.name, rows([
         ['neurons', group.size, 'R'],
         ['cores', Object.keys(group.cores).length, 'R'],
         ['threshold', theta === null || theta === undefined ? 'not uniform' : theta, 'R'],
         ['inputs', inn.map((c) => c.src + ' (' + c.synapses + ')').join(', ') || 'none', 'R'],
         ['outputs', out.map((c) => c.dst + ' (' + c.synapses + ')').join(', ') || 'none', 'R'],
-        ['fired this update', fired, 'R'],
+        ['fired this update', fired, logged ? 'D' : ''],
       ])];
     },
 
@@ -120,9 +121,11 @@
       items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
       items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
       if (detail.reference) {
+        // Reference executions are not SANA-FE records: they carry their own mark.
         for (const name in detail.reference) {
           const value = detail.reference[name].potential[record.update - 1];
-          items.push([name + ' membrane', value === null || value === undefined ? 'no value at this update' : value, 'R']);
+          const label = name + ' membrane' + (name === 'spikingjelly' ? ', aligned by layer depth' : '');
+          items.push([label, value === null || value === undefined ? 'no value at this update' : value, 'ref']);
         }
       }
       items.push(['fan-in', edges(detail.fan_in, detail.fan_in_total), 'R']);

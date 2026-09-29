@@ -195,6 +195,37 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.get(
             f'/api/sessions/{sid}/architecture?baseline=nope').status_code, 404)
 
+    def test_architecture_is_the_simulated_snapshot(self):
+        import shutil
+        import tempfile
+        from importlib.resources import files
+        scratch = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, scratch)
+        arch = scratch / 'chip.yaml'
+        shutil.copy(str(files('sanafe.examples') / 'example_chip.yaml'), arch)
+        repo = Path(TESTS).parents[1]
+        response = self.client.post('/api/sessions', json={'workload': 'sanafe-files', 'parameters': {
+            'arch_yaml': str(arch), 'net_file': str(repo / 'snn' / 'example.net')}})
+        self.assertEqual(response.status_code, 201, response.text)
+        sid = response.json()['id']
+        original = arch.read_text()
+        edited = original.replace('  name: demo\n', '  name: edited_after_build\n', 1)
+        self.assertNotEqual(edited, original)
+        arch.write_text(edited)
+        served = self.client.get(f'/api/sessions/{sid}/architecture?baseline=example_chip').json()
+        self.assertEqual(served['text'], original)
+        self.assertEqual(served['diff']['rows'], [])
+
+    def test_late_reply_to_an_abandoned_query_is_ignored(self):
+        import concurrent.futures
+        sid = self.create()['id']
+        session = self.client.app.state.manager.sessions[sid]
+        abandoned = concurrent.futures.Future()
+        abandoned.cancel()
+        session.replies[999] = abandoned
+        session._on_message({'type': 'reply', 'id': 999, 'data': {}})  # must not raise
+        self.assertEqual(self.client.get(f'/api/sessions/{sid}/neurons/layer_1/2').status_code, 200)
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)

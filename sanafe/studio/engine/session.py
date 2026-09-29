@@ -86,6 +86,8 @@ class Session:
         self._scratch = tempfile.TemporaryDirectory(prefix='sanafe-studio-')
         self.built = self.workload.build(dict(self.parameters))
         self.horizon = self._horizon_override or self.built.horizon
+        # The text simulated, kept in case the file changes on disk later.
+        self.architecture_text = Path(self.built.arch_yaml).read_text()
         instrumented = Path(self._scratch.name) / 'architecture.yaml'
         self.instrumentation = instrument_arch_yaml(self.built.arch_yaml, instrumented)
         self._sim_arch = sanafe.load_arch(str(instrumented))

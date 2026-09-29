@@ -21,7 +21,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
-from ..engine import (ParameterSpec, architecture_diff, bundled_architectures,
+from ..engine import (ParameterSpec, bundled_architectures, diff_texts,
                       resolve_parameters, to_strict_json)
 from .worker import WorkerHandle
 
@@ -112,7 +112,7 @@ class ManagedSession:
 
     def _snapshot_locked(self):
         ready = {key: value for key, value in (self.ready or {}).items()
-                 if key not in ('type', 'state', 'update')}
+                 if key not in ('type', 'state', 'update', 'architecture_text')}
         return {'id': self.id, 'workload': self.workload, 'parameters': self.parameters,
                 **ready, 'state': self.state, 'update': len(self.records)}
 
@@ -125,7 +125,7 @@ class ManagedSession:
         if kind == 'reply':
             with self.lock:
                 future = self.replies.pop(message.get('id'), None)
-            if future is not None:
+            if future is not None and not future.done():  # a timed-out query is cancelled
                 future.set_result(message)
             return
         with self.lock:
@@ -147,8 +147,9 @@ class ManagedSession:
             elif kind == 'exited':
                 self.alive = False
                 for future in self.replies.values():
-                    future.set_result({'type': 'reply', 'code': 'exited',
-                                       'error': 'session worker has exited'})
+                    if not future.done():
+                        future.set_result({'type': 'reply', 'code': 'exited',
+                                           'error': 'session worker has exited'})
                 self.replies.clear()
                 if self.closing:
                     return
@@ -339,8 +340,12 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         if session is None:
             return _json({'error': 'no such session'}, 404)
         with session.lock:
-            manifest = (session.ready or {}).get('manifest') or {}
-        loaded = Path(manifest['architecture_yaml'])
+            ready = session.ready or {}
+        if 'architecture_text' not in ready:
+            return _json({'error': 'the session is not ready'}, 409)
+        # Serve the text that was simulated, not whatever the file holds now.
+        name = Path((ready.get('manifest') or {}).get('architecture_yaml', 'architecture.yaml')).name
+        text = ready['architecture_text']
         baseline = request.query_params.get('baseline')
         diff = None
         if baseline:
@@ -348,8 +353,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             if baseline not in bundled:
                 return _json({'error': f'unknown baseline {baseline!r}; '
                                        f'choose one of {", ".join(sorted(bundled))}'}, 404)
-            diff = await asyncio.to_thread(architecture_diff, loaded, bundled[baseline])
-        return _json({'name': loaded.name, 'text': loaded.read_text(), 'diff': diff})
+            diff = await asyncio.to_thread(diff_texts, name, text, bundled[baseline].name,
+                                           bundled[baseline].read_text())
+        return _json({'name': name, 'text': text, 'diff': diff})
 
     async def events(websocket):
         await websocket.accept()

@@ -77,7 +77,8 @@ def run_worker(conn, ref, parameters, options):
         send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
         conn.close()
         return
-    send({'type': 'ready', **session.describe()})
+    send({'type': 'ready', **session.describe(),
+          'architecture_text': session.architecture_text})
 
     commands = queue.Queue()
     control = threading.Lock()
@@ -125,7 +126,8 @@ def run_worker(conn, ref, parameters, options):
             except Exception as error:
                 send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
                 continue
-            send({'type': 'ready', **session.describe()})
+            send({'type': 'ready', **session.describe(),
+                  'architecture_text': session.architecture_text})
             continue
         if op not in ('step', 'run'):
             send({'type': 'error', 'message': f'unknown command {op!r}'})
