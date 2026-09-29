@@ -71,6 +71,7 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => document.querySelectorAll('#dock tr').length > 1, 'messages table');
     document.querySelector('#chip rect.core.used').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => /core 0\.0/.test(text('insTitle')), 'inspector core selection');
+    if (!/assumed total bytes/.test(text('inspector'))) throw new Error('candidate core budget missing from the inspector');
 
     // Zoom chip > tile > core, with the mini-map, and keep it across a new update.
     const click = (node) => node.dispatchEvent(new MouseEvent('click', { bubbles: true }));

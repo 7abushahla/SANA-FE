@@ -78,6 +78,13 @@
         for (const unit in energy.units) items.push(['  ' + unit, S.fmtEnergy(energy.units[unit]), p['core_energy.units']]);
         if (energy.axon !== null) items.push(['  axon in and out', S.fmtEnergy(energy.axon), p['core_energy.axon']]);
       }
+      const budget = session.network.core_budgets && session.network.core_budgets[key];
+      if (budget) {
+        items.push(['stored synapses · outgoing neurons', budget.edges + ' · ' + budget.outgoing_neurons, 'R']);
+        items.push(['assumed synapse bytes', budget.assumed_synapse_bytes + ' of 131072', 'D']);
+        items.push(['assumed total bytes', budget.assumed_total_bytes + ' of 196608', 'D']);
+        items.push(['  (assumed candidate layout, not Intel packing)', '', '']);
+      }
       return ['Inspector · core ' + key, rows(items)];
     },
 

@@ -1,8 +1,10 @@
-# SANA-FE Studio engine
+# SANA-FE Studio
 
 The Studio engine advances a SANA-FE network one numbered update at a time and
-turns each update into an `UpdateRecord`. The server and browser views arrive
-in stage 2. The engine is usable on its own from a script or notebook.
+turns each update into an `UpdateRecord`. A local server and browser page show
+the chip, its placement, the packets, each core's pipeline, and the modeled
+performance as updates arrive. The engine is usable on its own from a script
+or notebook.
 
 ```python
 from sanafe.studio.engine import SanafeFiles, Session
@@ -41,10 +43,32 @@ reconstructed.
   logging is skipped for cores with more than eight synapse, dendrite, and soma
   unit instances, such as the bundled Loihi 1 file.
 
+## Connectivity, budgets, and references
+
+After loading, a session summarizes the mapped network once
+(`session.connectivity`): synapses between groups, links between cores with
+their synapse and axon counts, the neuron ranges on each core, and each
+group's threshold when it is uniform. `session.neuron_detail(group, offset)`
+returns one neuron's core, attributes, fan-in, and fan-out. All of it is read
+from the network SANA-FE was given (R).
+
+When the architecture is the Loihi 2 candidate (same configuration
+fingerprint), the session checks every core with
+`sanafe.loihi2.validate_core_budgets`: at most 8,192 neurons, 128 KiB of
+synapses, and 192 KiB in total under the assumed byte layout in
+`sanafe.loihi2.Allocation`. A core over budget fails the build with the
+reason. Other architectures are limited only by their own YAML.
+
+A workload may attach a reference checker. `check(record)` returns
+`{'status': 'match'}`, `{'status': 'unchecked', 'reason'}`, or
+`{'status': 'mismatch'}` naming the reference, neuron, quantity, expected and
+actual values. The thesis QCFS workload compares every update with Lava at
+the same update and with SpikingJelly shifted by one update per layer.
+
 ## Limits in this stage
 
 Only the `full` trace level exists. Breakpoints are Python callables passed as
-`stop_when`; declarative breakpoints arrive with the server. A fault inside
+`stop_when`; declarative breakpoints arrive in stage 4. A fault inside
 SANA-FE moves the session to `faulted`, and only `reset()` clears it.
 
 ## Running the Studio
@@ -90,8 +114,29 @@ drive it.
   gray band is the barrier.
 - **Live performance and messages.** Energy per update by unit, step time,
   message counts, and the current update's recorded messages.
-- **Inspector.** Numbers for the chip or a clicked core, each with its R, D,
-  or X mark.
+- **Zoom and mini-map.** Click a tile to open it: each core shows its
+  pipeline stages (axon in, synapse, dendrite, the update-boundary buffer,
+  soma, axon out) with counters at the playhead. Click a core panel, or
+  double-click a core on the chip, to open the core view: the pipeline, the
+  axon_in and axon_out tables, and one cell per neuron filled by its
+  membrane divided by its threshold. A red cell fired in this update. Cores
+  with more than 1,024 neurons show a heatmap. The breadcrumb and the
+  mini-map lead back to the chip.
+- **Network mode.** Groups in dependency order with their synapse counts,
+  the host operations, and the cores each group is mapped to. Clicking a
+  core opens it.
+- **Inspector.** Numbers for the chip, a tile, a core, a group, a neuron, or
+  a message, each with its R, D, or X mark. A neuron shows its attributes,
+  fan-in and fan-out, and the reference values at this update. On the
+  candidate, a core shows its assumed storage against the budgets.
+- **Neuron watch.** The membrane of each watched neuron per update, with the
+  Lava and SpikingJelly traces dashed when the workload provides them.
+- **Messages.** Filter by core or neuron. Clicking a message draws its
+  reconstructed route (X) on the chip.
+- **Architecture.** The loaded YAML and its differences from a bundled
+  baseline, such as the Loihi 1 file.
+- **Reference pill.** match, mismatch, unchecked, or none for the displayed
+  update. A mismatch also appears in the phase banner.
 
 ## Browser checklist
 
@@ -122,3 +167,40 @@ without a display.
 10. Press Run to horizon on the long session from item 7 and reload the
     page while it runs. The run continues, and the page catches up without
     duplicate or missing updates.
+11. Start `qcfs-compact` with `T = 3`, placement `packed`, and 16 neurons
+    per core. Eleven cores are colored. Run to horizon. The reference pill
+    reads "reference: match" at every update (scrub back to check).
+12. Click tile 0. Four core panels show their pipeline counters. Scrub
+    within an update with "replay update": the counters rise as packets
+    arrive and the soma switches from "updating" to "done".
+13. Open core 0.0. Its axon_in names the host's constant current, and its
+    axon_out lists IF1's cores. The mini-map highlights tile 0; click it to
+    return.
+14. Switch to Network. Three groups sit between the two host operations,
+    labeled with their synapse counts. Click an IF2 core chip.
+15. Click an IF2 neuron and press "Watch this neuron". The Neuron watch tab
+    shows the SANA-FE membrane with the Lava and SpikingJelly traces dashed.
+16. Open Architecture and choose `loihi` as the baseline. The table lists
+    the candidate's differences, including 8192 neurons per core and the
+    removed alternative units.
+
+## Coverage of the Streamlit workbench
+
+`SANA-FE-thesis/virtual_loihi_ui.py` is retired once every feature below
+has a Studio home.
+
+| Streamlit feature | Studio | Stage |
+| --- | --- | --- |
+| Run a mapped model: T menu, image, named or custom three-core placement | Session rail: typed T and image, whole-layer presets, chunked packed or spread placement | 3 (placement by drag: 4) |
+| Mesh at one update with recorded packet endpoints | Chip view, packets on recorded times along the X route | 2 |
+| Animated machine | Chip with both clocks | 2 |
+| Performance figure | Live performance | 2 |
+| Per-core activity | Timeline rows and the core inspector | 2 |
+| Three paths, one aligned computation | Reference pill, per-update check, reference traces in neuron watch | 3 |
+| Network graph | Network mode | 3 |
+| Membrane of one neuron | Neuron watch | 3 |
+| Mapped cores and assumed resources | Core inspector on the candidate | 3 |
+| Recorded messages at this update | Messages | 2 |
+| Bundled Loihi 1 against the candidate | Architecture tab, diff against `loihi` | 3 |
+| Larger ResNet-20 mapping (occupancy) | ResNet-20 workload at chip scale | 5 |
+| Plots from `sanafe.viz` | Export from a saved run | 4 |

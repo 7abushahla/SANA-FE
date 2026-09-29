@@ -96,9 +96,11 @@ class Session:
         self.connectivity = Connectivity.from_network(self.built.network, self.neurons)
         self._candidate = (architecture_fingerprint(self.built.arch) ==
                            architecture_fingerprint(load_loihi2_candidate()))
+        self.core_budgets = None
         if self._candidate:
             # The budgets are Loihi 2 figures, so only the candidate is held to them.
-            validate_core_budgets(self.connectivity.core_stats())
+            self.core_budgets = {f'{stat["tile"]}.{stat["core"]}': stat for stat in
+                                 validate_core_budgets(self.connectivity.core_stats())}
         self.records = []
         self.state = SessionState.IDLE
         self.stop_reason = None
@@ -143,7 +145,8 @@ class Session:
                 'connections': connectivity.group_edges,
                 'core_links': connectivity.core_links,
                 'core_neurons': connectivity.core_neurons,
-                'group_attributes': connectivity.group_attributes}
+                'group_attributes': connectivity.group_attributes,
+                'core_budgets': self.core_budgets}
 
     def neuron_detail(self, group, offset):
         """One neuron's placement, attributes, connections, and reference traces."""

@@ -81,6 +81,19 @@ class TestSessionConnectivity(unittest.TestCase):
         self.assertEqual(session.neuron_detail('layer_2', 1)['fan_in_total'], 4)
         self.assertNotIn('reference', session.neuron_detail('layer_2', 1))
 
+    def test_candidate_core_budgets_are_summarized(self):
+        session = Session(ChainWorkload(), {})
+        self.addCleanup(session.close)
+        budget = session.network_summary()['core_budgets']['16.0']
+        self.assertEqual((budget['neurons'], budget['edges'], budget['outgoing_neurons']), (4, 32, 4))
+        self.assertEqual(budget['assumed_total_bytes'], 4*16 + 32*12 + 4*8 + 256)
+        from sanafe.studio.engine import SanafeFiles
+        other = Session(SanafeFiles(), {
+            'arch_yaml': str(REPO / 'arch' / 'example_chip.yaml'),
+            'net_file': str(REPO / 'snn' / 'example.net')})
+        self.addCleanup(other.close)
+        self.assertIsNone(other.network_summary()['core_budgets'])
+
     def test_candidate_budget_fails_the_build(self):
         with self.assertRaisesRegex(ValueError, r'core \(1, 0\) exceeds the synapse'):
             Session(OverBudgetWorkload(), {})
