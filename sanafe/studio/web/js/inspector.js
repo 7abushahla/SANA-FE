@@ -3,10 +3,20 @@
 (function () {
   const S = window.Studio;
 
+  /* Labels starting with two spaces are sub-rows, indented by CSS so the
+     indent cannot wrap away from the text. */
+  function label(text) {
+    const sub = text.startsWith('  ');
+    return { cls: sub ? 'sub' : '', text: sub ? text.trim() : text };
+  }
+
   function rows(items) {
-    return '<div class="kv">' + items.map((item) =>
-      '<i>' + S.escape(item[0]) + '</i><span>' + S.escape(String(item[1])) + '</span>' +
-      (item[2] ? S.mark(item[2]) : '<span></span>')).join('') + '</div>';
+    return '<div class="kv">' + items.map((item) => {
+      const l = label(item[0]);
+      if (item[1] === '' && !item[2]) return '<i class="note ' + l.cls + '">' + S.escape(l.text) + '</i>';  // spans the row
+      return '<i class="' + l.cls + '">' + S.escape(l.text) + '</i><span>' + S.breakable(String(item[1])) + '</span>' +
+        (item[2] ? S.mark(item[2]) : '<span></span>');
+    }).join('') + '</div>';
   }
 
   function referenceText(reference) {

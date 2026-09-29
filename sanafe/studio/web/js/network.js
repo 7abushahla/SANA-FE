@@ -3,6 +3,7 @@
 (function () {
   const S = window.Studio;
   const BOX_W = 150, GAP = 70, BOX_H = 84, TOP = 70, CHIPS = 12;
+  const HOST_CHARS = 22;  // 10px host text inside a 150-wide box
 
   /* Groups in dependency order; ties and cycles keep trace order. */
   function order(groups, edges) {
@@ -46,8 +47,11 @@
         if (column.host) {
           const g = S.svg(svg, 'g', { class: 'host' });
           S.svg(g, 'rect', { x: left, y: TOP, width: BOX_W, height: BOX_H, rx: 8, class: 'host' });
-          S.svg(g, 'text', { x: left + BOX_W / 2, y: TOP + 34, 'text-anchor': 'middle', class: 'hosttext', 'font-weight': 700 }, 'HOST (not simulated)');
-          S.svg(g, 'text', { x: left + BOX_W / 2, y: TOP + 52, 'text-anchor': 'middle', class: 'hosttext' }, column.host);
+          // Title plus the operation wrapped to the box, centered vertically.
+          const lines = S.wrap(column.host, HOST_CHARS);
+          const first = TOP + BOX_H / 2 - (lines.length * 13) / 2 + 4;
+          S.svg(g, 'text', { x: left + BOX_W / 2, y: first, 'text-anchor': 'middle', class: 'hosttext', 'font-weight': 700 }, 'HOST (not simulated)');
+          lines.forEach((line, n) => S.svg(g, 'text', { x: left + BOX_W / 2, y: first + 15 + 13 * n, 'text-anchor': 'middle', class: 'hosttext' }, line));
           column.left = left;
           return;
         }

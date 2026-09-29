@@ -13,7 +13,11 @@
       container.innerHTML = '';
       if (!record) { container.textContent = 'No update yet. Step or run the session.'; return; }
       const cores = Object.keys(record.core_finish).sort(byCore);
-      const left = 140, width = 1030, top = 26, rowHeight = 24;
+      const labels = {};
+      for (const core of cores) labels[core] = core + (owner && owner[core] ? ' · ' + owner[core].group : '');
+      // The label gutter fits the longest label (ResNet group names run to ~35 characters).
+      const longest = Math.max(0, ...cores.map((core) => S.textWidth(labels[core], 10.5)));
+      const left = Math.max(140, Math.ceil(longest) + 14), width = 1030, top = 26, rowHeight = 24;
       const height = top + cores.length * rowHeight + 34;
       const bottom = height - 30;
       const svg = S.svg(container, 'svg', { viewBox: '0 0 ' + (left + width + 20) + ' ' + height, class: 'timeline' });
@@ -21,14 +25,18 @@
       const x = (value) => left + Math.max(0, Math.min(1, value / step)) * width;
 
       S.svg(svg, 'rect', { x: x(record.last_activity), y: 4, width: Math.max(0, x(step) - x(record.last_activity)), height: bottom - 4, class: 'barrier' });
-      S.svg(svg, 'text', { x: x(record.last_activity) + 6, y: 17, class: 'axis' }, 'barrier ' + S.fmtTime(record.barrier));
+      // The label sits right of the barrier band, or left of it when the band is near the end.
+      const barrierText = 'barrier ' + S.fmtTime(record.barrier);
+      const fits = x(record.last_activity) + 6 + S.textWidth(barrierText, 10.5) <= left + width + 18;
+      S.svg(svg, 'text', fits ? { x: x(record.last_activity) + 6, y: 17, class: 'axis' }
+        : { x: x(record.last_activity) - 6, y: 17, 'text-anchor': 'end', class: 'axis' }, barrierText);
 
       const row = {};
       cores.forEach((core, index) => {
         const y = top + index * rowHeight;
         row[core] = y;
         const who = owner && owner[core];
-        S.svg(svg, 'text', { x: 4, y: y + 11, class: 'rowlabel' }, core + (who ? ' · ' + who.group : ''));
+        S.svg(svg, 'text', { x: 4, y: y + 11, class: 'rowlabel' }, labels[core]);
         const bar = S.svg(svg, 'rect', { x: x(0), y: y, width: Math.max(1, x(record.core_finish[core]) - x(0)), height: 8, class: 'nproc' });
         bar.setAttribute('fill', who ? who.color : '#607888');
       });

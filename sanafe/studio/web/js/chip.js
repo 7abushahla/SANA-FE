@@ -176,16 +176,7 @@
 
   /* SVG text does not wrap: break at spaces to fit the host box. */
   const HOST_CHARS = 22;
-  function wrap(text) {
-    const lines = [];
-    let line = '';
-    for (const word of String(text).split(/\s+/)) {
-      if (line && (line + ' ' + word).length > HOST_CHARS) { lines.push(line); line = word; }
-      else line = line ? line + ' ' + word : word;
-    }
-    if (line) lines.push(line);
-    return lines;
-  }
+  const wrap = (text) => S.wrap(text, HOST_CHARS);
 
   /* The host drives one group with a constant current. One arrow reaches an
      outline around that group's cores; the drive is not NoC traffic. */

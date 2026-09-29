@@ -60,8 +60,13 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sa
 .chiplegend .item:hover { text-decoration: underline; }
 .chiplegend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
 .scrub { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
-.kv { display: grid; grid-template-columns: 1fr auto 18px; gap: 3px 6px; align-items: center; font-size: 11.5px; color: var(--ink); }
-.kv i { font-style: normal; color: var(--muted); white-space: pre; }
+/* Labels take what they need up to half the pane and wrap past it; values
+   take the rest and wrap, so neither can push the grid past its pane (long
+   names such as conv2_x.0.shortcut_relay). */
+.kv { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) 18px; gap: 3px 8px; align-items: center; font-size: 11.5px; color: var(--ink); }
+.kv i { font-style: normal; color: var(--muted); }
+.kv i.sub { padding-left: 1em; }
+.kv i.note { grid-column: 1 / -1; }
 .m { font-size: 9px; font-weight: 700; border-radius: 3px; text-align: center; color: #fff; padding: 0 3px; }
 .m.R { background: #16846f; }
 .m.D { background: #2368a0; }
@@ -105,7 +110,7 @@ td:first-child, th:first-child { text-align: left; }
 .focus { fill: none; stroke: #c77622; stroke-width: 6; }
 .route { fill: none; stroke: #c77622; stroke-width: 3.5; stroke-dasharray: 7 4; }
 .routemark { font-size: 10px; font-weight: 700; fill: #c77622; }
-.zoom { min-height: 380px; padding-right: 224px; }
+.zoom { min-height: 380px; padding-right: 224px; container-type: inline-size; }
 .tilegrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .corepanel { border: 1px solid var(--line); border-radius: 6px; padding: 6px; cursor: pointer; background: #f8fafb; }
 .corepanel:hover { border-color: #9fb3c0; }
@@ -118,7 +123,17 @@ td:first-child, th:first-child { text-align: left; }
 .unit.soma { background: #f3e8fb; }
 .unit.axon_out { background: #e6f4ef; }
 .buf { align-self: stretch; border: 2px dashed #c77622; border-radius: 5px; padding: 3px 5px; font-size: 10px; color: #c77622; text-align: center; }
-.corecols { display: grid; grid-template-columns: 1fr 1.6fr 1fr; gap: 8px; margin-top: 8px; }
+.corecols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+/* Beside the mini-map three columns leave the axon tables too narrow: put the
+   neurons on top and axon_in / axon_out side by side below. */
+@container (max-width: 760px) {
+  .corecols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .corecols > :nth-child(2) { grid-column: 1 / -1; order: -1; }
+}
+.corecols td, .corecols th { overflow-wrap: anywhere; }  /* long group names */
+@container (max-width: 420px) {
+  .corecols { grid-template-columns: minmax(0, 1fr); }
+}
 .ngrid { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 4px; }
 .ncell { width: 16px; height: 16px; border: 1px solid #b8c7d1; border-radius: 2px; position: relative; cursor: pointer; background: #fff; overflow: hidden; }
 .ncell i { position: absolute; left: 0; right: 0; bottom: 0; background: #7fb0d8; }
@@ -132,7 +147,7 @@ td:first-child, th:first-child { text-align: left; }
 .edgelabel { font-size: 10px; fill: #40596a; }
 .corechip { fill: #fff; cursor: pointer; stroke-width: 1.2; }
 .corechiptext { font-size: 8.5px; }
-.kv span { white-space: pre-line; }
+.kv span { white-space: pre-line; overflow-wrap: anywhere; }
 .watchbtn { margin-top: 8px; width: 100%; padding: 5px; border: 0; border-radius: 4px; background: #2368a0; color: #fff; cursor: pointer; }
 .watchhead { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .linkbtn { border: 0; background: none; color: #2368a0; cursor: pointer; text-decoration: underline; font-size: 11px; }
@@ -146,7 +161,8 @@ td:first-child, th:first-child { text-align: left; }
 .zero { stroke: #dde5ea; }
 .threshold { stroke: #b8445a; stroke-dasharray: 3 3; }
 .spiketick { stroke: #db493b; stroke-width: 2.5; }
-.msgbar { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.msgbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
+.msgbar select, .msgbar input { min-width: 0; max-width: 100%; }  /* long run labels wrap, never widen the dock */
 .msgbar input { width: 260px; font-size: 12px; padding: 3px 6px; border: 1px solid #c3d1da; border-radius: 3px; }
 tr.msg { cursor: pointer; }
 tr.msg:hover, tr.msg.on { background: #fff3e6; }

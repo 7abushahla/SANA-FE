@@ -59,6 +59,44 @@
     return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   };
 
+  /* Rendered width of SVG text at a font size, for sizing label gutters. A
+     hidden SVG text in the page font measures it; where text is not laid out
+     (headless tests) an estimate stands in. */
+  let measure = null;
+  S.textWidth = function (text, size) {
+    if (measure === null) {
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('style', 'position:absolute;width:0;height:0;visibility:hidden');
+      const node = document.createElementNS(ns, 'text');
+      svg.appendChild(node);
+      document.body.appendChild(svg);
+      measure = typeof node.getComputedTextLength === 'function' ? node : false;
+    }
+    if (!measure) return String(text).length * size * 0.6;
+    measure.setAttribute('font-size', size);
+    measure.textContent = String(text);
+    return measure.getComputedTextLength();
+  };
+
+  /* SVG text does not wrap: break at spaces into lines of at most `chars`. */
+  S.wrap = function (text, chars) {
+    const lines = [];
+    let line = '';
+    for (const word of String(text).split(/\s+/)) {
+      if (line && (line + ' ' + word).length > chars) { lines.push(line); line = word; }
+      else line = line ? line + ' ' + word : word;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+
+  /* Escaped text with break opportunities inside identifiers: after '_' and
+     before a named segment, so conv2_x.0.shortcut_relay wraps between words. */
+  S.breakable = function (text) {
+    return S.escape(text).replace(/_/g, '_<wbr>').replace(/\.(?=[A-Za-z])/g, '.<wbr>');
+  };
+
   S.mark = function (letter) {
     return '<span class="m ' + letter + '">' + letter + '</span>';
   };
