@@ -3,6 +3,8 @@ from importlib.resources import files
 from pathlib import Path
 
 import sanafe
+from sanafe.loihi2 import load_loihi2_candidate
+from sanafe.studio.engine import BuiltWorkload, ParameterSpec
 
 REPO = Path(__file__).resolve().parents[2]
 PLACEMENTS = {
@@ -39,3 +41,22 @@ def chain_network(arch, placements, steps, sizes=(8, 4, 2)):
             for post in destination:
                 pre.connect_to_neuron(post, {'weight': 3})
     return net
+
+
+
+class ChainWorkload:
+    """The three-layer test chain on the Loihi 2 candidate."""
+
+    name = 'test-chain'
+
+    def parameters(self):
+        return (ParameterSpec('placement', 'choice', default='far',
+                              choices=tuple(PLACEMENTS)),
+                ParameterSpec('steps', 'int', default=6, minimum=1))
+
+    def build(self, params):
+        arch = load_loihi2_candidate()
+        network = chain_network(arch, PLACEMENTS[params['placement']], params['steps'])
+        return BuiltWorkload(arch_yaml=candidate_yaml(), arch=arch, network=network,
+                             horizon=params['steps'],
+                             metadata={'placement': params['placement']})
