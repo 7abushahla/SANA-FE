@@ -104,6 +104,13 @@ class TestWorker(unittest.TestCase):
         self.assertEqual([m['record']['update'] for m in seen if m['type'] == 'update'], [1])
         self.assertEqual(seen[-1]['exitcode'], 7)
 
+    def test_workload_setting_start_method_at_import_loads(self):
+        # Lava calls multiprocessing.set_start_method('fork') at import; a
+        # spawned worker already has a start method, so that used to raise.
+        _, events = self.start(WorkloadRef('studio_forking_workload:ForkingChain', (TESTS,)), {})
+        message = events.next()
+        self.assertEqual(message['type'], 'ready', message)
+
     def test_workload_ref_rejects_bad_target(self):
         with self.assertRaisesRegex(ValueError, 'module:Class'):
             WorkloadRef('no_colon_here').load()

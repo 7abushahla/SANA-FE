@@ -40,6 +40,10 @@ def run_worker(conn, ref, parameters, options):
     """Process entry point: build the session, then serve commands."""
     from ..engine import Session, SessionFault
 
+    # A spawned child inherits a fixed start method. Libraries such as Lava
+    # call set_start_method at import, which then raises. Clear it, as in a
+    # fresh interpreter; the Studio itself always uses an explicit context.
+    multiprocessing.set_start_method(None, force=True)
     try:
         session = Session(ref.load(), parameters,
                           trace_level=options.get('trace_level', 'full'),
