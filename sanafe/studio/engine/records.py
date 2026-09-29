@@ -17,8 +17,9 @@ PROVENANCE = {
     'message.path': 'X', 'core_finish': 'D', 'last_activity': 'D',
     'barrier': 'D', 'fired': 'R', 'potentials': 'R', 'core_counts': 'D',
     'core_energy.total': 'R', 'core_energy.units': 'R', 'core_energy.axon': 'D',
-    'tile_network_energy': 'D', 'links': 'X',
+    'tile_network_energy': 'D', 'links': 'X', 'sample': 'R',
 }
+SAMPLE_PAIRS = 256  # aggregate records keep at most this many sample messages
 AGGREGATE = 'not kept (aggregate)'
 
 
@@ -76,6 +77,8 @@ class UpdateRecord:
     provenance: dict = field(default_factory=lambda: dict(PROVENANCE))
     reference: Optional[dict] = None
     links: dict = field(default_factory=dict)  # 'a>b' adjacent tiles: packets (X)
+    # Aggregate level: the earliest message of each core pair, for animation
+    sample: list = field(default_factory=list)
 
     def to_dict(self):
         return asdict(self)
@@ -84,6 +87,7 @@ class UpdateRecord:
     def from_dict(cls, data):
         data = dict(data)
         data['messages'] = [MessageRecord(**message) for message in data['messages']]
+        data['sample'] = [MessageRecord(**message) for message in data.get('sample', [])]
         data['fired'] = [tuple(item) for item in data['fired']]
         data['tile_network_energy'] = {int(tile): value for tile, value
                                        in data['tile_network_energy'].items()}
@@ -174,27 +178,29 @@ def _core_counts(cache, fired_cores, real):
     return counts
 
 
+def _message(m, cache):
+    return MessageRecord(
+        mid=int(m['mid']),
+        src=_core_key(m['src_tile_id'], m['src_core_offset']),
+        dst=_core_key(m['dest_tile_id'], m['dest_core_offset']),
+        src_neuron=f"{m['src_neuron_group_id']}.{m['src_neuron_offset']}",
+        hops=int(m['hops']), spikes=int(m['spikes']),
+        generation_delay=float(m['generation_delay']),
+        network_delay=float(m['network_delay']),
+        processing_delay=float(m['processing_delay']),
+        blocking_delay=float(m['blocking_delay']),
+        send=float(m['send_timestamp']), receive=float(m['received_timestamp']),
+        processed=float(m['processed_timestamp']),
+        path=list(cache.path(int(m['src_tile_id']), int(m['dest_tile_id']))))
+
+
 def build_update_record(update, result, layout, neurons, cache=None):
     """Convert one ``chip.sim(1, ...)`` result with all traces into a record."""
     cache = cache or RecordCache(neurons, layout)
     perf = performance_to_dataframe(result).iloc[-1]
     raw = [message for step in result.get('message_trace', []) for message in step]
     finish = _timing(raw, cache)
-    messages = [
-        MessageRecord(
-            mid=int(m['mid']),
-            src=_core_key(m['src_tile_id'], m['src_core_offset']),
-            dst=_core_key(m['dest_tile_id'], m['dest_core_offset']),
-            src_neuron=f"{m['src_neuron_group_id']}.{m['src_neuron_offset']}",
-            hops=int(m['hops']), spikes=int(m['spikes']),
-            generation_delay=float(m['generation_delay']),
-            network_delay=float(m['network_delay']),
-            processing_delay=float(m['processing_delay']),
-            blocking_delay=float(m['blocking_delay']),
-            send=float(m['send_timestamp']), receive=float(m['received_timestamp']),
-            processed=float(m['processed_timestamp']),
-            path=list(cache.path(int(m['src_tile_id']), int(m['dest_tile_id']))))
-        for m in raw if not m['placeholder']]
+    messages = [_message(m, cache) for m in raw if not m['placeholder']]
     last_activity = max([*finish.values(), *(m.processed for m in messages)], default=0.0)
     step_time = float(perf['sim_time'])
 
@@ -229,13 +235,16 @@ def build_aggregate_record(update, result, layout, cache, watched=()):
     perf = performance_to_dataframe(result).iloc[-1]
     raw = [message for step in result.get('message_trace', []) for message in step]
     finish = _timing(raw, cache)
-    real, links, last = [], Counter(), 0.0
+    real, links, last, earliest = [], Counter(), 0.0, {}
     for m in raw:
         if m['placeholder']:
             continue
         src_tile, dst_tile = int(m['src_tile_id']), int(m['dest_tile_id'])
-        real.append((_core_key(src_tile, m['src_core_offset']),
-                     _core_key(dst_tile, m['dest_core_offset']), int(m['spikes'])))
+        pair = (_core_key(src_tile, m['src_core_offset']),
+                _core_key(dst_tile, m['dest_core_offset']))
+        real.append((*pair, int(m['spikes'])))
+        if pair not in earliest or m['send_timestamp'] < earliest[pair]['send_timestamp']:
+            earliest[pair] = m
         path = cache.path(src_tile, dst_tile)
         for a, b in zip(path, path[1:]):
             links[f'{a}>{b}'] += 1
@@ -265,7 +274,9 @@ def build_aggregate_record(update, result, layout, cache, watched=()):
         barrier=step_time - last_activity, fired=watched_fired,
         potentials={key: float(values[cache.logged_pos[key]]) for key in watched},
         core_counts=core_counts, core_energy=core_energy,
-        tile_network_energy=tile_network_energy, links=dict(links))
+        tile_network_energy=tile_network_energy, links=dict(links),
+        sample=[_message(m, cache) for m in sorted(
+            earliest.values(), key=lambda m: m['send_timestamp'])[:SAMPLE_PAIRS]])
     record.provenance['messages'] = AGGREGATE
     record.state = {'potentials': values, 'fired': fired_mask}
     return record

@@ -129,9 +129,16 @@ energy, hops, and per-core load), and raster and membrane exports of an
 aggregate run show the watched neurons only. A `neuron_fires` breakpoint
 still reads every neuron's spikes in the worker.
 
-At the aggregate level the chip draws link width by packets per link, the
-timeline keeps core finish bars and the barrier, Messages lists packets per
-link, and the core view fetches its membranes for the shown update.
+At the aggregate level the chip draws link width by packets per link and
+animates a sample of packets: the first message between each pair of cores
+(at most 256 per update), with its recorded times. The timeline keeps core
+finish bars and the barrier, Messages lists packets per link, and the core
+view fetches its membranes for the shown update.
+
+In the "slow motion around packets" clock each packet stays on screen for at
+least 4% of its update. ResNet-20 flights last about 10 ns in updates of
+about 80 µs, so at true proportions they would never be visible. The
+"modeled time" clock keeps true proportions.
 
 ## Limits
 

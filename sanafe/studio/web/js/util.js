@@ -40,6 +40,21 @@
     return !!record && record.provenance && record.provenance.messages === 'not kept (aggregate)';
   };
 
+  /* In slow motion a packet stays on screen for at least this share of its
+     update, even if its recorded flight is far shorter (ResNet-20: about
+     10 ns of an 83 µs update). The modeled-time clock keeps true proportions. */
+  S.MIN_FLIGHT = 0.04;
+  S.flightEnd = function (message, record, clock) {
+    if (clock !== 'slow') return message.receive;
+    return Math.max(message.receive, message.send + S.MIN_FLIGHT * record.step_time);
+  };
+
+  /* Messages to animate: all of them, or the aggregate level's sample. */
+  S.flying = function (record) {
+    if (!record) return [];
+    return S.isAggregate(record) ? (record.sample || []) : record.messages;
+  };
+
   S.escape = function (text) {
     return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   };

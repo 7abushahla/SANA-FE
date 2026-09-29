@@ -33,6 +33,22 @@ class TestAggregate(unittest.TestCase):
             self.assertEqual(agg.provenance['links'], 'X')
         self.assertEqual(session.describe()['trace_level'], 'aggregate')
 
+    def test_one_sample_message_per_core_pair(self):
+        from sanafe.studio.engine import UpdateRecord
+        records = self.session().run_to_horizon()
+        for full, agg in zip(self.full, records):
+            earliest = {}
+            for m in full.messages:
+                pair = (m.src, m.dst)
+                if pair not in earliest or m.send < earliest[pair].send:
+                    earliest[pair] = m
+            self.assertEqual(sorted((m.src, m.dst) for m in agg.sample), sorted(earliest))
+            for m in agg.sample:
+                self.assertEqual(m, earliest[(m.src, m.dst)])
+            self.assertEqual(agg.provenance['sample'], 'R')
+            self.assertEqual(UpdateRecord.from_dict(agg.to_dict()).sample, agg.sample)
+        self.assertTrue(any(r.sample for r in records))
+
     def test_only_watched_neurons_are_shipped(self):
         session = self.session()
         session.watch(['layer_2.0', 'layer_1.3'])

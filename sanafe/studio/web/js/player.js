@@ -2,13 +2,29 @@
    'modeled' keeps true proportions; 'slow' slows only while packets fly. */
 (function () {
   const S = window.Studio;
-  const SLOW_FACTOR = 10;
+  const SLOW_SHARE = 0.6;  // slow motion: share of the playback spent on packets in flight
+
+  /* Modeled time during which at least one packet is in flight. Chip-scale
+     updates spend under 1% of their time that way, so a fixed slowdown makes
+     packets flicker past; the share below keeps them visible at any scale. */
+  function flightTime(record) {
+    const spans = S.flying(record).map((m) => [m.send, m.receive]).sort((a, b) => a[0] - b[0]);
+    let total = 0, start = null, end = null;
+    for (const [from, to] of spans) {
+      if (start === null) { start = from; end = to; }
+      else if (from > end) { total += end - start; start = from; end = to; }
+      else if (to > end) { end = to; }
+    }
+    if (start !== null) total += end - start;
+    return Math.min(total, record.step_time);
+  }
 
   function Player(onFrame) {
     this.onFrame = onFrame;
     this.clock = 'slow';
     this.duration = 3000;
     this.last = null;
+    this.flight = new WeakMap();
     this.reset();
     const tick = (now) => { this.tick(now); requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
@@ -76,15 +92,25 @@
     this.dirty = true;
   };
 
+  /* Modeled seconds per millisecond of playback at the playhead. */
+  Player.prototype.rate = function (record, inFlight) {
+    const modeled = record.step_time / this.duration;
+    if (this.clock !== 'slow') return modeled;
+    if (!this.flight.has(record)) this.flight.set(record, flightTime(record));
+    const flight = this.flight.get(record);
+    const rest = record.step_time - flight;
+    if (flight <= 0 || rest <= 0) return modeled;  // nothing flying, or flight fills the update
+    return inFlight ? flight / (this.duration * SLOW_SHARE)
+                    : rest / (this.duration * (1 - SLOW_SHARE));
+  };
+
   Player.prototype.tick = function (now) {
     const dt = this.last === null ? 0 : Math.min(100, now - this.last);
     this.last = now;
     const record = this.current();
     if (this.playing && record) {
-      const inFlight = record.messages.some((m) => this.t >= m.send && this.t <= m.receive);
-      let rate = record.step_time / this.duration;
-      if (this.clock === 'slow' && inFlight) rate /= SLOW_FACTOR;
-      this.t += dt * rate;
+      const inFlight = S.flying(record).some((m) => this.t >= m.send && this.t <= S.flightEnd(m, record, this.clock));
+      this.t += dt * this.rate(record, inFlight);
       if (this.t >= record.step_time) {
         this.t = record.step_time;
         if (this.follow && this.index < this.records.length - 1) this.advance();

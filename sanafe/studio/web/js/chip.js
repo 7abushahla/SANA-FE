@@ -47,6 +47,7 @@
     this.onSelect = onSelect || function () {};
     this.onZoom = onZoom || function () {};
     this.mini = !!(options && options.mini);
+    this.clock = 'slow';
     this.onDrag = (options && options.onDrag) || null;
     this.dragFrom = null;
     this.highlight = null;  // { in: [cores], out: [cores] }
@@ -173,35 +174,76 @@
     });
   };
 
+  /* SVG text does not wrap: break at spaces to fit the host box. */
+  const HOST_CHARS = 22;
+  function wrap(text) {
+    const lines = [];
+    let line = '';
+    for (const word of String(text).split(/\s+/)) {
+      if (line && (line + ' ' + word).length > HOST_CHARS) { lines.push(line); line = word; }
+      else line = line ? line + ' ' + word : word;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
   /* The host drives one group with a constant current. One arrow reaches an
      outline around that group's cores; the drive is not NoC traffic. */
   Chip.prototype.drawHost = function (svg, metadata, network, height) {
     const group = network.groups.find((g) => g.name === metadata.host_input_group);
-    const lines = metadata.host_operations.length + (group ? 2 : 0);
-    const boxHeight = 44 + 14 * lines;
+    const cores = group ? Object.keys(group.cores).filter((core) => this.corePos[core]) : [];
+    const operations = metadata.host_operations.map(wrap);
+    const drive = cores.length ? wrap('→ ' + group.name + ': constant current (not NoC)') : [];
+    const count = operations.reduce((n, lines) => n + lines.length, 0) + drive.length;
+    const gap = 5;  // between operations
+    const boxHeight = 50 + 13 * count + gap * (operations.length - 1 + (drive.length ? 1 : 0));
     const top = height / 2 - boxHeight / 2;
     S.svg(svg, 'rect', { x: 10, y: top, width: 130, height: boxHeight, rx: 8, class: 'host' });
     S.svg(svg, 'text', { x: 75, y: top + 18, 'text-anchor': 'middle', class: 'hosttext', 'font-weight': 700 }, 'HOST');
     S.svg(svg, 'text', { x: 75, y: top + 31, 'text-anchor': 'middle', class: 'hosttext' }, '(not simulated)');
-    metadata.host_operations.forEach((line, i) => S.svg(svg, 'text', { x: 18, y: top + 50 + i * 14, class: 'hosttext' }, line));
-    const cores = group ? Object.keys(group.cores).filter((core) => this.corePos[core]) : [];
+    let y = top + 50;
+    for (const lines of operations) {
+      for (const line of lines) { S.svg(svg, 'text', { x: 18, y: y, class: 'hosttext' }, line); y += 13; }
+      y += gap;
+    }
     if (!cores.length) return;
-    const drive = top + 50 + metadata.host_operations.length * 14;
-    S.svg(svg, 'text', { x: 18, y: drive, class: 'hosttext hostdrive' }, '→ ' + group.name + ': constant');
-    S.svg(svg, 'text', { x: 18, y: drive + 14, class: 'hosttext hostdrive' }, 'current (not NoC)');
+    const first = y;
+    for (const line of drive) { S.svg(svg, 'text', { x: 18, y: y, class: 'hosttext hostdrive' }, line); y += 13; }
+    const driveY = (first + y - 13) / 2;
     const xs = cores.map((core) => this.corePos[core][0]);
     const ys = cores.map((core) => this.corePos[core][1]);
     // Two pixels outside the 22-pixel cores, clear of the tile label above them.
     const pad = 13;
-    const box = { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
-                  w: Math.max(...xs) - Math.min(...xs) + 2 * pad, h: Math.max(...ys) - Math.min(...ys) + 2 * pad };
-    S.svg(svg, 'rect', { x: box.x, y: box.y, width: box.w, height: box.h, rx: 7, class: 'hostgroup' });
+    const around = (keys) => {
+      const px = keys.map((k) => this.corePos[k][0]), py = keys.map((k) => this.corePos[k][1]);
+      return { x: Math.min(...px) - pad, y: Math.min(...py) - pad,
+               w: Math.max(...px) - Math.min(...px) + 2 * pad, h: Math.max(...py) - Math.min(...py) + 2 * pad };
+    };
+    let box = around(cores);
+    const driven = new Set(cores);
+    const intruder = Object.keys(this.owner).some((key) => {
+      const [cx, cy] = this.corePos[key] || [NaN, NaN];
+      return !driven.has(key) && cx > box.x && cx < box.x + box.w && cy > box.y && cy < box.y + box.h;
+    });
+    if (!intruder) {
+      S.svg(svg, 'rect', { x: box.x, y: box.y, width: box.w, height: box.h, rx: 7, class: 'hostgroup' });
+    } else {
+      // Other groups share these tiles: outline each driven core, and aim the
+      // arrow at the one nearest the host.
+      for (const key of cores) {
+        const one = around([key]);
+        S.svg(svg, 'rect', { x: one.x, y: one.y, width: one.w, height: one.h, rx: 5, class: 'hostgroup' });
+      }
+      const distance = (key) => Math.hypot(this.corePos[key][0] - 140, this.corePos[key][1] - driveY);
+      const nearest = cores.slice().sort((a, b) => distance(a) - distance(b))[0];
+      box = around([nearest]);
+    }
     const defs = S.svg(svg, 'defs', {});
     const marker = S.svg(defs, 'marker', { id: 'hostarrow', viewBox: '0 0 10 10', refX: 9, refY: 5,
       markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
     S.svg(marker, 'path', { d: 'M0,0 L10,5 L0,10 z', class: 'hostarrowhead' });
     const endY = box.y + box.h / 2;
-    const from = [140, drive - 4];
+    const from = [140, driveY - 4];
     const bend = (from[0] + box.x) / 2;
     const link = S.svg(svg, 'path', { d: 'M' + from[0] + ',' + from[1] + ' C' + bend + ',' + from[1] + ' ' + bend + ',' + endY +
       ' ' + box.x + ',' + endY, class: 'hostlink', 'marker-end': 'url(#hostarrow)' });
@@ -238,18 +280,19 @@
       }
     }
     if (record) {
-      for (const message of record.messages) {
-        if (t >= message.send && t <= message.receive) {
+      for (const message of S.flying(record)) {
+        const end = S.flightEnd(message, record, this.clock);
+        if (t >= message.send && t <= end) {
           const points = [this.corePos[message.src]]
             .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]);
-          const span = message.receive - message.send;
+          const span = end - message.send;
           const at = along(points, span > 0 ? (t - message.send) / span : 1);
           S.svg(overlay, 'circle', { cx: at[0], cy: at[1], r: 4.5, class: 'packet' });
           for (let i = 1; i < message.path.length; i++) {
             const link = this.links[linkKey(message.path[i - 1], message.path[i])];
             if (link) link.setAttribute('class', 'link hot');
           }
-        } else if (t > message.receive && t <= message.processed && this.corePos[message.dst]) {
+        } else if (t > end && t <= Math.max(message.processed, end) && this.corePos[message.dst]) {
           const at = this.corePos[message.dst];
           S.svg(overlay, 'rect', { x: at[0] - 14, y: at[1] - 14, width: 28, height: 28, rx: 5, class: 'receiving' });
         }

@@ -379,8 +379,10 @@
     app.coreStates = {};
     app.detailVersion += 1;
     $('chipNote').innerHTML = ready.trace_level === 'aggregate'
-      ? 'Aggregate trace level: link width shows packets per mesh link over the update, following the reconstructed x-then-y route ' +
-        S.mark('X') + '; no individual packets are kept. Core finish times ' + S.mark('D') + ' still animate.'
+      ? 'Aggregate trace level. Moving packets are a sample: the first message between each pair of cores, sent at its recorded time ' +
+        S.mark('R') + '. In slow motion each stays visible for at least 4% of the update (flights are nanoseconds in updates of tens of microseconds). ' +
+        'Link width shows all packets per mesh link over the update. Both follow the reconstructed x-then-y route ' +
+        S.mark('X') + '. Core finish times ' + S.mark('D') + ' animate as usual.'
       : CHIP_NOTE;
     chip.selected = null;
     chip.route = null;
@@ -539,7 +541,11 @@
   $('btnRun').addEventListener('click', () => command(S.api.run));
   $('btnPause').addEventListener('click', () => command(S.api.pause));
   $('btnReset').addEventListener('click', () => command(S.api.reset));
-  $('clock').addEventListener('change', () => { player.clock = $('clock').value; });
+  $('clock').addEventListener('change', () => {
+    player.clock = $('clock').value;
+    chip.clock = mini.clock = $('clock').value;
+    redraw();
+  });
   $('speed').addEventListener('change', () => { player.duration = Number($('speed').value); });
   $('scrub').addEventListener('input', () => player.show(Number($('scrub').value) - 1));
   $('follow').addEventListener('change', () => { if ($('follow').checked) player.latest(); else player.follow = false; });

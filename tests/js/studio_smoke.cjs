@@ -269,6 +269,9 @@ async function waitFor(check, what, timeout = 120000) {
     q('btnRun').click();
     await waitFor(() => q('state').textContent === 'finished' && q('uNum').textContent === '6', 'aggregate run');
     await waitFor(() => page.window.document.querySelectorAll('#chip line.link.heat').length > 0, 'link heat on the chip');
+    q('btnReplay').click();  // sample packets move on their recorded times
+    await waitFor(() => page.window.document.querySelector('#chip circle.packet'), 'sample packets in flight', 30000);
+    if (!/sample/.test(q('chipNote').textContent)) throw new Error('chip note must say packets are a sample');
     page.window.document.querySelector('#tabs button[data-tab="messages"]').click();
     await waitFor(() => page.window.document.querySelectorAll('#linkTable tr.linkrow').length > 0, 'per-link table');
     const pageClick = (node) => node.dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
