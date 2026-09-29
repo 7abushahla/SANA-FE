@@ -125,16 +125,42 @@
       const previous = app.session;
       if (app.socket) app.socket.close();
       if (previous) S.api.remove(previous.id).catch(() => {});
-      app.session = null;
-      player.reset();
-      applyReady(created);
-      app.socket = S.api.connect(created.id, onEvent);
-      button.textContent = 'Rebuild session';
+      open(created);
     } catch (error) {
       $('formError').textContent = error.message;
       button.textContent = label;
     } finally {
       button.disabled = false;
+    }
+  }
+
+  /* Show a session and follow it. The id goes in the URL so a reload resumes
+     the same session; the WebSocket hello then triggers the catch-up fetch. */
+  function open(snapshot) {
+    app.session = null;
+    player.reset();
+    applyReady(snapshot);
+    history.replaceState(null, '', '#session=' + snapshot.id);
+    app.socket = S.api.connect(snapshot.id, onEvent);
+    $('btnStart').textContent = 'Rebuild session';
+  }
+
+  async function resume() {
+    const match = /^#session=(\w+)$/.exec(location.hash);
+    if (!match) return;
+    try {
+      const snapshot = await S.api.get(match[1]);
+      $('workload').value = snapshot.workload;
+      renderParams();
+      const values = (snapshot.manifest && snapshot.manifest.parameters) || {};
+      for (const input of $('params').querySelectorAll('[data-param]')) {
+        const name = input.getAttribute('data-param');
+        if (name in values) input.value = values[name];
+      }
+      open(snapshot);
+    } catch (error) {
+      history.replaceState(null, '', location.pathname);
+      $('formError').textContent = 'The session in the address no longer exists. Start a new one.';
     }
   }
 
@@ -163,6 +189,7 @@
     const preferred = app.workloads.find((w) => w.name !== 'sanafe-files');
     if (preferred) $('workload').value = preferred.name;
     renderParams();
+    await resume();
   }
 
   $('workload').addEventListener('change', renderParams);

@@ -54,6 +54,10 @@ async function waitFor(check, what, timeout = 120000) {
     const used = document.querySelectorAll('#chip rect.core.used').length;
     if (used !== 3) throw new Error('expected 3 occupied cores, found ' + used);
     if (!/Loihi 2 candidate/.test(text('badge'))) throw new Error('badge missing: ' + text('badge'));
+    const note = $('chipNote');
+    if (!note || !note.querySelector('.m.X') || !/reconstructed/.test(note.textContent)) {
+      throw new Error('chip must mark the reconstructed packet route with X');
+    }
 
     $('btnRun').click();
     await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'run to finish');
@@ -76,9 +80,39 @@ async function waitFor(check, what, timeout = 120000) {
     $('btnPause').click();
     await waitFor(() => text('state') === 'paused', 'paused');
 
-    if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, pause)');
+    // Reload after a pause: the page must resume the same session.
+    const sid = /#session=(\w+)/.exec(dom.window.location.hash);
+    if (!sid) throw new Error('session id missing from the URL: ' + dom.window.location.href);
+    const pausedAt = Number(text('uNum'));
+    const serverUpdate = async () => (await (await fetch(BASE + 'api/sessions/' + sid[1])).json()).update;
+    await waitFor(async () => (await serverUpdate()) === pausedAt || Number(text('uNum')) === (await serverUpdate()), 'paused count to settle');
+    const url = dom.window.location.href;
     dom.window.close();
+    const open = () => JSDOM.fromURL(url, {
+      runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
+      beforeParse(window) {
+        window.fetch = (input, init) => fetch(new URL(input, window.location.href), init);
+        window.addEventListener('error', (event) => errors.push(event.message));
+      },
+    });
+    let page = await open();
+    let q = (id) => page.window.document.getElementById(id);
+    await waitFor(() => q('uHorizon').textContent === '3000', 'reloaded session');
+    await waitFor(async () => Number(q('uNum').textContent) === (await serverUpdate()), 'catch-up after reload');
+    // Reload in the middle of a run, then pause: every update exactly once.
+    q('btnRun').click();
+    await waitFor(() => q('state').textContent === 'running', 'running again');
+    await sleep(700);
+    page.window.close();
+    page = await open();
+    q = (id) => page.window.document.getElementById(id);
+    await waitFor(() => q('state').textContent === 'running', 'reloaded mid-run');
+    q('btnPause').click();
+    await waitFor(() => q('state').textContent === 'paused', 'paused after reload');
+    await waitFor(async () => Number(q('uNum').textContent) === (await serverUpdate()), 'no missing or duplicate updates');
+    if (errors.length) throw new Error('page errors: ' + errors.join('; '));
+    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, pause, X mark, reload resume)');
+    page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);
     console.error(log.slice(-3000));

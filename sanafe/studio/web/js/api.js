@@ -18,6 +18,7 @@
   S.api = {
     workloads: () => request('GET', '/api/workloads'),
     create: (body) => request('POST', '/api/sessions', body),
+    get: (id) => request('GET', '/api/sessions/' + id),
     remove: (id) => request('DELETE', '/api/sessions/' + id),
     step: (id, n) => request('POST', '/api/sessions/' + id + '/step', { n: n }),
     run: (id) => request('POST', '/api/sessions/' + id + '/run', {}),
