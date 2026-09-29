@@ -18,6 +18,7 @@ dependencies = []
 data = ["pandas"]
 viz = ["pandas", "matplotlib", "numpy"]
 all = ["pandas", "matplotlib", "numpy"]
+studio = ["pandas", "numpy", "pyyaml>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/SLAM-Lab/SANA-FE"
