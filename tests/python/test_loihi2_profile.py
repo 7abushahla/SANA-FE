@@ -1,5 +1,7 @@
 """Resource gates for the explicitly assumed candidate storage layout."""
 import json
+from pathlib import Path
+from importlib.resources import files
 import unittest
 import numpy as np
 from sanafe.loihi2 import (Allocation, audit_unit_scale_signed8_weights,
@@ -8,6 +10,14 @@ from sanafe.loihi2 import (Allocation, audit_unit_scale_signed8_weights,
 
 
 class TestLoihi2Profile(unittest.TestCase):
+    def test_yaml_copies_and_direct_loading_match_helper(self):
+        from sanafecpp import load_arch
+        packaged = files('sanafe.examples') / 'loihi2.yaml'
+        repository = Path(__file__).resolve().parents[2] / 'arch' / 'loihi2.yaml'
+        self.assertEqual(repository.read_text(), packaged.read_text())
+        self.assertEqual(load_arch(str(repository)).configuration(),
+                         load_loihi2_candidate().configuration())
+
     def test_unit_scale_weight_audit_is_not_a_physical_mapping_certificate(self):
         report = audit_unit_scale_signed8_weights([[[127, -128, 255, -256, 0]]])
         self.assertFalse(report['physical_mapping_verified'])

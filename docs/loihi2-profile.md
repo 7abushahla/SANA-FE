@@ -4,6 +4,39 @@
 
 `candidate_profile()` returns a serializable specification with parameter provenance, profile version 1, and numerical profile identifier `qcfs-if-int24-binary-v1`. The restricted numerical contract uses signed 16-bit effective weight transport, input, and bias, signed 32-bit accumulation with overflow rejection, and signed 24-bit voltage clipping before a `>=` threshold comparison. Effective weight transport is not a statement of physical Loihi 2 weight precision. Documented native stored synapses have at most 8-bit weights [2]. `audit_unit_scale_signed8_weights()` flags effective software values outside a direct signed8 unit-scale scenario; it does not test exponent selection, parallel synapses, or physical packing. Each valid update emits at most one binary event and subtracts the threshold once. Connections have one logical update of delay. These are candidate software semantics, not a verified Loihi 2 neuron program or a complete implementation of Loihi 2 capabilities.
 
+## Architecture files and authoritative specifications
+
+`arch/loihi2.yaml` is the repository architecture description. Its identical
+packaged copy, `sanafe/examples/loihi2.yaml`, is included by the existing
+`examples/*.yaml` package-data rule. `load_loihi2_candidate()` loads that
+resource directly. It no longer modifies the Loihi 1 YAML at runtime.
+
+```python
+from sanafecpp import load_arch
+arch = load_arch("arch/loihi2.yaml")  # Run from the SANA-FE repository root.
+```
+
+The Python profile retains capacity checks, assumed storage allocation, and
+provenance. Loading YAML directly does not automatically apply those checks.
+The file migration preserves the previous candidate configuration exactly.
+
+Use Intel's technology brief [1] for advertised capabilities and resource
+ceilings. Use the detailed runtime paper [2] for router connectivity and its
+analytical topology. These descriptions address different architectural levels.
+
+| Property | Confirmed hardware description | Current candidate |
+| --- | --- | --- |
+| Core and router grids | Intel describes an 8 × 16-core mesh [1]. The runtime paper describes an 8 × 4 router grid with four neurocores per router [2]. Both count 128 neurocores. | 32 tiles, four cores per tile. Physical tile numbering remains assumed. |
+| Routing | Dimension-order XY routing [2]. | Existing mesh routing; physical fabric assignment is unverified. |
+| Fabrics | Two physical fabrics [1]. The runtime analysis aggregates their links [2]. | One effective mesh. Separate fabric scheduling is not implemented. |
+| Scaling | Multichip expansion to thousands of cores [1]. | This YAML describes one chip. |
+| Neuron capacity | Up to 8,192 neurons per neurocore [1]. | 8,192 ceiling, with additional Python resource checks. |
+| Memory | Up to 128 KB synaptic memory and 192 KB total memory per neurocore, with flexible allocation [1]. Maxima depend on model requirements. | Python capacity checks use KiB and explicitly assumed allocation sizes. |
+| Neuron execution | Programmable neuron microcode [1]. | Direct integer IF implementation, without an instruction interpreter. |
+| Learning | Programmable learning [1]. | Not implemented in this profile. |
+| Management CPUs | Up to six embedded processors [1]. Intel also describes x86 and RISC-V management cores [4]. | Not modeled. |
+| “32-bit instruction set” | Do not use this as a description of the neurocores. Management CPU ISA, neuron microcode, and the documented 32-bit graded spike payload are separate properties [1], [4]. | Binary output events; no management CPU or neuron ISA emulation. |
+
 ## Resource validation
 
 ```python
@@ -30,6 +63,8 @@ A successful report means **model-feasible under the assumed layout**. It does n
 [2] J. Timcheck, A. Pierro, and S. B. Shrestha, “A Compute and Communication Runtime Model for Loihi 2,” arXiv:2601.10035v2, 2026. [Paper](https://arxiv.org/html/2601.10035v2). Section II-1 and Figure 1 document four-core routers and dimension-order routing. Section VI documents the 8 × 4 router grid and counts core-to-router links in its heaviest-link load. The candidate tile address mapping and physical fabric assignment remain unverified.
 
 [3] SLAM Lab, “SANA-FE,” bundled Loihi configuration. [Pinned source](https://github.com/SLAM-Lab/SANA-FE/blob/93926ec8019206c1c6e6709448ac4c67f46d57db/sanafe/examples/loihi.yaml). Source for all inherited cost coefficients, attributed there to Davies et al. (2018).
+
+[4] A. Rao Mangalore, Intel Labs, Loihi presentation, slide “The Latest Loihi chip: Loihi 2.” [Intel-authored slides hosted by TUM](https://www.tum-venture-labs.de/media/images/Labs/Quantum/Events/HWfAI_presentations/HWfAI_Intel_Labs_Ashish_Rao_Mangalore.pdf). The slide identifies six microprocessor cores and asynchronous x86 and RISC-V. Processor ISA claims should identify the hardware revision rather than treating every Loihi 2 revision as all-x86.
 
 Graded events, instruction execution, packed synaptic-memory traffic, detailed multicast, physical input/output transfer, and Loihi 2 cost calibration are outside this profile. Using the candidate with SANA-FE's scheduler does not execute Intel compiler output or Intel hardware.
 

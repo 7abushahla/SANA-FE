@@ -6,10 +6,9 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 import hashlib
 import json
-from importlib.resources import files
+from importlib.resources import as_file, files
 from numbers import Integral
 from pathlib import Path
-import tempfile
 
 INTEL_BRIEF = 'https://www.intel.com/content/dam/www/central-libraries/us/en/documents/neuromorphic-computing-loihi-2-brief.pdf'
 RUNTIME_PAPER = 'https://arxiv.org/html/2601.10035v2'
@@ -123,27 +122,9 @@ def candidate_profile():
 
 
 def load_loihi2_candidate():
-    """Build the integer candidate while retaining identified Loihi 1 costs."""
+    """Load the packaged candidate architecture with inherited Loihi 1 costs."""
     from sanafecpp import load_arch
-    text = (files('sanafe.examples') / 'loihi.yaml').read_text()
-    text = text.replace('name: loihi_chip', 'name: loihi2_candidate')
-    text = text.replace('max_neurons_supported: 1024', 'max_neurons_supported: 8192')
-    text = text.replace('model: leaky_integrate_fire', 'model: integrate_fire_int24')
-    # Retain the original coefficients of only the selected pipeline units.
-    start = text.index('            - name: loihi_inputs')
-    end = text.index('          dendrite:', start)
-    text = text[:start] + text[end:]
-    start = text.index('            - name: loihi_dendrites_delay')
-    end = text.index('          synapse:', start)
-    text = text[:start] + text[end:]
-    start = text.index('            - name: loihi_sparse_synapse')
-    end = text.index('          axon_out:', start)
-    text = text[:start] + text[end:]
-    text = text.replace('model: accumulator\n', 'model: accumulator_int\n')
-    text = text.replace('model: current_based\n', 'model: current_based_int\n')
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'candidate.yaml'
-        path.write_text(text)
+    with as_file(files('sanafe.examples') / 'loihi2.yaml') as path:
         return load_arch(str(path))
 
 

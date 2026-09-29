@@ -6,6 +6,8 @@ dist/
 sanafe.egg-info/
 *.swp
 *.yaml
+!arch/loihi2.yaml
+!sanafe/examples/loihi2.yaml
 *.png
 *.npz
 *.parsed
