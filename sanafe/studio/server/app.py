@@ -98,12 +98,13 @@ class ManagedSession:
         self.handle = WorkerHandle(ref, parameters, options, self._on_message)
 
     def query(self, message):
-        """Send a query to the worker; the future resolves with its reply."""
+        """Send a query (default op 'query') to the worker; the future resolves
+        with its reply."""
         future = concurrent.futures.Future()
         query_id = next(self.query_ids)
         with self.lock:
             self.replies[query_id] = future
-        self.handle.send({**message, 'op': 'query', 'id': query_id})
+        self.handle.send({'op': 'query', **message, 'id': query_id})
         return query_id, future
 
     def forget(self, query_id):
@@ -313,6 +314,36 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             records = session.records[start:]
         return _json({'from': start, 'updates': records})
 
+    async def ask(session, message):
+        """Send one query and wait for its reply, or return an error response."""
+        query_id, future = session.query(message)
+        try:
+            reply = await asyncio.wait_for(asyncio.wrap_future(future), 10)
+        except asyncio.TimeoutError:
+            session.forget(query_id)
+            return None, _json({'error': 'the session did not answer within 10 s'}, 504)
+        status = {'not_found': 404, 'bad_request': 400, 'exited': 409}
+        if 'error' in reply:
+            return None, _json({'error': reply['error']}, status.get(reply.get('code'), 500))
+        return reply['data'], None
+
+    async def breakpoints(request):
+        session = lookup(request)
+        if session is None:
+            return _json({'error': 'no such session'}, 404)
+        if not session.alive:
+            return _json({'error': 'session worker has exited; start a new session'}, 409)
+        body = await _body(request)
+        if body is None or not isinstance(body.get('breakpoints'), list):
+            return _json({'error': 'body: expected {"breakpoints": [...]}'}, 400)
+        data, failure = await ask(session, {'op': 'breakpoints', 'specs': body['breakpoints']})
+        if failure is not None:
+            return failure
+        with session.lock:
+            if session.ready is not None:
+                session.ready['breakpoints'] = data
+        return _json({'breakpoints': data})
+
     async def neuron(request):
         session = lookup(request)
         if session is None:
@@ -323,18 +354,10 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             offset = int(request.path_params['offset'])
         except ValueError:
             return _json({'error': 'offset: expected an integer'}, 404)
-        query_id, future = session.query({'what': 'neuron',
-                                          'group': request.path_params['group'],
-                                          'offset': offset})
-        try:
-            reply = await asyncio.wait_for(asyncio.wrap_future(future), 10)
-        except asyncio.TimeoutError:
-            session.forget(query_id)
-            return _json({'error': 'the session did not answer within 10 s'}, 504)
-        status = {'not_found': 404, 'bad_request': 400, 'exited': 409}
-        if 'error' in reply:
-            return _json({'error': reply['error']}, status.get(reply.get('code'), 500))
-        return _json(reply['data'])
+        data, failure = await ask(session, {'what': 'neuron',
+                                            'group': request.path_params['group'],
+                                            'offset': offset})
+        return failure if failure is not None else _json(data)
 
     async def architectures(request):
         return _json(sorted(bundled_architectures()))
@@ -408,6 +431,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/pause', pause, methods=['POST']),
         Route('/api/sessions/{session_id}/reset', reset, methods=['POST']),
         Route('/api/sessions/{session_id}/updates', updates),
+        Route('/api/sessions/{session_id}/breakpoints', breakpoints, methods=['PUT']),
         Route('/api/sessions/{session_id}/neurons/{group}/{offset}', neuron),
         Route('/api/sessions/{session_id}/architecture', architecture),
         Route('/api/architectures', architectures),

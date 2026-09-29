@@ -1,10 +1,12 @@
 """One Studio session per process, driven by plain-dict messages over a Pipe.
 
 Commands from the parent: {'op': 'step', 'n': k}, {'op': 'run'},
-{'op': 'pause'}, {'op': 'reset'}, {'op': 'close'}, and {'op': 'query', 'id',
-'what', ...}. Events from the worker: 'ready', 'error', 'update', 'state',
-and 'reply'. Queries are answered at once, even during a run, because they
-read only what the build produced. The parent's reader thread adds
+{'op': 'pause'}, {'op': 'reset'}, {'op': 'close'}, {'op': 'query', 'id',
+'what', ...}, and {'op': 'breakpoints', 'id', 'specs'}. Events from the
+worker: 'ready', 'error', 'update', 'state', and 'reply'. Queries and
+breakpoint changes are answered at once, even during a run: queries read
+only what the build produced, and a new breakpoint list is swapped in
+whole, taking effect from the next update. The parent's reader thread adds
 'exited' when the process ends, whatever the reason.
 """
 from dataclasses import dataclass
@@ -42,9 +44,12 @@ def _answer(session, message):
     """Reply to one query from build-time data; never touches the chip."""
     reply = {'type': 'reply', 'id': message.get('id')}
     try:
-        if message.get('what') != 'neuron':
+        if message.get('op') == 'breakpoints':
+            reply['data'] = session.set_breakpoints(message.get('specs'))
+        elif message.get('what') == 'neuron':
+            reply['data'] = session.neuron_detail(message['group'], int(message['offset']))
+        else:
             raise ValueError(f'unknown query {message.get("what")!r}')
-        reply['data'] = session.neuron_detail(message['group'], int(message['offset']))
     except (KeyError, IndexError) as error:
         reply.update(code='not_found', error=str(error).strip("'\""))
     except (TypeError, ValueError) as error:
@@ -93,7 +98,7 @@ def run_worker(conn, ref, parameters, options):
                 commands.put({'op': 'close'})
                 return
             op = message.get('op')
-            if op == 'query':
+            if op in ('query', 'breakpoints'):
                 send(_answer(session, message))
                 continue
             with control:

@@ -239,6 +239,25 @@ class TestServer(unittest.TestCase):
                 self.assertEqual(rejected.status_code, 400, rejected.text)
                 self.assertIn('core_map', rejected.json()['error'])
 
+    def test_breakpoints_round_trip_and_stop(self):
+        sid = self.create()['id']
+        url = f'/api/sessions/{sid}/breakpoints'
+        accepted = self.client.put(url, json={'breakpoints': [
+            {'id': 'b', 'kind': 'update', 'equals': 3}]})
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(accepted.json()['breakpoints'][0]['enabled'], True)
+        rejected = self.client.put(url, json={'breakpoints': [{'id': 'x', 'kind': 'weather'}]})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn('unknown kind', rejected.json()['error'])
+        self.assertEqual(self.client.put(url, json=['no']).status_code, 400)
+        self.assertEqual(self.client.get(f'/api/sessions/{sid}').json()['breakpoints'][0]['id'], 'b')
+        with self.client.websocket_connect(f'/ws/sessions/{sid}') as socket:
+            socket.receive_json()
+            self.client.post(f'/api/sessions/{sid}/run', json={})
+            final = until_settled(socket)[-1]
+        self.assertEqual((final['state'], final['update'], final['reason']),
+                         ('stopped', 3, 'breakpoint b: update 3'))
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)

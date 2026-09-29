@@ -11,6 +11,7 @@ import sanafe
 from sanafe.loihi2 import (architecture_fingerprint, load_loihi2_candidate,
                            validate_core_budgets)
 
+from .breakpoints import Breakpoints
 from .connectivity import Connectivity
 from .instrument import instrument_arch_yaml
 from .layout import ChipLayout
@@ -76,6 +77,7 @@ class Session:
         self._store_dir = Path(store_dir) if store_dir is not None else None
         self._pause = threading.Event()
         self._scratch = None
+        self.breakpoints = Breakpoints()
         try:
             self._build()
         except BaseException:
@@ -109,6 +111,10 @@ class Session:
             self.core_budgets = {f'{stat["tile"]}.{stat["core"]}': stat for stat in
                                  validate_core_budgets(self.connectivity.core_stats())}
         self.records = []
+        try:  # keep the breakpoints across a rebuild while they still apply
+            self.breakpoints = Breakpoints.compile(self.breakpoints.specs, self)
+        except ValueError:
+            self.breakpoints = Breakpoints()
         self.state = SessionState.IDLE
         self.stop_reason = None
         self.fault = None
@@ -202,7 +208,17 @@ class Session:
                 'horizon': self.horizon, 'badge': self.badge(),
                 'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
                 'state': self.state.value, 'update': self.update,
-                'core_map': dict(self.core_map)}
+                'core_map': dict(self.core_map),
+                'breakpoints': list(self.breakpoints.specs)}
+
+    def set_breakpoints(self, specs):
+        """Replace the breakpoint list; takes effect from the next update.
+
+        Thread-safe: the new list is validated first and then swapped in with
+        one assignment, so a running update sees either the old or new list.
+        """
+        self.breakpoints = Breakpoints.compile(specs, self)
+        return self.breakpoints.specs
 
     def pause(self):
         """Stop the current or next run at an update boundary. Thread-safe.
@@ -253,6 +269,7 @@ class Session:
                 reason = stop_when(record) if stop_when is not None else None
             except Exception as error:
                 self._set_fault(error)
+            reason = reason or self.breakpoints.check(record)
             if reason:
                 self._pause.clear()
                 self.state = SessionState.STOPPED
