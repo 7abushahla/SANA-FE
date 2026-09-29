@@ -1305,6 +1305,12 @@ PYBIND11_MODULE(sanafecpp, m)
                     [](const PyNeuronRef &ref)
                             -> const std::vector<sanafe::Connection> & {
                         return ref.edges_out();
+                    })
+            // Read-only copy of the attributes set with set_attributes
+            .def_property_readonly("model_attributes",
+                    [](const PyNeuronRef &ref) -> pybind11::object {
+                        return pymodel_attributes_to_pydict(
+                                ref.get()->model_attributes);
                     });
     pybind11::class_<PyNeuronRefIterator>(m, "NeuronRefIterator")
             .def("__iter__",

@@ -42,5 +42,18 @@ class TestMappedNeuronIdentity(unittest.TestCase):
             neuron.offset = 5
 
 
+class TestNetworkNeuronAttributes(unittest.TestCase):
+    def test_network_neuron_model_attributes(self):
+        net = sanafe.Network()
+        group = net.create_neuron_group('g', 2)
+        group[1].set_attributes(model_attributes={'threshold': 4, 'bias': 0,
+                                                  'initial_voltage': 2})
+        self.assertEqual(group[1].model_attributes,
+                         {'threshold': 4, 'bias': 0, 'initial_voltage': 2})
+        self.assertEqual(group[0].model_attributes, {})
+        with self.assertRaises(AttributeError):
+            group[1].model_attributes = {}
+
+
 if __name__ == '__main__':
     unittest.main()
