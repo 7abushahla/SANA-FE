@@ -1085,6 +1085,18 @@ pybind11::dict pyarchitecture_configuration(const sanafe::Architecture &arch)
     return result;
 }
 
+namespace
+{
+const sanafe::Core &mapped_core(const sanafe::MappedNeuron &neuron)
+{
+    if (neuron.core == nullptr)
+    {
+        throw std::logic_error("Mapped neuron has no core");
+    }
+    return *neuron.core;
+}
+} // namespace
+
 PYBIND11_MODULE(sanafecpp, m)
 {
     m.doc() = docstrings::module_doc;
@@ -1440,7 +1452,23 @@ PYBIND11_MODULE(sanafecpp, m)
                     pybind11::arg("soma_attributes") = pybind11::dict(),
                     pybind11::arg("dendrite_attributes") = pybind11::dict(),
                     pybind11::arg("log_spikes") = pybind11::none(),
-                    docstrings::mapped_neuron_set_attributes_doc);
+                    docstrings::mapped_neuron_set_attributes_doc)
+            .def_readonly("group_name", &sanafe::MappedNeuron::parent_group_name)
+            .def_readonly("offset", &sanafe::MappedNeuron::offset)
+            .def_readonly("log_spikes", &sanafe::MappedNeuron::log_spikes)
+            .def_readonly("log_potential", &sanafe::MappedNeuron::log_potential)
+            .def_property_readonly("tile_id",
+                    [](const sanafe::MappedNeuron &self) {
+                        return mapped_core(self).parent_tile_id;
+                    })
+            .def_property_readonly("core_offset",
+                    [](const sanafe::MappedNeuron &self) {
+                        return mapped_core(self).offset;
+                    })
+            .def_property_readonly("core_id",
+                    [](const sanafe::MappedNeuron &self) {
+                        return mapped_core(self).id;
+                    });
     pybind11::class_<sanafe::SpikingChip>(
             m, "SpikingChip", docstrings::spiking_chip_doc)
             .def_property(
