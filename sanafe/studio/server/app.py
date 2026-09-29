@@ -12,6 +12,8 @@ import uuid
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -38,11 +40,37 @@ def _spec(spec):
 
 
 async def _body(request):
+    """The JSON object a POST carries, or None when it is not one."""
     try:
         data = await request.json()
     except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    return data if isinstance(data, dict) else None
+
+
+BAD_BODY = {'error': 'body: expected a JSON object'}
+
+
+class JsonOnlyPosts:
+    """Reject POSTs that are not application/json.
+
+    A page on another site can send text or form POSTs without a CORS
+    preflight, and this server never grants one. Requiring JSON therefore
+    keeps other sites from driving local sessions.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http' and scope['method'] == 'POST':
+            content_type = dict(scope['headers']).get(b'content-type', b'')
+            if content_type.split(b';')[0].strip().lower() != b'application/json':
+                response = JSONResponse({'error': 'POST requests must be application/json'},
+                                        status_code=415)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 class ManagedSession:
@@ -140,7 +168,8 @@ class SessionManager:
             self.close(session_id)
 
 
-def create_app(registry, store_dir=None, build_timeout=300.0):
+def create_app(registry, store_dir=None, build_timeout=300.0,
+               allowed_hosts=('127.0.0.1', 'localhost')):
     manager = SessionManager(registry, store_dir, build_timeout)
 
     @contextlib.asynccontextmanager
@@ -159,6 +188,8 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
 
     async def create_session(request):
         body = await _body(request)
+        if body is None:
+            return _json(BAD_BODY, 400)
         name = body.get('workload')
         if name not in manager.registry:
             return _json({'error': f'unknown workload {name!r}'}, 404)
@@ -216,7 +247,10 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
         return _json({'accepted': op}, 202)
 
     async def step(request):
-        n = (await _body(request)).get('n', 1)
+        body = await _body(request)
+        if body is None:
+            return _json(BAD_BODY, 400)
+        n = body.get('n', 1)
         try:
             ParameterSpec('n', 'int', minimum=1).validate(n)
         except ValueError as error:
@@ -296,6 +330,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0):
         WebSocketRoute('/ws/sessions/{session_id}', events),
         Mount('/', StaticFiles(directory=WEB, html=True, check_dir=False)),
     ]
-    app = Starlette(routes=routes, lifespan=lifespan)
+    # The Host allow-list stops DNS-rebinding pages from reaching the API.
+    middleware = [Middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts)),
+                  Middleware(JsonOnlyPosts)]
+    app = Starlette(routes=routes, lifespan=lifespan, middleware=middleware)
     app.state.manager = manager
     return app

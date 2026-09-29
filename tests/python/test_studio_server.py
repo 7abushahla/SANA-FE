@@ -36,7 +36,7 @@ def until_settled(socket):
 
 class TestServer(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(create_app(REGISTRY))
+        self.client = TestClient(create_app(REGISTRY, allowed_hosts=('testserver',)))
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 
@@ -76,7 +76,7 @@ class TestServer(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn('n: ', response.json()['error'])
         self.assertEqual(self.client.get(f'/api/sessions/{sid}/updates?from=-1').status_code, 400)
-        self.assertEqual(self.client.post('/api/sessions/unknown/run').status_code, 404)
+        self.assertEqual(self.client.post('/api/sessions/unknown/run', json={}).status_code, 404)
 
     def test_streamed_updates_equal_resent_updates(self):
         sid = self.create()['id']
@@ -88,7 +88,7 @@ class TestServer(unittest.TestCase):
             seen = until_settled(socket)
             self.assertEqual((seen[-1]['state'], seen[-1]['update']), ('paused', 2))
             self.assertTrue(seen[-1]['alive'])
-            self.client.post(f'/api/sessions/{sid}/run')
+            self.client.post(f'/api/sessions/{sid}/run', json={})
             seen += until_settled(socket)
             self.assertEqual((seen[-1]['state'], seen[-1]['update']), ('finished', 6))
         streamed = [m['record'] for m in seen if m['type'] == 'update']
@@ -107,7 +107,7 @@ class TestServer(unittest.TestCase):
             socket.receive_json()
             self.client.post(f'/api/sessions/{sid}/step', json={'n': 1})
             until_settled(socket)
-            self.assertEqual(self.client.post(f'/api/sessions/{sid}/reset').status_code, 202)
+            self.assertEqual(self.client.post(f'/api/sessions/{sid}/reset', json={}).status_code, 202)
             while True:
                 message = socket.receive_json()
                 if message['type'] == 'ready':
@@ -120,12 +120,12 @@ class TestServer(unittest.TestCase):
         crashed = self.create('test-crash')['id']
         with self.client.websocket_connect(f'/ws/sessions/{crashed}') as socket:
             socket.receive_json()
-            self.client.post(f'/api/sessions/{crashed}/run')
+            self.client.post(f'/api/sessions/{crashed}/run', json={})
             seen = until_settled(socket)
         self.assertEqual(seen[-1]['state'], 'faulted')
         self.assertIn('worker exited with code 7', seen[-1]['fault'])
         self.assertFalse(seen[-1]['alive'])
-        self.assertEqual(self.client.post(f'/api/sessions/{crashed}/step').status_code, 409)
+        self.assertEqual(self.client.post(f'/api/sessions/{crashed}/step', json={}).status_code, 409)
         self.assertEqual(self.client.get('/api/workloads').status_code, 200)
         other = self.create()['id']
         self.assertEqual(self.client.post(f'/api/sessions/{other}/step',
@@ -146,7 +146,7 @@ class TestServer(unittest.TestCase):
         sid = self.create('test-slow')['id']
         with self.client.websocket_connect(f'/ws/sessions/{sid}') as socket:
             socket.receive_json()
-            self.client.post(f'/api/sessions/{sid}/run')
+            self.client.post(f'/api/sessions/{sid}/run', json={})
             while socket.receive_json().get('state') != 'running':
                 pass
         deleter = threading.Thread(target=self.client.delete, args=(f'/api/sessions/{sid}',))
@@ -156,6 +156,21 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.get('/api/workloads').status_code, 200)
         self.assertLess(time.monotonic() - started, 1.0)
         deleter.join(timeout=30)
+
+    def test_rejects_cross_site_requests(self):
+        # A foreign page can send text or form POSTs without a CORS preflight,
+        # and a DNS-rebinding page arrives with a foreign Host header.
+        plain = self.client.post('/api/sessions', content=json.dumps({'workload': 'test-chain'}),
+                                 headers={'Content-Type': 'text/plain'})
+        self.assertEqual(plain.status_code, 415)
+        self.assertIn('application/json', plain.json()['error'])
+        foreign = self.client.get('/api/workloads', headers={'host': 'attacker.example'})
+        self.assertEqual(foreign.status_code, 400)
+        sid = self.create()['id']
+        broken = self.client.post(f'/api/sessions/{sid}/step', content='{not json',
+                                  headers={'Content-Type': 'application/json'})
+        self.assertEqual(broken.status_code, 400)
+        self.assertIn('body: expected a JSON object', broken.json()['error'])
 
     def test_delete(self):
         sid = self.create()['id']
