@@ -60,7 +60,7 @@ def _jsonable(value):
 
 class Session:
     def __init__(self, workload, parameters=None, *, trace_level='full',
-                 horizon=None, store_dir=None):
+                 horizon=None, store_dir=None, core_map=None):
         if trace_level not in TRACE_LEVELS:
             raise ValueError(f"trace level {trace_level!r} is not available; "
                              "'aggregate' arrives in stage 5, use 'full'")
@@ -70,6 +70,9 @@ class Session:
         self.parameters = resolve_parameters(workload, parameters or {})
         self.trace_level = trace_level
         self._horizon_override = horizon
+        if core_map is not None and not isinstance(core_map, dict):
+            raise ValueError('core_map: expected an object mapping core to core')
+        self.core_map = dict(core_map or {})
         self._store_dir = Path(store_dir) if store_dir is not None else None
         self._pause = threading.Event()
         self._scratch = None
@@ -91,6 +94,8 @@ class Session:
         instrumented = Path(self._scratch.name) / 'architecture.yaml'
         self.instrumentation = instrument_arch_yaml(self.built.arch_yaml, instrumented)
         self._sim_arch = sanafe.load_arch(str(instrumented))
+        if self.core_map:
+            self._apply_core_map()
         self.chip = sanafe.SpikingChip(self._sim_arch)
         self.chip.load(self.built.network)
         self.layout = ChipLayout.from_chip(self.chip, self._sim_arch)
@@ -113,6 +118,31 @@ class Session:
             name = f'{self.workload.name}-{stamp}-{uuid.uuid4().hex[:6]}'
             self.store = TraceStore.create(self._store_dir / name, self.manifest())
 
+    def _apply_core_map(self):
+        """Move every neuron of each key core to its value core.
+
+        map_to_core also sets SANA-FE's mapping order, which decides placement
+        order inside a core, so every neuron is re-mapped in its old order.
+        """
+        arch = self.built.arch
+
+        def core(key):
+            try:
+                tile, offset = (int(part) for part in key.split('.'))
+                arch.tiles[tile].cores[offset]
+                if tile < 0 or offset < 0:
+                    raise IndexError
+            except (AttributeError, ValueError, IndexError, TypeError):
+                raise ValueError(f'core_map: unknown core {key!r}') from None
+            return tile, offset
+
+        moves = {core(key): core(value) for key, value in self.core_map.items()}
+        neurons = [neuron for group in self.built.network.groups.values()
+                   for neuron in group if neuron.mapped_core is not None]
+        for neuron in sorted(neurons, key=lambda n: n.mapping_order):
+            tile, offset = moves.get(tuple(neuron.mapped_core), tuple(neuron.mapped_core))
+            neuron.map_to_core(arch.tiles[tile].cores[offset])
+
     @property
     def update(self):
         return len(self.records)
@@ -129,6 +159,7 @@ class Session:
             'timing_model': 'detailed',
             'trace_level': self.trace_level,
             'horizon': self.horizon,
+            'core_map': dict(self.core_map),
             'metadata': _jsonable(self.built.metadata),
             'created': datetime.now(timezone.utc).isoformat(),
         }
@@ -170,7 +201,8 @@ class Session:
         return {'layout': self.layout.to_dict(), 'network': self.network_summary(),
                 'horizon': self.horizon, 'badge': self.badge(),
                 'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
-                'state': self.state.value, 'update': self.update}
+                'state': self.state.value, 'update': self.update,
+                'core_map': dict(self.core_map)}
 
     def pause(self):
         """Stop the current or next run at an update boundary. Thread-safe.

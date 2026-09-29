@@ -226,6 +226,19 @@ class TestServer(unittest.TestCase):
         session._on_message({'type': 'reply', 'id': 999, 'data': {}})  # must not raise
         self.assertEqual(self.client.get(f'/api/sessions/{sid}/neurons/layer_1/2').status_code, 200)
 
+    def test_create_with_a_core_map(self):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'core_map': {'16.0': '5.1', '5.1': '16.0'}})
+        self.assertEqual(response.status_code, 201, response.text)
+        groups = {g['name']: g['cores'] for g in response.json()['network']['groups']}
+        self.assertEqual(groups['layer_1'], {'5.1': 4})
+        for bad in ({'16.0': '99.9'}, ['16.0'], {'16.0': 3}):
+            with self.subTest(core_map=bad):
+                rejected = self.client.post('/api/sessions', json={'workload': 'test-chain',
+                                                                   'core_map': bad})
+                self.assertEqual(rejected.status_code, 400, rejected.text)
+                self.assertIn('core_map', rejected.json()['error'])
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)

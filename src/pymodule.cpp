@@ -1311,6 +1311,22 @@ PYBIND11_MODULE(sanafecpp, m)
                     [](const PyNeuronRef &ref) -> pybind11::object {
                         return pymodel_attributes_to_pydict(
                                 ref.get()->model_attributes);
+                    })
+            // (tile, core offset) from map_to_core, or None if unmapped
+            .def_property_readonly("mapped_core",
+                    [](const PyNeuronRef &ref) -> pybind11::object {
+                        const auto &address = ref.get()->core_address;
+                        if (!address.has_value())
+                        {
+                            return pybind11::none();
+                        }
+                        return pybind11::make_tuple(address->parent_tile_id,
+                                address->offset_within_tile);
+                    })
+            // Order of map_to_core calls; SANA-FE places neurons in it
+            .def_property_readonly("mapping_order",
+                    [](const PyNeuronRef &ref) {
+                        return ref.get()->mapping_order;
                     });
     pybind11::class_<PyNeuronRefIterator>(m, "NeuronRefIterator")
             .def("__iter__",

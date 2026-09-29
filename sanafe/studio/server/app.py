@@ -225,9 +225,13 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         parameters = body.get('parameters') or {}
         horizon = body.get('horizon')
         trace_level = body.get('trace_level', 'full')
+        core_map = body.get('core_map') or None
         try:
             if not isinstance(parameters, dict):
                 raise ValueError('parameters: expected an object')
+            if core_map is not None and (not isinstance(core_map, dict) or not all(
+                    isinstance(k, str) and isinstance(v, str) for k, v in core_map.items())):
+                raise ValueError('core_map: expected an object mapping "tile.core" to "tile.core"')
             resolve_parameters(manager.workload(name), parameters)
             if horizon is not None:
                 ParameterSpec('horizon', 'int', minimum=1).validate(horizon)
@@ -237,7 +241,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         except ValueError as error:
             return _json({'error': str(error)}, 400)
         session_id = uuid.uuid4().hex[:12]
-        options = {'trace_level': trace_level, 'horizon': horizon,
+        options = {'trace_level': trace_level, 'horizon': horizon, 'core_map': core_map,
                    'store_dir': str(manager.store_dir) if manager.store_dir else None}
         session = ManagedSession(manager, session_id, name, manager.registry[name],
                                  parameters, options)

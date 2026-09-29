@@ -72,7 +72,8 @@ def run_worker(conn, ref, parameters, options):
         session = Session(ref.load(), parameters,
                           trace_level=options.get('trace_level', 'full'),
                           horizon=options.get('horizon'),
-                          store_dir=options.get('store_dir'))
+                          store_dir=options.get('store_dir'),
+                          core_map=options.get('core_map'))
     except Exception as error:
         send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
         conn.close()

@@ -54,6 +54,17 @@ class TestNetworkNeuronAttributes(unittest.TestCase):
         with self.assertRaises(AttributeError):
             group[1].model_attributes = {}
 
+    def test_mapped_core_and_mapping_order(self):
+        from sanafe.loihi2 import load_loihi2_candidate
+        arch = load_loihi2_candidate()
+        net = sanafe.Network()
+        group = net.create_neuron_group('g', 3)
+        self.assertIsNone(group[0].mapped_core)
+        group[2].map_to_core(arch.tiles[16].cores[0])
+        group[0].map_to_core(arch.tiles[5].cores[1])
+        self.assertEqual((group[2].mapped_core, group[0].mapped_core), ((16, 0), (5, 1)))
+        self.assertLess(group[2].mapping_order, group[0].mapping_order)
+
 
 if __name__ == '__main__':
     unittest.main()

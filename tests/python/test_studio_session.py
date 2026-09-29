@@ -162,7 +162,7 @@ class TestSession(unittest.TestCase):
                          'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware')
         described = session.describe()
         self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
-                                          'metadata', 'state', 'update'})
+                                          'metadata', 'state', 'update', 'core_map'})
         self.assertEqual((described['state'], described['update'], described['horizon']),
                          ('idle', 0, 6))
         import json
