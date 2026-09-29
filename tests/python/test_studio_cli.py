@@ -30,6 +30,8 @@ class TestCli(unittest.TestCase):
                                 capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('--workload', result.stdout)
+        self.assertIn('.sanafe-studio', result.stdout)  # runs are saved by default
+        self.assertIn('--no-store', result.stdout)
 
 
 if __name__ == '__main__':

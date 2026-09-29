@@ -9,7 +9,8 @@ ALLOWED = {'__future__', 'argparse', 'ast', 'asyncio', 'collections', 'concurren
            'dataclasses', 'datetime', 'enum', 'importlib', 'json', 'math',
            'multiprocessing', 'os', 'pathlib', 'queue', 're', 'subprocess', 'sys',
            'tempfile', 'threading', 'typing', 'uuid', 'numpy', 'pandas', 'yaml',
-           'sanafe', 'sanafecpp', 'starlette', 'uvicorn'}
+           'sanafe', 'sanafecpp', 'starlette', 'uvicorn',
+           'io', 'numbers', 'matplotlib'}  # matplotlib: only to close sanafe.viz figures
 
 
 class TestStudioBoundaries(unittest.TestCase):

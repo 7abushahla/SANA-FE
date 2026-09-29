@@ -166,9 +166,17 @@ class Session:
             'trace_level': self.trace_level,
             'horizon': self.horizon,
             'core_map': dict(self.core_map),
+            'network': [{'name': g['name'], 'size': g['size']}
+                        for g in self._group_sizes()],
             'metadata': _jsonable(self.built.metadata),
             'created': datetime.now(timezone.utc).isoformat(),
         }
+
+    def _group_sizes(self):
+        sizes = {}
+        for neuron in self.neurons:
+            sizes[neuron.group] = sizes.get(neuron.group, 0) + 1
+        return [{'name': name, 'size': size} for name, size in sizes.items()]
 
     def network_summary(self):
         """Groups in SANA-FE trace order with their per-core neuron counts."""
@@ -209,7 +217,8 @@ class Session:
                 'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
                 'state': self.state.value, 'update': self.update,
                 'core_map': dict(self.core_map),
-                'breakpoints': list(self.breakpoints.specs)}
+                'breakpoints': list(self.breakpoints.specs),
+                'run': self.store.directory.name if self.store is not None else None}
 
     def set_breakpoints(self, specs):
         """Replace the breakpoint list; takes effect from the next update.

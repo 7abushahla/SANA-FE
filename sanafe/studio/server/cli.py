@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .worker import WorkloadRef
 
+DEFAULT_STORE = Path.home() / '.sanafe-studio' / 'runs'
 DEFAULT_WORKLOADS = {
     'sanafe-files': WorkloadRef('sanafe.studio.engine.workload:SanafeFiles'),
 }
@@ -27,8 +28,11 @@ def main(argv=None, extra_workloads=None):
         prog='python -m sanafe.studio',
         description='Serve SANA-FE Studio on this machine only (127.0.0.1).')
     parser.add_argument('--port', type=int, default=8765)
-    parser.add_argument('--store-dir', type=Path, default=None,
-                        help='Save each run as a trace store under this directory')
+    parser.add_argument('--store-dir', type=Path, default=DEFAULT_STORE,
+                        help='Save each run as a trace store under this directory '
+                             '(default: %(default)s)')
+    parser.add_argument('--no-store', action='store_true',
+                        help='Do not save runs; Saved runs and Compare stay empty')
     parser.add_argument('--workload', action='append', default=[],
                         metavar='NAME=module:Class', help='Register a workload class')
     parser.add_argument('--path', action='append', default=[], metavar='DIR',
@@ -43,5 +47,6 @@ def main(argv=None, extra_workloads=None):
     from .app import create_app
 
     print(f'SANA-FE Studio: http://127.0.0.1:{args.port}/', flush=True)
-    uvicorn.run(create_app(registry, store_dir=args.store_dir),
+    store_dir = None if args.no_store else args.store_dir
+    uvicorn.run(create_app(registry, store_dir=store_dir),
                 host='127.0.0.1', port=args.port, log_level='warning')

@@ -264,6 +264,47 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.get(f'/api/sessions/{sid}').status_code, 404)
 
 
+class TestRunsServer(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.store = tempfile.mkdtemp()
+        self.client = TestClient(create_app(REGISTRY, store_dir=self.store,
+                                            allowed_hosts=('testserver',)))
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+
+    def run_chain(self, placement):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'parameters': {'placement': placement}})
+        sid = response.json()['id']
+        with self.client.websocket_connect(f'/ws/sessions/{sid}') as socket:
+            socket.receive_json()
+            self.client.post(f'/api/sessions/{sid}/run', json={})
+            until_settled(socket)
+        return response.json()['run']
+
+    def test_runs_compare_and_export(self):
+        far, near = self.run_chain('far'), self.run_chain('near')
+        runs = self.client.get('/api/runs').json()
+        self.assertEqual([r['id'] for r in runs], [near, far])
+        self.assertEqual(runs[0]['updates'], 6)
+        compared = self.client.post('/api/compare', json={'a': far, 'b': near})
+        self.assertEqual(compared.status_code, 200, compared.text)
+        self.assertTrue(compared.json()['identical_spikes'])
+        self.assertEqual(self.client.post('/api/compare', json={'a': far, 'b': 'nope'}).status_code, 404)
+        self.assertEqual(self.client.post('/api/compare', json={'a': '../x', 'b': far}).status_code, 400)
+        svg = self.client.get(f'/api/runs/{far}/plots/raster.svg')
+        self.assertEqual(svg.status_code, 200)
+        self.assertEqual(svg.headers['content-type'], 'image/svg+xml')
+        self.assertEqual(self.client.get(f'/api/runs/{far}/plots/weather.svg').status_code, 404)
+        self.assertEqual(self.client.get('/api/runs/nope/plots/raster.svg').status_code, 404)
+
+    def test_export_of_an_empty_run_is_409(self):
+        response = self.client.post('/api/sessions', json={'workload': 'test-chain'})
+        run = response.json()['run']
+        self.assertEqual(self.client.get(f'/api/runs/{run}/plots/energy.svg').status_code, 409)
+
+
 class TestServerProcess(unittest.TestCase):
     """Behavior only a real uvicorn process shows (the test client hides it)."""
 

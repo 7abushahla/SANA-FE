@@ -21,8 +21,9 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
-from ..engine import (ParameterSpec, bundled_architectures, diff_texts,
-                      resolve_parameters, to_strict_json)
+from ..engine import (EXPORT_KINDS, ParameterSpec, bundled_architectures, compare_runs,
+                      diff_texts, export_plot, list_runs, load_run, resolve_parameters,
+                      to_strict_json)
 from .worker import WorkerHandle
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
@@ -384,6 +385,48 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
                                            bundled[baseline].read_text())
         return _json({'name': name, 'text': text, 'diff': diff})
 
+    def run_or_error(run_id):
+        """(manifest, records), or an error response for a bad or unknown id."""
+        if manager.store_dir is None:
+            return None, _json({'error': 'runs are not saved (started with --no-store)'}, 404)
+        try:
+            return load_run(manager.store_dir, run_id), None
+        except ValueError as error:
+            return None, _json({'error': str(error)}, 400)
+        except KeyError as error:
+            return None, _json({'error': str(error).strip("'\"")}, 404)
+
+    async def runs(request):
+        if manager.store_dir is None:
+            return _json([])
+        return _json(await asyncio.to_thread(list_runs, manager.store_dir))
+
+    async def compare(request):
+        body = await _body(request)
+        if body is None:
+            return _json(BAD_BODY, 400)
+        loaded = []
+        for side in ('a', 'b'):
+            run, failure = await asyncio.to_thread(run_or_error, body.get(side))
+            if failure is not None:
+                return failure
+            loaded.append(run)
+        return _json(await asyncio.to_thread(compare_runs, *loaded))
+
+    async def plot(request):
+        kind = request.path_params['kind']
+        if kind not in EXPORT_KINDS:
+            return _json({'error': f'unknown plot {kind!r}; choose one of '
+                                   f'{", ".join(EXPORT_KINDS)}'}, 404)
+        run, failure = await asyncio.to_thread(run_or_error, request.path_params['run_id'])
+        if failure is not None:
+            return failure
+        try:
+            svg = await asyncio.to_thread(export_plot, run[1], kind)
+        except ValueError as error:
+            return _json({'error': str(error)}, 409)
+        return Response(svg, media_type='image/svg+xml')
+
     async def events(websocket):
         await websocket.accept()
         session = manager.sessions.get(websocket.path_params['session_id'])
@@ -435,6 +478,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/neurons/{group}/{offset}', neuron),
         Route('/api/sessions/{session_id}/architecture', architecture),
         Route('/api/architectures', architectures),
+        Route('/api/runs', runs),
+        Route('/api/compare', compare, methods=['POST']),
+        Route('/api/runs/{run_id}/plots/{kind}.svg', plot),
         WebSocketRoute('/ws/sessions/{session_id}', events),
         Mount('/', StaticFiles(directory=WEB, html=True, check_dir=False)),
     ]
