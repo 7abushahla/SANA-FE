@@ -72,6 +72,60 @@ async function waitFor(check, what, timeout = 120000) {
     document.querySelector('#chip rect.core.used').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => /core 0\.0/.test(text('insTitle')), 'inspector core selection');
 
+    // Zoom chip > tile > core, with the mini-map, and keep it across a new update.
+    const click = (node) => node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const shown = (id) => $(id).style.display !== 'none';
+    click(document.querySelector('#chip rect.tile[data-tile="0"]'));
+    await waitFor(() => /Tile 0/.test(text('crumb')) && document.querySelectorAll('#zoom .corepanel').length === 4, 'tile view');
+    if (!shown('minimap') || !document.querySelector('#minimap rect.tile')) throw new Error('mini-map missing in tile view');
+    click(document.querySelector('#zoom .corepanel[data-core="0.0"]'));
+    await waitFor(() => /Core 0/.test(text('crumb')) && document.querySelectorAll('#zoom .ncell').length === 8, 'core view with 8 neurons');
+    if (document.querySelectorAll('#zoom .unit').length < 5 || !document.querySelector('#zoom .buf')) throw new Error('pipeline strip incomplete');
+    await waitFor(() => /16\.0/.test($('axonOut').textContent), 'axon_out lists core 16.0');
+    // The test chain declares no host input group, so layer_0 has no incoming connections.
+    if (!/no incoming connections/.test($('axonIn').textContent)) throw new Error('axon_in: ' + $('axonIn').textContent);
+    $('btnStep').click();
+    await waitFor(() => text('uNum') === '7', 'step past the horizon');
+    await waitFor(() => /^update 7 ·/.test(text('clockText')), 'update 7 shown', 90000);
+    if (!/Core 0/.test(text('crumb')) || document.querySelectorAll('#zoom .ncell').length !== 8) throw new Error('zoom lost after a new update');
+    click(document.querySelector('#minimap'));
+    await waitFor(() => shown('chip') && !shown('minimap') && text('crumb') === 'Chip', 'back to the chip');
+
+    // Network mode: three groups, two labeled connections, core chips link to the core view.
+    click($('mNet'));
+    await waitFor(() => document.querySelectorAll('#network g.group').length === 3, 'network groups');
+    const labels = [...document.querySelectorAll('#network text.edgelabel')].map((n) => n.textContent).join(' | ');
+    if (!/32 synapses/.test(labels) || !/8 synapses/.test(labels)) throw new Error('edge labels: ' + labels);
+    click(document.querySelector('#network [data-core="16.0"]'));
+    await waitFor(() => shown('zoom') && /Tile 16/.test(text('crumb')) && /Core 0/.test(text('crumb')), 'network chip opens the core');
+
+    // Neuron inspection and watch, messages filter, Architecture diff, reference status.
+    await waitFor(() => document.querySelectorAll('#zoom .ncell').length === 4, 'layer_1 cells');
+    click(document.querySelector('#zoom .ncell[data-neuron="layer_1.2"]'));
+    await waitFor(() => /neuron layer_1\.2/.test(text('insTitle')) && /fan-in8\n/.test(text("inspector")),
+      'neuron inspector').catch((e) => { throw new Error(e.message + ': ' + text('insTitle') + ' / ' + text('inspector').slice(0, 300)); });
+    $('btnWatch').click();
+    document.querySelector('#tabs button[data-tab="watch"]').click();
+    await waitFor(() => document.querySelectorAll('#dock svg.watchplot').length === 1, 'one watch plot');
+    document.querySelector('#tabs button[data-tab="messages"]').click();
+    await waitFor(() => $('msgFilter'), 'messages filter');
+    const allRows = document.querySelectorAll('#dock tr.msg').length;
+    $('msgFilter').value = '→ 31.0';
+    $('msgFilter').dispatchEvent(new Event('input'));
+    await waitFor(() => {
+      const rows = [...document.querySelectorAll('#dock tr.msg')];
+      return rows.length > 0 && rows.length < allRows && rows.every((r) => /31\.0/.test(r.textContent));
+    }, 'filtered messages');
+    click(document.querySelector('#dock tr.msg'));
+    await waitFor(() => document.querySelector('#chip .route'), 'selected message route drawn');
+    document.querySelector('#tabs button[data-tab="arch"]').click();
+    await waitFor(() => $('archBaseline') && [...$('archBaseline').options].some((o) => o.value === 'loihi'), 'baseline list');
+    $('archBaseline').value = 'loihi';
+    $('archBaseline').dispatchEvent(new Event('change'));
+    await waitFor(() => document.querySelectorAll('#dock tr.change').length > 0, 'architecture diff rows');
+    if (!/loihi2_candidate/.test($('archText').textContent)) throw new Error('YAML text missing');
+    if (text('refPill') !== 'reference: none') throw new Error('reference pill: ' + text('refPill'));
+
     $('params').querySelector('[data-param="steps"]').value = '3000';
     $('btnStart').click();
     await waitFor(() => text('uHorizon') === '3000', 'rebuilt session');
@@ -111,7 +165,7 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => q('state').textContent === 'paused', 'paused after reload');
     await waitFor(async () => Number(q('uNum').textContent) === (await serverUpdate()), 'no missing or duplicate updates');
     if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, pause, X mark, reload resume)');
+    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, pause, X mark, reload resume)');
     page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);

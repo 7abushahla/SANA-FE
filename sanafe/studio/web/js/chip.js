@@ -40,20 +40,28 @@
     return offsets;
   }
 
-  function Chip(container, onSelect) {
+  /* options.mini draws a small, label-free copy for the mini-map; it takes
+     no clicks of its own. onZoom receives { tile } or { core }. */
+  function Chip(container, onSelect, onZoom, options) {
     this.container = container;
-    this.onSelect = onSelect;
+    this.onSelect = onSelect || function () {};
+    this.onZoom = onZoom || function () {};
+    this.mini = !!(options && options.mini);
     this.selected = null;
+    this.focusTile = null;
+    this.route = null;
     this.overlay = null;
     this.owner = {};
   }
 
   Chip.prototype.build = function (layout, network, metadata) {
     this.container.innerHTML = '';
-    const hostWidth = metadata && metadata.host_operations ? 150 : 0;
+    this.layout = layout;
+    const hostWidth = !this.mini && metadata && metadata.host_operations ? 150 : 0;
     const width = hostWidth + 2 * MARGIN + layout.width * PITCH;
     const height = 2 * MARGIN + layout.height * PITCH;
-    const svg = S.svg(this.container, 'svg', { viewBox: '0 0 ' + width + ' ' + height, role: 'img', 'aria-label': 'chip mesh' });
+    const svg = S.svg(this.container, 'svg', { viewBox: '0 0 ' + width + ' ' + height, role: 'img',
+      'aria-label': this.mini ? 'chip mini-map' : 'chip mesh', class: this.mini ? 'mini' : '' });
     const left = hostWidth + MARGIN + PITCH / 2;
     const top = MARGIN + PITCH / 2;
 
@@ -70,18 +78,31 @@
     });
 
     S.svg(svg, 'rect', { x: hostWidth + MARGIN / 2, y: MARGIN / 2, width: layout.width * PITCH + MARGIN, height: layout.height * PITCH + MARGIN, rx: 12, class: 'chipframe' });
-    svg.addEventListener('click', (event) => {
-      const cls = event.target.getAttribute && event.target.getAttribute('class');
-      if (!cls || cls.indexOf('core') !== 0) this.onSelect({ kind: 'chip' });
-    });
+    if (!this.mini) {
+      svg.addEventListener('click', (event) => {
+        const target = event.target;
+        const core = target.getAttribute && target.getAttribute('data-core');
+        const tile = target.getAttribute && target.getAttribute('data-tile');
+        if (core) this.onSelect({ kind: 'core', key: core });
+        else if (tile !== null && tile !== undefined) this.onZoom({ tile: Number(tile) });
+        else this.onSelect({ kind: 'chip' });
+      });
+      svg.addEventListener('dblclick', (event) => {
+        const core = event.target.getAttribute && event.target.getAttribute('data-core');
+        if (core) this.onZoom({ core: core });
+      });
+    }
 
     this.tileCenter = {};
     for (const tile of layout.tiles) {
       const cx = left + tile.x * PITCH;
       const cy = top + (layout.height - 1 - tile.y) * PITCH;
       this.tileCenter[tile.id] = [cx, cy];
-      S.svg(svg, 'rect', { x: cx - 44, y: cy - 44, width: 88, height: 88, rx: 8, class: 'tile' });
-      S.svg(svg, 'text', { x: cx - 38, y: cy - 33, class: 'tilelabel' }, 'tile ' + tile.id);
+      const box = S.svg(svg, 'rect', { x: cx - 44, y: cy - 44, width: 88, height: 88, rx: 8, class: 'tile', 'data-tile': tile.id });
+      if (!this.mini) {
+        S.svg(box, 'title', {}, 'tile ' + tile.id + ' · click to zoom in');
+        S.svg(svg, 'text', { x: cx - 38, y: cy - 33, class: 'tilelabel' }, 'tile ' + tile.id);
+      }
     }
 
     this.links = {};
@@ -110,15 +131,15 @@
         const rect = S.svg(svg, 'rect', { x: x - 11, y: y - 11, width: 22, height: 22, rx: 3, class: owner ? 'core used' : 'core empty', 'data-core': core.key });
         if (owner) rect.setAttribute('fill', owner.color);
         const where = 'tile ' + tile.id + ', core ' + core.key.split('.')[1];
-        S.svg(rect, 'title', {}, where + (owner ? ' · ' + this.groupsOf[core.key].join(', ') : ' · empty'));
-        rect.addEventListener('click', () => this.onSelect({ kind: 'core', key: core.key }));
+        S.svg(rect, 'title', {}, where + (owner ? ' · ' + this.groupsOf[core.key].join(', ') : ' · empty') +
+          ' · click to inspect, double-click to open');
       });
       S.svg(svg, 'circle', { cx: center[0], cy: center[1], r: 6.5, class: 'router' });
     }
 
     network.groups.forEach((group, index) => {
       const cores = Object.keys(group.cores);
-      if (!cores.length || !this.corePos[cores[0]]) return;
+      if (this.mini || !cores.length || !this.corePos[cores[0]]) return;
       const at = this.corePos[cores[0]];
       S.svg(svg, 'text', { x: at[0], y: at[1] - 20, 'text-anchor': 'middle', class: 'grouplabel', fill: S.PALETTE[index % S.PALETTE.length] },
         group.name + ' · ' + cores.length + (cores.length === 1 ? ' core' : ' cores'));
@@ -171,6 +192,20 @@
           S.svg(overlay, 'circle', { cx: at[0] + 9, cy: at[1] - 9, r: 3, class: 'busy' });
         }
       }
+    }
+    if (this.route && record) {
+      const message = record.messages.find((m) => m.mid === this.route);
+      if (message) {
+        const points = [this.corePos[message.src]]
+          .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]);
+        S.svg(overlay, 'polyline', { points: points.map((p) => p.join(',')).join(' '), class: 'route' });
+        const end = points[points.length - 1];
+        S.svg(overlay, 'text', { x: end[0] + 14, y: end[1] - 12, class: 'routemark' }, 'X route');
+      }
+    }
+    if (this.focusTile !== null && this.tileCenter[this.focusTile]) {
+      const at = this.tileCenter[this.focusTile];
+      S.svg(overlay, 'rect', { x: at[0] - 48, y: at[1] - 48, width: 96, height: 96, rx: 10, class: 'focus' });
     }
     if (this.selected && this.corePos[this.selected]) {
       const at = this.corePos[this.selected];

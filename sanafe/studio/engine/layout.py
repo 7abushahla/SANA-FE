@@ -2,6 +2,13 @@
 from dataclasses import dataclass
 
 
+ROLES = ('synapse', 'dendrite', 'soma')
+
+
+def _role(unit):
+    return '+'.join(role for role in ROLES if unit.get(f'implements_{role}'))
+
+
 @dataclass(frozen=True)
 class CoreInfo:
     tile_id: int
@@ -9,6 +16,10 @@ class CoreInfo:
     core_id: int
     name: str
     units: tuple
+    pipeline: tuple = ()  # (unit name, role) in describe() order
+    axon_in: tuple = ()
+    axon_out: tuple = ()
+    buffer: str = None  # the unit the update-boundary buffer sits before
 
     @property
     def key(self):
@@ -31,7 +42,8 @@ class ChipLayout:
     tiles: tuple
 
     @classmethod
-    def from_chip(cls, chip):
+    def from_chip(cls, chip, arch=None):
+        """Geometry from ``chip.describe()``; buffer positions need ``arch``."""
         described = chip.describe()
         width = int(described['noc_width_in_tiles'])
         height = int(described['noc_height_in_tiles'])
@@ -47,7 +59,11 @@ class ChipLayout:
             x, y = divmod(tile_id, height)  # src/arch.cpp: x = id / height
             cores = tuple(
                 CoreInfo(tile_id, offset, int(core['id']), core['name'],
-                         tuple(unit['name'] for unit in core['pipeline_units']))
+                         tuple(unit['name'] for unit in core['pipeline_units']),
+                         tuple((unit['name'], _role(unit))
+                               for unit in core['pipeline_units']),
+                         tuple(core.get('axon_in', ())), tuple(core.get('axon_out', ())),
+                         _buffer(arch, tile_id, offset))
                 for offset, core in enumerate(tile['cores']))
             tiles.append(TileInfo(tile_id, x, y, tile['name'], cores))
         return cls(width, height, tuple(tiles))
@@ -66,9 +82,20 @@ class ChipLayout:
         return {'width': self.width, 'height': self.height, 'tiles': [
             {'id': tile.tile_id, 'x': tile.x, 'y': tile.y, 'name': tile.name,
              'cores': [{'key': core.key, 'core_id': core.core_id,
-                        'name': core.name, 'units': list(core.units)}
+                        'name': core.name, 'units': list(core.units),
+                        'pipeline': [{'name': name, 'role': role}
+                                     for name, role in core.pipeline],
+                        'axon_in': list(core.axon_in), 'axon_out': list(core.axon_out),
+                        'buffer': core.buffer}
                        for core in tile.cores]}
             for tile in self.tiles]}
+
+
+def _buffer(arch, tile, offset):
+    if arch is None:
+        return None
+    position = arch.tiles[tile].cores[offset].buffer_position.name
+    return position.removeprefix('buffer_before_').removesuffix('_unit')
 
 
 def xy_path(layout, src_tile, dst_tile):

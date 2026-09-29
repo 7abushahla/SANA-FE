@@ -18,6 +18,7 @@
   <span class="counter">update <b id="uNum">0</b> / <b id="uHorizon">–</b></span>
   <label class="small">clock <select id="clock"><option value="slow">slow motion around packets</option><option value="modeled">modeled time (true proportions)</option></select></label>
   <label class="small">playback <select id="speed"><option value="6000">slow</option><option value="3000" selected>normal</option><option value="1200">fast</option></select></label>
+  <span id="refPill" class="refpill none" title="Per-update comparison with reference executions (QCFS workloads)">reference: –</span>
   <span id="state" class="state idle">idle</span>
 </header>
 <div id="badge" class="badge">No session loaded.</div>
@@ -32,9 +33,16 @@
     <div id="formError" class="error"></div>
     <div id="sessionInfo" class="small"></div>
   </aside>
-  <section class="pane">
+  <section class="pane center">
+    <div class="cbar"><span class="modes"><button id="mChip" class="on">Chip</button><button id="mNet">Network</button></span>
+      <span id="crumb" class="crumb">Chip</span></div>
     <div class="cbar"><span id="clockText" class="clock">–</span><span id="phase" class="phase"></span></div>
-    <div id="chip" class="chip"></div>
+    <div class="stage">
+      <div id="chip" class="chip"></div>
+      <div id="zoom" class="zoom" style="display:none"></div>
+      <div id="network" class="network" style="display:none"></div>
+      <div id="minimap" class="minimap" style="display:none" title="mini-map: click to return to the chip"></div>
+    </div>
     <div id="chipNote" class="small muted">Packet send and receive times <span class="m R">R</span> are recorded. The router-by-router route and the positions between routers <span class="m X">X</span> are reconstructed from SANA-FE's x-then-y routing rule; the model records no per-router events.</div>
     <div class="scrub">
       <label class="small">view update <input id="scrub" type="range" min="1" max="1" value="1" disabled></label>
@@ -50,17 +58,21 @@
   </aside>
 </main>
 <section class="dock">
-  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="messages">Messages</button></nav>
+  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="watch">Neuron watch</button><button data-tab="messages">Messages</button><button data-tab="arch">Architecture</button></nav>
   <div id="dock" class="dockbody"></div>
 </section>
 <script src="js/util.js"></script>
 <script src="js/api.js"></script>
 <script src="js/params.js"></script>
 <script src="js/chip.js"></script>
+<script src="js/zoom.js"></script>
+<script src="js/network.js"></script>
 <script src="js/timeline.js"></script>
 <script src="js/perf.js"></script>
 <script src="js/messages.js"></script>
 <script src="js/inspector.js"></script>
+<script src="js/watch.js"></script>
+<script src="js/arch.js"></script>
 <script src="js/player.js"></script>
 <script src="js/main.js"></script>
 </body>

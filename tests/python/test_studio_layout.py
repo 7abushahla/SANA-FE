@@ -63,6 +63,20 @@ class TestChipLayout(unittest.TestCase):
             path = xy_path(layout, message['src_tile_id'], message['dest_tile_id'])
             self.assertEqual(len(path) - 1, message['hops'])
 
+    def test_pipeline_roles_axons_and_buffer(self):
+        arch = load_loihi2_candidate()
+        core = ChipLayout.from_chip(sanafe.SpikingChip(arch), arch).tiles[0].cores[0]
+        self.assertEqual(core.pipeline, (('loihi_dense_synapse', 'synapse'),
+                                         ('loihi_dendrites', 'dendrite'),
+                                         ('loihi_lif', 'soma')))
+        self.assertEqual((core.axon_in, core.axon_out), (('loihi_in',), ('loihi_out',)))
+        self.assertEqual(core.buffer, 'soma')
+        self.assertIsNone(layout_for('loihi2').tiles[0].cores[0].buffer)
+        data = ChipLayout.from_chip(sanafe.SpikingChip(arch), arch).to_dict()
+        described = data['tiles'][0]['cores'][0]
+        self.assertEqual(described['pipeline'][2], {'name': 'loihi_lif', 'role': 'soma'})
+        self.assertEqual((described['axon_in'], described['buffer']), (['loihi_in'], 'soma'))
+
     def test_to_dict_is_json_ready(self):
         data = layout_for('example_chip').to_dict()
         self.assertEqual(json.loads(json.dumps(data)), data)

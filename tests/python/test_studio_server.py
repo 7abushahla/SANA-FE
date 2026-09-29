@@ -135,8 +135,10 @@ class TestServer(unittest.TestCase):
         page = self.client.get('/')
         self.assertEqual(page.status_code, 200)
         self.assertIn('<title>SANA-FE Studio</title>', page.text)
-        for script in ('util', 'api', 'params', 'chip', 'timeline', 'perf', 'messages',
-                       'inspector', 'player', 'main'):
+        import re
+        scripts = re.findall(r'<script src="js/(\w+)\.js">', page.text)
+        self.assertTrue({'zoom', 'network', 'watch', 'arch', 'main'} <= set(scripts), scripts)
+        for script in scripts:
             with self.subTest(script=script):
                 self.assertEqual(self.client.get(f'/js/{script}.js').status_code, 200)
         self.assertEqual(self.client.get('/app.css').status_code, 200)

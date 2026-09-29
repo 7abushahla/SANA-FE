@@ -91,7 +91,7 @@ class Session:
         self._sim_arch = sanafe.load_arch(str(instrumented))
         self.chip = sanafe.SpikingChip(self._sim_arch)
         self.chip.load(self.built.network)
-        self.layout = ChipLayout.from_chip(self.chip)
+        self.layout = ChipLayout.from_chip(self.chip, self._sim_arch)
         self.neurons = neuron_map(self.chip)
         self.connectivity = Connectivity.from_network(self.built.network, self.neurons)
         self._candidate = (architecture_fingerprint(self.built.arch) ==

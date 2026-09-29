@@ -25,6 +25,13 @@
     pause: (id) => request('POST', '/api/sessions/' + id + '/pause', {}),
     reset: (id) => request('POST', '/api/sessions/' + id + '/reset', {}),
     updates: (id, from) => request('GET', '/api/sessions/' + id + '/updates?from=' + from),
+    neuron: (id, key) => {
+      const cut = key.lastIndexOf('.');
+      return request('GET', '/api/sessions/' + id + '/neurons/' + encodeURIComponent(key.slice(0, cut)) + '/' + key.slice(cut + 1));
+    },
+    architectures: () => request('GET', '/api/architectures'),
+    architecture: (id, baseline) => request('GET', '/api/sessions/' + id + '/architecture' +
+      (baseline ? '?baseline=' + encodeURIComponent(baseline) : '')),
 
     /* Reconnects after a drop; every connection starts with a 'hello'. */
     connect(id, onMessage) {
