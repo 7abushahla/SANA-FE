@@ -223,8 +223,10 @@ without a display.
 
 1. Start the thesis launcher and open the page. The badge reads "Loihi 2
    candidate · costs inherited from Loihi 1 · not hardware".
-2. Start `qcfs-compact` with `T = 3`. Three cores are colored, and the host
-   box shows a dashed line into IF0's core. The horizon reads 5.
+2. Start `qcfs-compact` with `T = 3`. The used cores are colored, and a
+   legend under the chip names each layer and its core count. One dashed
+   arrow runs from the host box to a dashed outline around IF0's cores. The
+   horizon reads 5.
 3. Press Step. Packets move from IF0 to IF1. The phase banner changes to
    "barrier" before the update ends.
 4. Switch the clock to "modeled time". Packets now flash briefly, and the

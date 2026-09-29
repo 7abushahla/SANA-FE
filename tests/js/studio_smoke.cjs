@@ -58,6 +58,10 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => text('uHorizon') === '6', 'session ready');
     const used = document.querySelectorAll('#chip rect.core.used').length;
     if (used !== 3) throw new Error('expected 3 occupied cores, found ' + used);
+    // Group names live in a legend under the chip, not on top of the mesh.
+    const legend = [...document.querySelectorAll('#chip .chiplegend .item')].map((n) => n.textContent);
+    if (legend.join('|') !== 'layer_0 · 1 core|layer_1 · 1 core|layer_2 · 1 core') throw new Error('legend: ' + legend.join('|'));
+    if (document.querySelector('#chip text.grouplabel')) throw new Error('group labels must not be drawn over the mesh');
     if (!/Loihi 2 candidate/.test(text('badge'))) throw new Error('badge missing: ' + text('badge'));
     const note = $('chipNote');
     if (!note || !note.querySelector('.m.X') || !/reconstructed/.test(note.textContent)) {

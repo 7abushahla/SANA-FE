@@ -154,31 +154,59 @@
       S.svg(svg, 'circle', { cx: center[0], cy: center[1], r: 6.5, class: 'router' });
     }
 
-    network.groups.forEach((group, index) => {
-      const cores = Object.keys(group.cores);
-      if (this.mini || !cores.length || !this.corePos[cores[0]]) return;
-      const at = this.corePos[cores[0]];
-      S.svg(svg, 'text', { x: at[0], y: at[1] - 20, 'text-anchor': 'middle', class: 'grouplabel', fill: S.PALETTE[index % S.PALETTE.length] },
-        group.name + ' · ' + cores.length + (cores.length === 1 ? ' core' : ' cores'));
-    });
-
     if (hostWidth) this.drawHost(svg, metadata, network, height);
     this.overlay = S.svg(svg, 'g', {});
+    if (!this.mini) this.drawLegend(network);
   };
 
+  /* Group names go in a legend under the chip, where they cannot collide
+     with each other or with tile labels. Clicking one inspects the group. */
+  Chip.prototype.drawLegend = function (network) {
+    const legend = S.html(this.container, 'div', { class: 'chiplegend' });
+    network.groups.forEach((group, index) => {
+      const count = Object.keys(group.cores).length;
+      const item = S.html(legend, 'span', { class: 'item', title: 'inspect ' + group.name });
+      const swatch = S.html(item, 'i', {});
+      swatch.style.background = S.PALETTE[index % S.PALETTE.length];
+      item.appendChild(document.createTextNode(group.name + ' · ' + count + (count === 1 ? ' core' : ' cores')));
+      item.addEventListener('click', () => this.onSelect({ kind: 'group', name: group.name }));
+    });
+  };
+
+  /* The host drives one group with a constant current. One arrow reaches an
+     outline around that group's cores; the drive is not NoC traffic. */
   Chip.prototype.drawHost = function (svg, metadata, network, height) {
-    const y = height / 2;
-    S.svg(svg, 'rect', { x: 10, y: y - 50, width: 130, height: 100, rx: 8, class: 'host' });
-    S.svg(svg, 'text', { x: 75, y: y - 30, 'text-anchor': 'middle', class: 'hosttext', 'font-weight': 700 }, 'HOST');
-    S.svg(svg, 'text', { x: 75, y: y - 17, 'text-anchor': 'middle', class: 'hosttext' }, '(not simulated)');
-    metadata.host_operations.forEach((line, i) => S.svg(svg, 'text', { x: 18, y: y + 2 + i * 14, class: 'hosttext' }, line));
     const group = network.groups.find((g) => g.name === metadata.host_input_group);
-    if (!group) return;
-    for (const core in group.cores) {
-      const at = this.corePos[core];
-      S.svg(svg, 'path', { d: 'M140,' + y + ' L' + (at[0] - 12) + ',' + at[1], class: 'hostlink' });
-    }
-    S.svg(svg, 'text', { x: 146, y: y + 16, class: 'hosttext', fill: '#2368a0' }, 'constant current (not NoC)');
+    const lines = metadata.host_operations.length + (group ? 2 : 0);
+    const boxHeight = 44 + 14 * lines;
+    const top = height / 2 - boxHeight / 2;
+    S.svg(svg, 'rect', { x: 10, y: top, width: 130, height: boxHeight, rx: 8, class: 'host' });
+    S.svg(svg, 'text', { x: 75, y: top + 18, 'text-anchor': 'middle', class: 'hosttext', 'font-weight': 700 }, 'HOST');
+    S.svg(svg, 'text', { x: 75, y: top + 31, 'text-anchor': 'middle', class: 'hosttext' }, '(not simulated)');
+    metadata.host_operations.forEach((line, i) => S.svg(svg, 'text', { x: 18, y: top + 50 + i * 14, class: 'hosttext' }, line));
+    const cores = group ? Object.keys(group.cores).filter((core) => this.corePos[core]) : [];
+    if (!cores.length) return;
+    const drive = top + 50 + metadata.host_operations.length * 14;
+    S.svg(svg, 'text', { x: 18, y: drive, class: 'hosttext hostdrive' }, '→ ' + group.name + ': constant');
+    S.svg(svg, 'text', { x: 18, y: drive + 14, class: 'hosttext hostdrive' }, 'current (not NoC)');
+    const xs = cores.map((core) => this.corePos[core][0]);
+    const ys = cores.map((core) => this.corePos[core][1]);
+    // Two pixels outside the 22-pixel cores, clear of the tile label above them.
+    const pad = 13;
+    const box = { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
+                  w: Math.max(...xs) - Math.min(...xs) + 2 * pad, h: Math.max(...ys) - Math.min(...ys) + 2 * pad };
+    S.svg(svg, 'rect', { x: box.x, y: box.y, width: box.w, height: box.h, rx: 7, class: 'hostgroup' });
+    const defs = S.svg(svg, 'defs', {});
+    const marker = S.svg(defs, 'marker', { id: 'hostarrow', viewBox: '0 0 10 10', refX: 9, refY: 5,
+      markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
+    S.svg(marker, 'path', { d: 'M0,0 L10,5 L0,10 z', class: 'hostarrowhead' });
+    const endY = box.y + box.h / 2;
+    const from = [140, drive - 4];
+    const bend = (from[0] + box.x) / 2;
+    const link = S.svg(svg, 'path', { d: 'M' + from[0] + ',' + from[1] + ' C' + bend + ',' + from[1] + ' ' + bend + ',' + endY +
+      ' ' + box.x + ',' + endY, class: 'hostlink', 'marker-end': 'url(#hostarrow)' });
+    S.svg(link, 'title', {}, 'host drive into ' + group.name + ' (' + cores.length + (cores.length === 1 ? ' core' : ' cores') +
+      '): a constant current each update, computed on the host and not sent over the NoC');
   };
 
   Chip.prototype.render = function (record, t) {
