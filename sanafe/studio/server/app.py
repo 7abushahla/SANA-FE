@@ -5,7 +5,9 @@ WebSocket per session. Each session's worker is a separate process, so a
 native crash faults one session and leaves the server running.
 """
 import asyncio
+import concurrent.futures
 import contextlib
+import itertools
 import json
 import threading
 import uuid
@@ -19,7 +21,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
-from ..engine import ParameterSpec, resolve_parameters, to_strict_json
+from ..engine import (ParameterSpec, architecture_diff, bundled_architectures,
+                      resolve_parameters, to_strict_json)
 from .worker import WorkerHandle
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
@@ -90,7 +93,22 @@ class ManagedSession:
         self.subscribers = set()
         self.lock = threading.Lock()
         self.ready_event = threading.Event()
+        self.replies = {}
+        self.query_ids = itertools.count(1)
         self.handle = WorkerHandle(ref, parameters, options, self._on_message)
+
+    def query(self, message):
+        """Send a query to the worker; the future resolves with its reply."""
+        future = concurrent.futures.Future()
+        query_id = next(self.query_ids)
+        with self.lock:
+            self.replies[query_id] = future
+        self.handle.send({**message, 'op': 'query', 'id': query_id})
+        return query_id, future
+
+    def forget(self, query_id):
+        with self.lock:
+            self.replies.pop(query_id, None)
 
     def _snapshot_locked(self):
         ready = {key: value for key, value in (self.ready or {}).items()
@@ -104,6 +122,12 @@ class ManagedSession:
 
     def _on_message(self, message):  # worker reader thread
         kind = message.get('type')
+        if kind == 'reply':
+            with self.lock:
+                future = self.replies.pop(message.get('id'), None)
+            if future is not None:
+                future.set_result(message)
+            return
         with self.lock:
             if kind == 'ready':
                 self.ready = message
@@ -122,6 +146,10 @@ class ManagedSession:
                 message = self.state
             elif kind == 'exited':
                 self.alive = False
+                for future in self.replies.values():
+                    future.set_result({'type': 'reply', 'code': 'exited',
+                                       'error': 'session worker has exited'})
+                self.replies.clear()
                 if self.closing:
                     return
                 if self.ready is None and self.error is None:
@@ -280,6 +308,49 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             records = session.records[start:]
         return _json({'from': start, 'updates': records})
 
+    async def neuron(request):
+        session = lookup(request)
+        if session is None:
+            return _json({'error': 'no such session'}, 404)
+        if not session.alive:
+            return _json({'error': 'session worker has exited; start a new session'}, 409)
+        try:
+            offset = int(request.path_params['offset'])
+        except ValueError:
+            return _json({'error': 'offset: expected an integer'}, 404)
+        query_id, future = session.query({'what': 'neuron',
+                                          'group': request.path_params['group'],
+                                          'offset': offset})
+        try:
+            reply = await asyncio.wait_for(asyncio.wrap_future(future), 10)
+        except asyncio.TimeoutError:
+            session.forget(query_id)
+            return _json({'error': 'the session did not answer within 10 s'}, 504)
+        status = {'not_found': 404, 'bad_request': 400, 'exited': 409}
+        if 'error' in reply:
+            return _json({'error': reply['error']}, status.get(reply.get('code'), 500))
+        return _json(reply['data'])
+
+    async def architectures(request):
+        return _json(sorted(bundled_architectures()))
+
+    async def architecture(request):
+        session = lookup(request)
+        if session is None:
+            return _json({'error': 'no such session'}, 404)
+        with session.lock:
+            manifest = (session.ready or {}).get('manifest') or {}
+        loaded = Path(manifest['architecture_yaml'])
+        baseline = request.query_params.get('baseline')
+        diff = None
+        if baseline:
+            bundled = bundled_architectures()
+            if baseline not in bundled:
+                return _json({'error': f'unknown baseline {baseline!r}; '
+                                       f'choose one of {", ".join(sorted(bundled))}'}, 404)
+            diff = await asyncio.to_thread(architecture_diff, loaded, bundled[baseline])
+        return _json({'name': loaded.name, 'text': loaded.read_text(), 'diff': diff})
+
     async def events(websocket):
         await websocket.accept()
         session = manager.sessions.get(websocket.path_params['session_id'])
@@ -327,6 +398,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/pause', pause, methods=['POST']),
         Route('/api/sessions/{session_id}/reset', reset, methods=['POST']),
         Route('/api/sessions/{session_id}/updates', updates),
+        Route('/api/sessions/{session_id}/neurons/{group}/{offset}', neuron),
+        Route('/api/sessions/{session_id}/architecture', architecture),
+        Route('/api/architectures', architectures),
         WebSocketRoute('/ws/sessions/{session_id}', events),
         Mount('/', StaticFiles(directory=WEB, html=True, check_dir=False)),
     ]

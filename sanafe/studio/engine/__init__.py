@@ -1,4 +1,5 @@
 """Scriptable Studio engine: sessions, update records, and trace storage."""
+from .archdiff import architecture_diff, bundled_architectures
 from .connectivity import Connectivity
 from .instrument import MAX_LOGGED_UNITS_PER_CORE, instrument_arch_yaml
 from .layout import ChipLayout, CoreInfo, TileInfo, xy_path
@@ -9,7 +10,7 @@ from .store import TRACE_FORMAT, TraceStore, from_strict_json, to_strict_json
 from .workload import (BuiltWorkload, ParameterSpec, ReferenceChecker, SanafeFiles,
                        Workload, resolve_parameters)
 
-__all__ = ['Connectivity', 'MAX_LOGGED_UNITS_PER_CORE', 'instrument_arch_yaml',
+__all__ = ['architecture_diff', 'bundled_architectures', 'Connectivity', 'MAX_LOGGED_UNITS_PER_CORE', 'instrument_arch_yaml',
            'ChipLayout', 'CoreInfo', 'TileInfo', 'xy_path',
            'PROVENANCE', 'MappedNeuronInfo', 'MessageRecord', 'UpdateRecord',
            'build_update_record', 'neuron_map', 'Session', 'SessionFault',

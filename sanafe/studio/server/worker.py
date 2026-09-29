@@ -1,8 +1,10 @@
 """One Studio session per process, driven by plain-dict messages over a Pipe.
 
 Commands from the parent: {'op': 'step', 'n': k}, {'op': 'run'},
-{'op': 'pause'}, {'op': 'reset'}, {'op': 'close'}. Events from the worker:
-'ready', 'error', 'update', and 'state'. The parent's reader thread adds
+{'op': 'pause'}, {'op': 'reset'}, {'op': 'close'}, and {'op': 'query', 'id',
+'what', ...}. Events from the worker: 'ready', 'error', 'update', 'state',
+and 'reply'. Queries are answered at once, even during a run, because they
+read only what the build produced. The parent's reader thread adds
 'exited' when the process ends, whatever the reason.
 """
 from dataclasses import dataclass
@@ -36,6 +38,22 @@ def _state(session, state=None):
             'reason': session.stop_reason, 'fault': session.fault}
 
 
+def _answer(session, message):
+    """Reply to one query from build-time data; never touches the chip."""
+    reply = {'type': 'reply', 'id': message.get('id')}
+    try:
+        if message.get('what') != 'neuron':
+            raise ValueError(f'unknown query {message.get("what")!r}')
+        reply['data'] = session.neuron_detail(message['group'], int(message['offset']))
+    except (KeyError, IndexError) as error:
+        reply.update(code='not_found', error=str(error).strip("'\""))
+    except (TypeError, ValueError) as error:
+        reply.update(code='bad_request', error=str(error))
+    except Exception as error:  # a query must never end the reader thread
+        reply.update(code='failed', error=f'{type(error).__name__}: {error}')
+    return reply
+
+
 def run_worker(conn, ref, parameters, options):
     """Process entry point: build the session, then serve commands."""
     from ..engine import Session, SessionFault
@@ -44,16 +62,22 @@ def run_worker(conn, ref, parameters, options):
     # call set_start_method at import, which then raises. Clear it, as in a
     # fresh interpreter; the Studio itself always uses an explicit context.
     multiprocessing.set_start_method(None, force=True)
+    send_lock = threading.Lock()
+
+    def send(message):  # the main loop and the reader thread both send
+        with send_lock:
+            conn.send(message)
+
     try:
         session = Session(ref.load(), parameters,
                           trace_level=options.get('trace_level', 'full'),
                           horizon=options.get('horizon'),
                           store_dir=options.get('store_dir'))
     except Exception as error:
-        conn.send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
+        send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
         conn.close()
         return
-    conn.send({'type': 'ready', **session.describe()})
+    send({'type': 'ready', **session.describe()})
 
     commands = queue.Queue()
     control = threading.Lock()
@@ -67,6 +91,9 @@ def run_worker(conn, ref, parameters, options):
                 commands.put({'op': 'close'})
                 return
             op = message.get('op')
+            if op == 'query':
+                send(_answer(session, message))
+                continue
             with control:
                 if op == 'pause':
                     # Only a queued or running command can be paused; a pause
@@ -85,7 +112,7 @@ def run_worker(conn, ref, parameters, options):
     threading.Thread(target=read, daemon=True).start()
 
     def stream(record):
-        conn.send({'type': 'update', 'record': record.to_dict()})
+        send({'type': 'update', 'record': record.to_dict()})
 
     while True:
         command = commands.get()
@@ -96,14 +123,14 @@ def run_worker(conn, ref, parameters, options):
             try:
                 session.reset()
             except Exception as error:
-                conn.send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
+                send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
                 continue
-            conn.send({'type': 'ready', **session.describe()})
+            send({'type': 'ready', **session.describe()})
             continue
         if op not in ('step', 'run'):
-            conn.send({'type': 'error', 'message': f'unknown command {op!r}'})
+            send({'type': 'error', 'message': f'unknown command {op!r}'})
             continue
-        conn.send(_state(session, 'running'))
+        send(_state(session, 'running'))
         try:
             if op == 'step':
                 session.step(command.get('n', 1), stop_when=stream)
@@ -112,12 +139,12 @@ def run_worker(conn, ref, parameters, options):
         except SessionFault:
             pass  # the state event below carries the fault
         except Exception as error:
-            conn.send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
+            send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
         with control:
             pending[0] -= 1
             if not pending[0]:
                 session.cancel_pause()
-        conn.send(_state(session))
+        send(_state(session))
     session.close()
     conn.close()
 

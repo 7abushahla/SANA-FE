@@ -121,6 +121,26 @@ class TestWorker(unittest.TestCase):
         message = events.next()
         self.assertEqual(message['type'], 'ready', message)
 
+    def test_query_answers_during_a_run(self):
+        import time
+        handle, events = self.start(WorkloadRef('studio_helpers:SlowFirstUpdate', (TESTS,)), {})
+        events.next()
+        handle.send({'op': 'run'})
+        events.until(lambda m: m['type'] == 'state' and m['state'] == 'running')
+        started = time.monotonic()
+        handle.send({'op': 'query', 'id': 7, 'what': 'neuron', 'group': 'layer_1',
+                     'offset': 2})
+        reply = events.until(lambda m: m['type'] == 'reply')[-1]
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual((reply['id'], reply['data']['fan_in_total']), (7, 8))
+        handle.send({'op': 'query', 'id': 8, 'what': 'neuron', 'group': 'layer_9',
+                     'offset': 0})
+        missing = events.until(lambda m: m['type'] == 'reply')[-1]
+        self.assertEqual((missing['id'], missing['code']), (8, 'not_found'))
+        handle.send({'op': 'query', 'id': 9, 'what': 'weather'})
+        unknown = events.until(lambda m: m['type'] == 'reply')[-1]
+        self.assertEqual((unknown['id'], unknown['code']), (9, 'bad_request'))
+
     def test_workload_ref_rejects_bad_target(self):
         with self.assertRaisesRegex(ValueError, 'module:Class'):
             WorkloadRef('no_colon_here').load()

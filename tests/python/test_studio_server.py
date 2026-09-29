@@ -172,6 +172,27 @@ class TestServer(unittest.TestCase):
         self.assertEqual(broken.status_code, 400)
         self.assertIn('body: expected a JSON object', broken.json()['error'])
 
+    def test_neuron_endpoint(self):
+        sid = self.create()['id']
+        detail = self.client.get(f'/api/sessions/{sid}/neurons/layer_1/2')
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual((detail.json()['core'], detail.json()['fan_in_total']), ('16.0', 8))
+        self.assertEqual(self.client.get(f'/api/sessions/{sid}/neurons/layer_9/0').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/sessions/{sid}/neurons/layer_1/x').status_code, 404)
+        self.assertEqual(self.client.get('/api/sessions/nope/neurons/layer_1/2').status_code, 404)
+
+    def test_architecture_endpoint(self):
+        names = self.client.get('/api/architectures').json()
+        self.assertIn('loihi', names)
+        sid = self.create()['id']
+        plain = self.client.get(f'/api/sessions/{sid}/architecture').json()
+        self.assertIn('loihi2_candidate', plain['text'])
+        self.assertIsNone(plain['diff'])
+        diff = self.client.get(f'/api/sessions/{sid}/architecture?baseline=loihi').json()['diff']
+        self.assertIn('architecture.name', [row['path'] for row in diff['rows']])
+        self.assertEqual(self.client.get(
+            f'/api/sessions/{sid}/architecture?baseline=nope').status_code, 404)
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)

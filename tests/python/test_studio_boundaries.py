@@ -4,7 +4,8 @@ from pathlib import Path
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[2] / 'sanafe' / 'studio'
-ALLOWED = {'__future__', 'argparse', 'ast', 'asyncio', 'collections', 'contextlib',
+ALLOWED = {'__future__', 'argparse', 'ast', 'asyncio', 'collections', 'concurrent',
+           'contextlib', 'itertools',
            'dataclasses', 'datetime', 'enum', 'importlib', 'json', 'math',
            'multiprocessing', 'os', 'pathlib', 'queue', 're', 'subprocess', 'sys',
            'tempfile', 'threading', 'typing', 'uuid', 'numpy', 'pandas', 'yaml',
