@@ -89,3 +89,42 @@ class TestLoihi2Profile(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCoreBudgets(unittest.TestCase):
+    """Per-core budget check shared by the chunked QCFS mappers."""
+
+    def stat(self, **counts):
+        base = {'tile': 3, 'core': 1, 'neurons': 10, 'edges': 20, 'outgoing_neurons': 3}
+        base.update(counts)
+        return base
+
+    def test_bytes_follow_the_assumed_layout(self):
+        from sanafe.loihi2 import validate_core_budgets
+        [checked] = validate_core_budgets([self.stat()])
+        self.assertEqual(checked['assumed_synapse_bytes'], 80)
+        self.assertEqual(checked['assumed_total_bytes'], 10*16 + 20*(4+8) + 3*8 + 256)
+        self.assertEqual((checked['tile'], checked['core'], checked['neurons']), (3, 1, 10))
+
+    def test_each_ceiling_raises(self):
+        from sanafe.loihi2 import validate_core_budgets
+        cases = [(self.stat(neurons=8193), 'neuron'),
+                 (self.stat(edges=32769, neurons=1, outgoing_neurons=0), 'synapse'),
+                 (self.stat(neurons=8000, edges=5000, outgoing_neurons=8000), 'total')]
+        for stat, budget in cases:
+            with self.subTest(budget=budget), self.assertRaisesRegex(ValueError, budget):
+                validate_core_budgets([stat])
+        with self.assertRaisesRegex(ValueError, r'core \(3, 1\)'):
+            validate_core_budgets([self.stat(neurons=8193)])
+
+    def test_input_is_not_mutated(self):
+        from sanafe.loihi2 import validate_core_budgets
+        stat = self.stat()
+        validate_core_budgets([stat])
+        self.assertNotIn('assumed_total_bytes', stat)
+
+    def test_rejects_non_integer_counts(self):
+        from sanafe.loihi2 import validate_core_budgets
+        for bad in (self.stat(neurons=1.5), self.stat(edges=-1), self.stat(neurons=True)):
+            with self.assertRaises(ValueError):
+                validate_core_budgets([bad])

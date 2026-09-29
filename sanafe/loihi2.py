@@ -201,6 +201,43 @@ def validate_chain_resources(layer_sizes, weights, placements, *, reserved_cores
             'cores': [cores[p] for p in sorted(cores)]}
 
 
+def validate_core_budgets(core_stats, *, allocation=None):
+    """Check per-core counts of a chunked mapping; raise ValueError.
+
+    Each entry gives ``tile``, ``core``, ``neurons``, ``edges`` (synapses
+    stored at the core) and ``outgoing_neurons`` (neurons with at least one
+    outgoing edge). Returns new entries with the assumed synapse and total
+    bytes added. Unlike ``validate_chain_resources``, only emitted edges
+    occupy storage.
+    """
+    allocation = Allocation() if allocation is None else allocation
+    if not isinstance(allocation, Allocation):
+        raise ValueError('allocation must be an Allocation')
+    checked = []
+    for stat in core_stats:
+        place = (stat['tile'], stat['core'])
+        neurons = _integer(stat['neurons'], 'neurons', 0)
+        edges = _integer(stat['edges'], 'edges', 0)
+        outgoing = _integer(stat['outgoing_neurons'], 'outgoing_neurons', 0)
+        entry = dict(stat)
+        entry['assumed_synapse_bytes'] = edges * allocation.synapse_bytes
+        entry['assumed_total_bytes'] = (
+            neurons * allocation.state_bytes_per_neuron +
+            edges * (allocation.synapse_bytes + allocation.incoming_axon_bytes) +
+            outgoing * allocation.outgoing_route_bytes +
+            allocation.program_bytes_per_core)
+        if neurons > 8192:
+            raise ValueError(f'core {place} exceeds the neuron limit: {neurons} > 8192')
+        if entry['assumed_synapse_bytes'] > 128 * 1024:
+            raise ValueError(f'core {place} exceeds the synapse memory limit under the '
+                             f'assumed layout: {entry["assumed_synapse_bytes"]} > 131072 bytes')
+        if entry['assumed_total_bytes'] > 192 * 1024:
+            raise ValueError(f'core {place} exceeds the total memory limit under the '
+                             f'assumed layout: {entry["assumed_total_bytes"]} > 196608 bytes')
+        checked.append(entry)
+    return checked
+
+
 def architecture_fingerprint(arch):
     """Hash actual topology, buffering, units, parameters, and cost coefficients."""
     data = json.dumps(arch.configuration(), sort_keys=True, separators=(',', ':'),
