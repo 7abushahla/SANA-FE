@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SANA-FE Studio</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">SANA-FE Studio</span>
+  <span id="sessionName" class="muted">no session</span>
+  <button id="btnReset" disabled>⟲ Reset</button>
+  <button id="btnStep" disabled>▸ Step</button>
+  <span><button id="btnRunN" disabled>▶ Run</button> <input id="runN" type="number" min="1" step="1" value="5" aria-label="updates to run"> updates</span>
+  <button id="btnRun" class="go" disabled>⏭ Run to horizon</button>
+  <button id="btnPause" disabled>❚❚ Pause</button>
+  <span class="counter">update <b id="uNum">0</b> / <b id="uHorizon">–</b></span>
+  <label class="small">clock <select id="clock"><option value="slow">slow motion around packets</option><option value="modeled">modeled time (true proportions)</option></select></label>
+  <label class="small">playback <select id="speed"><option value="6000">slow</option><option value="3000" selected>normal</option><option value="1200">fast</option></select></label>
+  <span id="state" class="state idle">idle</span>
+</header>
+<div id="badge" class="badge">No session loaded.</div>
+<main class="main">
+  <aside class="pane rail">
+    <h3>Session</h3>
+    <label>workload <select id="workload"></select></label>
+    <div id="params"></div>
+    <label>horizon override <input id="horizon" type="number" min="1" step="1" placeholder="workload default"></label>
+    <div class="muted small">trace level: full</div>
+    <button id="btnStart" class="go">Start session</button>
+    <div id="formError" class="error"></div>
+    <div id="sessionInfo" class="small"></div>
+  </aside>
+  <section class="pane">
+    <div class="cbar"><span id="clockText" class="clock">–</span><span id="phase" class="phase"></span></div>
+    <div id="chip" class="chip"></div>
+    <div class="scrub">
+      <label class="small">view update <input id="scrub" type="range" min="1" max="1" value="1" disabled></label>
+      <label class="small"><input id="follow" type="checkbox" checked> follow live</label>
+      <button id="btnReplay" disabled>↺ replay update</button>
+      <button id="btnLatest" disabled>⤓ skip to latest</button>
+    </div>
+  </section>
+  <aside class="pane">
+    <h3 id="insTitle">Inspector</h3>
+    <div id="inspector" class="small muted">Start a session, then click a core.</div>
+    <div class="legend small"><span class="m R">R</span> recorded by SANA-FE <span class="m D">D</span> derived from records <span class="m X">X</span> reconstructed</div>
+  </aside>
+</main>
+<section class="dock">
+  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="messages">Messages</button></nav>
+  <div id="dock" class="dockbody"></div>
+</section>
+<script src="js/util.js"></script>
+<script src="js/api.js"></script>
+<script src="js/params.js"></script>
+<script src="js/chip.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/perf.js"></script>
+<script src="js/messages.js"></script>
+<script src="js/inspector.js"></script>
+<script src="js/player.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
