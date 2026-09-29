@@ -18,7 +18,7 @@ dependencies = []
 data = ["pandas"]
 viz = ["pandas", "matplotlib", "numpy"]
 all = ["pandas", "matplotlib", "numpy"]
-studio = ["pandas", "numpy", "pyyaml>=6.0"]
+studio = ["pandas", "numpy", "pyyaml>=6.0", "starlette>=1.7", "uvicorn>=0.54", "websockets>=16.1"]
 
 [project.urls]
 Homepage = "https://github.com/SLAM-Lab/SANA-FE"
@@ -31,7 +31,7 @@ Repository = "https://github.com/SLAM-Lab/SANA-FE"
 packages = { find = {} }
 
 [tool.setuptools.package-data]
-sanafe = ["examples/*.yaml", "examples/dvs_challenge.npz"]
+sanafe = ["examples/*.yaml", "examples/dvs_challenge.npz", "studio/web/*.html", "studio/web/*.css", "studio/web/js/*.js"]
 
 [tool.cibuildwheel]
 skip = ["*-win32", "*_i686"]
