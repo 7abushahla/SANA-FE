@@ -347,6 +347,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         with session.lock:
             if session.ready is not None:
                 session.ready['breakpoints'] = data
+                session.ready['breakpoint_warnings'] = []
         return _json({'breakpoints': data})
 
     async def neuron(request):

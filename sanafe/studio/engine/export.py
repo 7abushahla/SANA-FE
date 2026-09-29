@@ -1,6 +1,5 @@
 """sanafe.viz plots of a saved run, rebuilt from its update records."""
 import io
-import os
 
 import pandas as pd
 
@@ -41,8 +40,10 @@ def export_plot(records, kind):
         raise KeyError(f'unknown plot {kind!r}; choose one of {", ".join(EXPORT_KINDS)}')
     if not records:
         raise ValueError('the run has no updates to plot')
-    os.environ.setdefault('MPLBACKEND', 'Agg')  # no display; before pyplot loads
+    import matplotlib
+    matplotlib.use('Agg', force=True)  # headless and thread-safe, whatever MPLBACKEND says
     from sanafe import viz
+    import matplotlib.pyplot as plt
 
     title = 'modeled by SANA-FE, not measured'
     if kind == 'raster':
@@ -65,7 +66,8 @@ def export_plot(records, kind):
             raise ValueError('the run has no messages')
         figure, _ = viz.plot_message_latency(frame, title=f'Message delays ({title})')
     buffer = io.BytesIO()
-    figure.savefig(buffer, format='svg')
-    import matplotlib.pyplot as plt  # already loaded by sanafe.viz
-    plt.close(figure)
+    try:
+        figure.savefig(buffer, format='svg')
+    finally:
+        plt.close(figure)
     return buffer.getvalue()

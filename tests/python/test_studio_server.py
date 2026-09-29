@@ -260,9 +260,14 @@ class TestServer(unittest.TestCase):
 
     def test_create_carries_breakpoints(self):
         response = self.client.post('/api/sessions', json={
-            'workload': 'test-chain', 'breakpoints': [{'id': 'b1', 'kind': 'update', 'equals': 2}]})
+            'workload': 'test-chain', 'breakpoints': [
+                {'id': 'b1', 'kind': 'update', 'equals': 2},
+                {'id': 'b2', 'kind': 'neuron_fires', 'neuron': 'layer_9.0'}]})
         self.assertEqual(response.status_code, 201, response.text)
-        self.assertEqual(response.json()['breakpoints'][0]['id'], 'b1')
+        self.assertEqual([b['id'] for b in response.json()['breakpoints']], ['b1'])
+        [warning] = response.json()['breakpoint_warnings']
+        self.assertIn('b2', warning)
+        self.assertIn('no neuron', warning)
         self.assertEqual(self.client.post('/api/sessions', json={
             'workload': 'test-chain', 'breakpoints': 'b1'}).status_code, 400)
 
@@ -310,7 +315,9 @@ class TestRunsServer(unittest.TestCase):
     def test_export_of_an_empty_run_is_409(self):
         response = self.client.post('/api/sessions', json={'workload': 'test-chain'})
         run = response.json()['run']
-        self.assertEqual(self.client.get(f'/api/runs/{run}/plots/energy.svg').status_code, 409)
+        empty = self.client.get(f'/api/runs/{run}/plots/energy.svg')
+        self.assertEqual(empty.status_code, 409)
+        self.assertIn('no updates', empty.json()['error'])
 
 
 class TestServerProcess(unittest.TestCase):
@@ -324,7 +331,7 @@ class TestServerProcess(unittest.TestCase):
             port = probe.getsockname()[1]
         base = f'http://127.0.0.1:{port}'
         process = subprocess.Popen(
-            [sys.executable, '-m', 'sanafe.studio', '--port', str(port), '--path', TESTS,
+            [sys.executable, '-m', 'sanafe.studio', '--port', str(port), '--no-store', '--path', TESTS,
              '--workload', 'test-chain=studio_helpers:ChainWorkload'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

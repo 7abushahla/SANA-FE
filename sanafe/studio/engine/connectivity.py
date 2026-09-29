@@ -104,5 +104,7 @@ class Connectivity:
                 'log_spikes': log_spikes, 'log_potential': log_potential,
                 'fan_in': [self._entry(a, w) for a, w in fan_in[:limit]],
                 'fan_in_total': len(fan_in),
+                'fan_in_cores': sorted({self._core_of[a] for a, _ in fan_in}),
                 'fan_out': [self._entry(a, w) for a, w in fan_out[:limit]],
-                'fan_out_total': len(fan_out)}
+                'fan_out_total': len(fan_out),
+                'fan_out_cores': sorted({self._core_of[a] for a, _ in fan_out})}

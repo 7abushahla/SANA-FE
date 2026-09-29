@@ -70,6 +70,30 @@ class TestRuns(unittest.TestCase):
         self.assertEqual(result['first_difference'],
                          {'update': 3, 'neuron': f'{group}.{offset}', 'in': 'b'})
 
+    def test_empty_runs_are_not_called_identical(self):
+        manifest, _ = load_run(self.store, self.ids['far'])
+        result = compare_runs((manifest, []), (manifest, []))
+        self.assertFalse(result['identical_spikes'])
+        self.assertEqual(result['note'], 'no updates to compare')
+
+    def test_export_forces_a_headless_backend(self):
+        import os
+        import subprocess
+        import sys
+        script = (
+            'import sys, threading; sys.path.insert(0, %r)\n'
+            'from sanafe.studio.engine import load_run, export_plot\n'
+            '_, records = load_run(%r, %r)\n'
+            'out = []\n'
+            't = threading.Thread(target=lambda: out.append(export_plot(records, "energy")))\n'
+            't.start(); t.join()\n'
+            'assert out and out[0].lstrip().startswith((b"<?xml", b"<svg"))\n'
+        ) % (str(Path(__file__).parent), str(self.store), self.ids['far'])
+        env = dict(os.environ, MPLBACKEND='macosx')
+        done = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True,
+                              text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-1500:])
+
     def test_unsafe_or_unknown_ids(self):
         for bad in ('../x', 'a/b', '', '.', '..'):
             with self.subTest(run_id=bad), self.assertRaises(ValueError):

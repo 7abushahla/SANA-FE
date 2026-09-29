@@ -163,7 +163,7 @@ class TestSession(unittest.TestCase):
         described = session.describe()
         self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
                                           'metadata', 'state', 'update', 'core_map',
-                                          'breakpoints', 'run'})
+                                          'breakpoints', 'breakpoint_warnings', 'run'})
         self.assertEqual((described['state'], described['update'], described['horizon']),
                          ('idle', 0, 6))
         import json

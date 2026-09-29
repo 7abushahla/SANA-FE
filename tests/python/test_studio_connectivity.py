@@ -57,6 +57,25 @@ class TestConnectivity(unittest.TestCase):
                 loaded('far').neuron(group, offset)
 
 
+class TestFanCores(unittest.TestCase):
+    def test_core_sets_are_complete_when_lists_are_capped(self):
+        arch = load_loihi2_candidate()
+        net = sanafe.Network()
+        sources = [net.create_neuron_group(name, 2) for name in ('a', 'b')]
+        target = net.create_neuron_group('t', 1)
+        for group, tile in zip(sources, (0, 1)):
+            for neuron in group:
+                neuron.map_to_core(arch.tiles[tile].cores[0])
+                neuron.connect_to_neuron(target[0], {'weight': 1})
+        target[0].map_to_core(arch.tiles[2].cores[0])
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        detail = Connectivity.from_network(net, neuron_map(chip)).neuron('t', 0, limit=1)
+        self.assertEqual((len(detail['fan_in']), detail['fan_in_total']), (1, 4))
+        self.assertEqual(detail['fan_in_cores'], ['0.0', '1.0'])
+        self.assertEqual(detail['fan_out_cores'], [])
+
+
 class OverBudgetWorkload(ChainWorkload):
     """200 x 200 dense edges into one core: 160000 synapse bytes > 131072."""
 

@@ -184,9 +184,19 @@ async function waitFor(check, what, timeout = 120000) {
     at('16.0').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     at('5.1').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     await waitFor(() => /16\.0/.test(text('editRail')) && /5\.1/.test(text('editRail')) && !$('btnApplyEdits').disabled, 'pending placement edit');
+    // The chip previews the pending swap, so a second drag acts on what is shown.
+    await waitFor(() => /used/.test(at('5.1').getAttribute('class')) && /empty/.test(at('16.0').getAttribute('class')) &&
+      /pending/.test(at('5.1').getAttribute('class')), 'chip previews the pending edit');
+    at('5.1').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    at('7.0').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await waitFor(() => /used/.test(at('7.0').getAttribute('class')) && /empty/.test(at('5.1').getAttribute('class')), 'second drag moves the shown core');
+    if (!/16\.0 → 7\.0/.test(text('editRail')) || /5\.1/.test(text('editRail'))) throw new Error('core map after two drags: ' + text('editRail'));
+    at('7.0').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    at('5.1').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await waitFor(() => /16\.0 → 5\.1/.test(text('editRail')), 'back to the single swap');
     $('btnApplyEdits').click();
-    await waitFor(() => at('5.1') && /used/.test(at('5.1').getAttribute('class')) &&
-      /empty/.test(at('16.0').getAttribute('class')) && text('uHorizon') === '6', 'rebuilt with the swap');
+    await waitFor(() => at('5.1') && /used/.test(at('5.1').getAttribute('class')) && !/pending/.test(at('5.1').getAttribute('class')) &&
+      /empty/.test(at('16.0').getAttribute('class')) && $('btnApplyEdits').disabled && text('uNum') === '0', 'rebuilt with the swap');
     $('btnRun').click();
     await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'edited placement runs');
     await waitFor(() => document.querySelectorAll('#runsRail li.run').length >= 4, 'saved runs listed');
@@ -196,9 +206,14 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => $('cmpSummary') && /spike trains identical/.test(text('cmpSummary')), 'placements compare identical')
       .catch((e) => { throw new Error(e.message + ': ' + ($('cmpSummary') ? text('cmpSummary') : 'no summary; result: ' + ($('cmpResult') ? text('cmpResult') : 'none') + '; dock: ' + text('dock').slice(0, 200))); });
     if (document.querySelectorAll('#dock tr.cmprow').length !== 6) throw new Error('compare table should have 6 rows');
-    const link = document.querySelector('#runsRail a.export[data-kind="raster"]');
+    const edited = document.querySelector('#runsRail li.run.current');
+    if (!edited || !/edited placement/.test(edited.textContent) || !/6 updates/.test(edited.textContent)) {
+      throw new Error('the current run should be the edited one with 6 updates: ' + (edited ? edited.textContent : 'none'));
+    }
+    const link = edited.querySelector('a.export[data-kind="raster"]');
     const exported = await fetch(new URL(link.getAttribute('href'), BASE));
-    if (exported.status !== 200 || !/svg/.test(await exported.text())) throw new Error('raster export failed');
+    const exportedBody = await exported.text();
+    if (exported.status !== 200 || !/svg/.test(exportedBody)) throw new Error('raster export failed: ' + exported.status + ' ' + exportedBody.slice(0, 300) + ' ' + link.getAttribute('href'));
 
     $('params').querySelector('[data-param="steps"]').value = '3000';
     $('btnStart').click();

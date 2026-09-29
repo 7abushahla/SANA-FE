@@ -57,7 +57,9 @@
     this.owner = {};
   }
 
-  Chip.prototype.build = function (layout, network, metadata) {
+  /* pending: cores whose contents a not-yet-applied placement edit moved. */
+  Chip.prototype.build = function (layout, network, metadata, pending) {
+    this.pending = pending || new Set();
     this.container.innerHTML = '';
     this.layout = layout;
     const hostWidth = !this.mini && metadata && metadata.host_operations ? 150 : 0;
@@ -94,7 +96,7 @@
       svg.addEventListener('mousedown', (event) => {
         const target = event.target;
         const cls = target.getAttribute && target.getAttribute('class');
-        this.dragFrom = cls === 'core used' ? target.getAttribute('data-core') : null;
+        this.dragFrom = /\bused\b/.test(cls || '') ? target.getAttribute('data-core') : null;
       });
       svg.addEventListener('mouseup', (event) => {
         const to = event.target.getAttribute && event.target.getAttribute('data-core');
@@ -142,7 +144,8 @@
         this.corePos[core.key] = [x, y];
         S.svg(svg, 'line', { x1: center[0], y1: center[1], x2: x, y2: y, class: 'spoke' });
         const owner = this.owner[core.key];
-        const rect = S.svg(svg, 'rect', { x: x - 11, y: y - 11, width: 22, height: 22, rx: 3, class: owner ? 'core used' : 'core empty', 'data-core': core.key });
+        const cls = (owner ? 'core used' : 'core empty') + (this.pending.has(core.key) ? ' pending' : '');
+        const rect = S.svg(svg, 'rect', { x: x - 11, y: y - 11, width: 22, height: 22, rx: 3, class: cls, 'data-core': core.key });
         if (owner) rect.setAttribute('fill', owner.color);
         const where = 'tile ' + tile.id + ', core ' + core.key.split('.')[1];
         S.svg(rect, 'title', {}, where + (owner ? ' · ' + this.groupsOf[core.key].join(', ') : ' · empty') +

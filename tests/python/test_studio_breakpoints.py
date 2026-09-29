@@ -92,6 +92,25 @@ class TestBreakpoints(unittest.TestCase):
         runner.join(timeout=30)
         self.assertEqual((session.state, session.update), (SessionState.STOPPED, 2))
 
+    def test_reference_mismatch_needs_a_reference(self):
+        with self.assertRaisesRegex(ValueError, 'no reference check'):
+            self.session().set_breakpoints([{'id': 'r', 'kind': 'reference_mismatch'}])
+
+    def test_compile_valid_keeps_the_valid_ones(self):
+        from sanafe.studio.engine import Breakpoints
+        session = self.session()
+        kept, rejected = Breakpoints.compile_valid([
+            {'id': 'ok', 'kind': 'update', 'equals': 2},
+            {'id': 'bad', 'kind': 'neuron_fires', 'neuron': 'layer_9.0'}], session)
+        self.assertEqual([b['id'] for b in kept.specs], ['ok'])
+        self.assertEqual(len(rejected), 1)
+        self.assertIn('bad', rejected[0])
+
+    def test_enabled_must_be_a_boolean(self):
+        with self.assertRaisesRegex(ValueError, 'enabled'):
+            self.session().set_breakpoints([{'id': 'b', 'kind': 'update', 'equals': 2,
+                                             'enabled': 'false'}])
+
     def test_breakpoints_survive_reset(self):
         session = self.session()
         session.set_breakpoints([{'id': 'b4', 'kind': 'update', 'equals': 4}])

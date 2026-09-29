@@ -28,13 +28,43 @@
   }
 
   /* ---- debugger rail: breakpoints, watches, placement edits, saved runs ---- */
+  /* The chip shows the pending placement, so every drag acts on what is shown. */
+  function previewPlacement() {
+    if (!app.session) return;
+    const network = app.session.network;
+    const same = JSON.stringify(app.pending) === JSON.stringify(app.applied);
+    let shown = network;
+    const moved = new Set();
+    if (!same) {
+      const where = (key) => {
+        const origin = Object.keys(app.applied).find((x) => app.applied[x] === key);
+        const original = origin !== undefined ? origin : key;
+        return app.pending[original] !== undefined ? app.pending[original] : original;
+      };
+      shown = Object.assign({}, network, {
+        groups: network.groups.map((group) => {
+          const cores = {};
+          for (const key in group.cores) {
+            const to = where(key);
+            if (to !== key) moved.add(to);
+            cores[to] = (cores[to] || 0) + group.cores[key];
+          }
+          return Object.assign({}, group, { cores: cores });
+        }),
+      });
+    }
+    chip.build(app.session.layout, shown, app.session.metadata || {}, moved);
+    $('chipNote').classList.toggle('previewing', !same);
+    redraw();
+  }
+
   function renderRail() {
     S.rail.renderBreakpoints($('bpList'), app.breakpoints, app.hitId, { toggle: toggleBreakpoint, remove: removeBreakpoint });
     S.rail.renderWatches($('watchList'), app.watches, (key) => select({ kind: 'neuron', key: key }));
     S.rail.renderEdits($('editRail'), app.pending, app.applied, {
       apply: () => startSession(app.pending),
-      discard: () => { app.pending = Object.assign({}, app.applied); renderRail(); },
-      reset: () => { app.pending = {}; renderRail(); },
+      discard: () => { app.pending = Object.assign({}, app.applied); renderRail(); previewPlacement(); },
+      reset: () => { app.pending = {}; renderRail(); previewPlacement(); },
     });
     S.rail.renderRuns($('runsRail'), app.runs, app.session && app.session.run);
   }
@@ -90,9 +120,15 @@
     if (a === null) return;
     map[a] = to;
     if (b !== null && b !== a) map[b] = from;
-    for (const key of Object.keys(map)) if (map[key] === key) delete map[key];
+    // Only cores that hold neurons need an entry; empty ones have nothing to move.
+    const holding = new Set(app.session.network.occupied.map((key) => {
+      const origin = Object.keys(app.applied).find((x) => app.applied[x] === key);
+      return origin !== undefined ? origin : key;
+    }));
+    for (const key of Object.keys(map)) if (map[key] === key || !holding.has(key)) delete map[key];
     app.pending = map;
     renderRail();
+    previewPlacement();
   }
 
   /* ---- selection ---- */
@@ -138,9 +174,8 @@
   function highlightConnections(key) {
     const detail = app.details[key];
     if (!detail || detail.error) return;
-    const cores = (edges) => Array.from(new Set(edges.map((e) => e.core)));
     setView({ level: 'chip' });
-    chip.highlight = { in: cores(detail.fan_in), out: cores(detail.fan_out) };
+    chip.highlight = { in: detail.fan_in_cores, out: detail.fan_out_cores };  // complete, not capped
     redraw();
   }
 
@@ -323,6 +358,8 @@
     app.applied = Object.assign({}, ready.core_map || {});
     app.pending = Object.assign({}, app.applied);
     app.hitId = null;
+    const warnings = ready.breakpoint_warnings || [];
+    if (warnings.length) $('formError').textContent = 'Breakpoints not carried over: ' + warnings.join('; ');
     renderRail();
     refreshRuns();
     for (const key of app.watches) loadDetail(key);

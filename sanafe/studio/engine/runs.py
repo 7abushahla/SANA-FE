@@ -86,7 +86,9 @@ def compare_runs(a, b):
         return {key: sum(_metrics(r)[key] for r in records)
                 for key in ('step_time', 'energy', 'hops', 'messages')}
 
-    return {'comparable': comparable, 'identical_spikes': comparable and first is None,
+    note = 'no updates to compare' if common == 0 else None
+    return {'comparable': comparable, 'note': note,
+            'identical_spikes': comparable and first is None and common > 0,
             'first_difference': first, 'updates': updates,
             'updates_a': len(records_a), 'updates_b': len(records_b),
             'totals': {'a': totals(records_a), 'b': totals(records_b)},

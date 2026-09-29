@@ -169,3 +169,5 @@ a.export { color: #2368a0; }
 .cmpok { color: #16846f; font-weight: 700; margin: 6px 0; }
 .cmpbad { color: #b8445a; font-weight: 700; margin: 6px 0; }
 .cmpchart { width: 100%; max-width: 620px; height: auto; display: block; }
+.core.pending { stroke: #c77622; stroke-width: 2.4; stroke-dasharray: 3 2; }
+#chipNote.previewing::after { content: " Showing the pending placement: rebuild to simulate it."; color: #c77622; font-weight: 600; }

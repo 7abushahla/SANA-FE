@@ -111,10 +111,9 @@ class Session:
             self.core_budgets = {f'{stat["tile"]}.{stat["core"]}': stat for stat in
                                  validate_core_budgets(self.connectivity.core_stats())}
         self.records = []
-        try:  # keep the breakpoints across a rebuild while they still apply
-            self.breakpoints = Breakpoints.compile(self.breakpoints.specs, self)
-        except ValueError:
-            self.breakpoints = Breakpoints()
+        # Keep the breakpoints that still apply after a rebuild; say which did not.
+        self.breakpoints, self.breakpoint_warnings = Breakpoints.compile_valid(
+            self.breakpoints.specs, self)
         self.state = SessionState.IDLE
         self.stop_reason = None
         self.fault = None
@@ -218,7 +217,13 @@ class Session:
                 'state': self.state.value, 'update': self.update,
                 'core_map': dict(self.core_map),
                 'breakpoints': list(self.breakpoints.specs),
+                'breakpoint_warnings': list(self.breakpoint_warnings),
                 'run': self.store.directory.name if self.store is not None else None}
+
+    def carry_breakpoints(self, specs):
+        """Adopt another session's breakpoints; return the reasons for any dropped."""
+        self.breakpoints, self.breakpoint_warnings = Breakpoints.compile_valid(specs, self)
+        return self.breakpoint_warnings
 
     def set_breakpoints(self, specs):
         """Replace the breakpoint list; takes effect from the next update.
@@ -227,6 +232,7 @@ class Session:
         one assignment, so a running update sees either the old or new list.
         """
         self.breakpoints = Breakpoints.compile(specs, self)
+        self.breakpoint_warnings = []
         return self.breakpoints.specs
 
     def pause(self):

@@ -62,7 +62,14 @@ class Breakpoints:
             if kind not in KINDS:
                 raise ValueError(f'breakpoint {ident}: unknown kind {kind!r}; '
                                  f'choose one of {", ".join(KINDS)}')
-            clean = {'id': ident, 'kind': kind, 'enabled': spec.get('enabled', True) is not False}
+            enabled = spec.get('enabled', True)
+            if not isinstance(enabled, bool):
+                raise ValueError(f'breakpoint {ident}: enabled must be true or false, '
+                                 f'got {enabled!r}')
+            clean = {'id': ident, 'kind': kind, 'enabled': enabled}
+            if kind == 'reference_mismatch' and getattr(session.built, 'reference', None) is None:
+                raise ValueError(f'breakpoint {ident}: this workload has no reference check, '
+                                 'so a reference mismatch cannot occur')
             if kind == 'neuron_fires':
                 neuron = spec.get('neuron')
                 if neuron not in logged:
@@ -82,6 +89,17 @@ class Breakpoints:
                 clean['equals'] = _number(spec, 'equals', integer=True, minimum=1)
             checked.append(clean)
         return cls(checked)
+
+    @classmethod
+    def compile_valid(cls, specs, session):
+        """Keep the specs that validate; return them with the rejections' reasons."""
+        kept, rejected = [], []
+        for spec in specs if isinstance(specs, list) else []:
+            try:
+                kept.extend(cls.compile(kept + [spec], session).specs[len(kept):])
+            except ValueError as error:
+                rejected.append(str(error))
+        return cls(kept), rejected
 
     def check(self, record):
         """The first enabled breakpoint this record hits, as a reason, or None."""

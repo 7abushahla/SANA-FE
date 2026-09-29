@@ -11,8 +11,9 @@
   /* A: this session's run. B: the newest other run of the same workload
      and length, else the newest other run. */
   function defaults(runs, current) {
-    const a = runs.find((r) => r.id === current) || runs[0];
-    const others = runs.filter((r) => r !== a);
+    const full = runs.filter((r) => r.updates > 0);
+    const a = full.find((r) => r.id === current) || full[0];
+    const others = full.filter((r) => r !== a);
     const b = others.find((r) => a && r.workload === a.workload && r.updates === a.updates) || others[0];
     return [a, b];
   }
@@ -38,7 +39,7 @@
       if (container.dataset.compare === key) return;
       container.dataset.compare = key;
       container.innerHTML = '';
-      if (runs.length < 2) { container.textContent = 'Compare needs two saved runs. Run the session, change the placement, and run again.'; return; }
+      if (runs.filter((r) => r.updates > 0).length < 2) { container.textContent = 'Compare needs two saved runs. Run the session, change the placement, and run again.'; return; }
       const bar = S.html(container, 'div', { class: 'msgbar' });
       const [a, b] = defaults(runs, current);
       const pick = (id, chosen) => {
@@ -62,7 +63,8 @@
           return;
         }
         let summary;
-        if (!data.comparable) summary = 'not comparable: the runs simulate different networks';
+        if (data.note) summary = data.note;
+        else if (!data.comparable) summary = 'not comparable: the runs simulate different networks';
         else if (data.identical_spikes) summary = 'spike trains identical over ' + data.updates_a + ' updates';
         else if (data.first_difference.neuron === null) summary = 'spike trains agree for ' + data.updates.length + ' updates, then run ' + data.first_difference.in.toUpperCase() + ' continues';
         else summary = 'spike trains differ at update ' + data.first_difference.update + ': ' + data.first_difference.neuron + ' fired only in run ' + data.first_difference.in.toUpperCase();
