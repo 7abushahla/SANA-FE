@@ -29,6 +29,10 @@ reconstructed.
 - Each message's delays and timestamps are recorded. Its router-by-router
   `path` is reconstructed with the x-then-y rule in `src/schedule.cpp`,
   because the detailed timing model records no per-router events.
+- `fired` lists only neurons created with `log_spikes`, because SANA-FE's
+  spike trace records only those. `counts['fired']` counts every neuron. A
+  core's `core_counts[...]['fired']` is `None` unless all of its neurons log
+  spikes, so a partial count is never shown as exact.
 - A core's finish time is the latest send timestamp among its records in the
   update. The barrier is the step time after the last core finish or message.
 - Per-core and per-unit energy is recorded. The session simulates on a copy of

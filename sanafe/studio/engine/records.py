@@ -132,11 +132,17 @@ def build_update_record(update, result, layout, neurons):
                          f'{len(logged)} logged neurons')
     potentials = {f'{n.group}.{n.offset}': float(v) for n, v in zip(logged, values)}
 
+    # The spike trace lists only neurons with log_spikes, so a core's fired
+    # count is exact only when all of its neurons log spikes; otherwise None.
     where = {(n.group, n.offset): n.core for n in neurons}
-    core_counts = {core: {'fired': 0, 'packets_in': 0, 'packets_out': 0,
-                          'spikes_in': 0} for core in occupied}
+    complete = {core: all(n.log_spikes for n in neurons if n.core == core)
+                for core in occupied}
+    core_counts = {core: {'fired': 0 if complete[core] else None, 'packets_in': 0,
+                          'packets_out': 0, 'spikes_in': 0} for core in occupied}
     for address in fired:
-        core_counts[where[address]]['fired'] += 1
+        counts = core_counts[where[address]]
+        if counts['fired'] is not None:
+            counts['fired'] += 1
     for message in messages:
         core_counts.setdefault(message.src, {'fired': 0, 'packets_in': 0,
                                              'packets_out': 0, 'spikes_in': 0})

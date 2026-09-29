@@ -95,6 +95,19 @@ class TestUpdateRecords(unittest.TestCase):
             self.assertEqual(set(record.core_counts), {'3.2'})
             self.assertEqual(record.core_counts['3.2']['packets_out'], 0)
 
+    def test_partial_spike_logging_leaves_core_fired_unknown(self):
+        # SANA-FE's spike trace lists only neurons with log_spikes, so a core
+        # with unlogged neurons has no exact fired count.
+        net = chain_network(load_loihi2_candidate(), PLACEMENTS['far'], 6)
+        for offset in range(4):
+            net.groups['layer_0'][offset].set_attributes(log_spikes=False)
+        records, _ = stepped_records('far', network=net)
+        self.assertTrue(any(r.counts['fired'] > len(r.fired) for r in records))
+        for record in records:
+            self.assertIsNone(record.core_counts['0.0']['fired'])
+            self.assertIsInstance(record.core_counts['16.0']['fired'], int)
+            self.assertIsInstance(record.core_counts['31.0']['fired'], int)
+
     def test_round_trip_through_json(self):
         records, _ = stepped_records('far', steps=2)
         for record in records:
