@@ -93,6 +93,35 @@ class TestSession(unittest.TestCase):
         self.assertEqual(session.records, [])
         self.assertEqual(len(session.step()), 1)
 
+    def test_post_simulation_error_faults(self):
+        raised = []
+
+        class RaisesOnUpdateTwo:
+            def check(self, record):
+                if record.update == 2 and not raised:
+                    raised.append(True)  # once only, so reset() can recover
+                    raise KeyError('reference lookup failed')
+                return None
+
+        class CheckedChain(ChainWorkload):
+            def build(self, params):
+                built = super().build(params)
+                built.reference = RaisesOnUpdateTwo()
+                return built
+
+        session = Session(CheckedChain(), {})
+        self.addCleanup(session.close)
+        with self.assertRaisesRegex(SessionFault, 'reference lookup failed'):
+            session.run_to_horizon()
+        # The chip advanced past update 2, so the session must not continue
+        # with shifted update numbers.
+        self.assertEqual(session.state, SessionState.FAULTED)
+        self.assertEqual([r.update for r in session.records], [1])
+        with self.assertRaisesRegex(SessionFault, r'reset\(\) is required'):
+            session.step()
+        session.reset()
+        self.assertEqual([r.update for r in session.step(2)], [1, 2])
+
     def test_aggregate_trace_level_is_stage_five(self):
         with self.assertRaisesRegex(ValueError, 'stage 5'):
             Session(ChainWorkload(), {}, trace_level='aggregate')

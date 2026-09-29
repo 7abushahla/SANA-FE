@@ -138,21 +138,24 @@ class Session:
             if self._pause.is_set():
                 self.state = SessionState.PAUSED
                 return produced
+            # Once chip.sim returns, the chip has advanced. Any later failure
+            # must fault the session, or update numbers would shift silently.
             try:
                 result = self._simulate()
+                record = build_update_record(self.update + 1, result, self.layout,
+                                             self.neurons)
+                if self.built.reference is not None:
+                    record.reference = self.built.reference.check(record)
+                if self.store is not None:
+                    self.store.append(record)
             except Exception as error:
-                self.state = SessionState.FAULTED
-                self.fault = f'{type(error).__name__}: {error}'
-                raise SessionFault(self.fault) from error
-            record = build_update_record(self.update + 1, result, self.layout,
-                                         self.neurons)
-            if self.built.reference is not None:
-                record.reference = self.built.reference.check(record)
+                self._set_fault(error)
             self.records.append(record)
             produced.append(record)
-            if self.store is not None:
-                self.store.append(record)
-            reason = stop_when(record) if stop_when is not None else None
+            try:
+                reason = stop_when(record) if stop_when is not None else None
+            except Exception as error:
+                self._set_fault(error)
             if reason:
                 self.state = SessionState.STOPPED
                 self.stop_reason = reason
@@ -162,6 +165,11 @@ class Session:
         else:
             self.state = SessionState.FINISHED
         return produced
+
+    def _set_fault(self, error):
+        self.state = SessionState.FAULTED
+        self.fault = f'{type(error).__name__}: {error}'
+        raise SessionFault(self.fault) from error
 
     def _simulate(self):
         """One numbered update with every trace; the single call into SANA-FE."""
