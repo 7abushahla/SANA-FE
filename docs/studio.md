@@ -65,11 +65,47 @@ A workload may attach a reference checker. `check(record)` returns
 actual values. The thesis QCFS workload compares every update with Lava at
 the same update and with SpikingJelly shifted by one update per layer.
 
+## Debugging
+
+**Breakpoints** are JSON conditions checked after every update, never code:
+
+| kind | fields | stops after the update in which |
+| --- | --- | --- |
+| `neuron_fires` | `neuron` (a neuron that logs spikes) | the neuron fired |
+| `core_sends` | `core`, `more_than` | the core sent more than that many packets |
+| `step_time` | `more_than` (seconds) | the modeled step time exceeded the limit |
+| `update` | `equals` | the update number equals the value |
+| `reference_mismatch` | none | the workload's reference check reported a mismatch |
+
+`session.set_breakpoints([...])` (or `PUT /api/sessions/{id}/breakpoints`)
+replaces the list; it takes effect from the next update, even during a run.
+A hit leaves the session `stopped` with a reason such as
+`breakpoint b1: layer_2.4 fires`. A Python `stop_when` callable still works.
+
+**Placement editing.** `Session(..., core_map={'0.0': '31.3', '31.3': '0.0'})`
+moves every neuron of each key core to its value core before loading. The
+map is relative to the workload's own placement. Neurons are re-mapped in
+their original order, because SANA-FE places neurons within a core in
+mapping order. On the page, drag a used core onto another core to swap
+them, then press "Rebuild with edits". The reference check must still pass,
+and spike trains must not change; time, energy, and hops may.
+
+**Saved runs.** Each build writes a trace store, by default under
+`~/.sanafe-studio/runs` (`--store-dir` moves it, `--no-store` disables it).
+`list_runs`, `load_run`, and `compare_runs` read them. A comparison reports
+whether the two spike trains are identical (or the first update and neuron
+where they differ), and per update the step time, energy, hops, messages,
+occupied cores, the latest core finish, and the busiest core's packets.
+Runs of different networks are reported as not comparable.
+
+**Export.** `export_plot(records, kind)` renders a `sanafe.viz` plot of a
+saved run as SVG: `raster`, `potential`, `energy`, `throughput`, or
+`latency`. Titles state that the values are modeled, not measured.
+
 ## Limits in this stage
 
-Only the `full` trace level exists. Breakpoints are Python callables passed as
-`stop_when`; declarative breakpoints arrive in stage 4. A fault inside
-SANA-FE moves the session to `faulted`, and only `reset()` clears it.
+Only the `full` trace level exists. A fault inside SANA-FE moves the session
+to `faulted`, and only `reset()` clears it.
 
 ## Running the Studio
 
@@ -135,6 +171,13 @@ drive it.
   reconstructed route (X) on the chip.
 - **Architecture.** The loaded YAML and its differences from a bundled
   baseline, such as the Loihi 1 file.
+- **Debugger rail.** Breakpoints (add by kind, enable or disable, remove;
+  the one that stopped the run is highlighted), watches, the placement core
+  map with pending edits, and saved runs with export links.
+- **Neuron actions.** Watch, Break when it fires, and Highlight connections
+  (fan-in cores in blue, fan-out cores in green on the chip).
+- **Compare.** Two saved runs: spike-train identity, totals, a step-time
+  chart, and a per-update table.
 - **Reference pill.** match, mismatch, unchecked, or none for the displayed
   update. A mismatch also appears in the phase banner. Reference values
   carry their own mark, `ref`: they come from Lava or SpikingJelly, not from
@@ -185,6 +228,19 @@ without a display.
 16. Open Architecture and choose `loihi` as the baseline. The table lists
     the candidate's differences, including 8192 neurons per core and the
     removed alternative units.
+17. Reset, add the breakpoint "update equals 3", and press Run to horizon.
+    The state reads "stopped: breakpoint b1: update 3" and the breakpoint is
+    highlighted. Remove it and run to the end.
+18. Open an IF2 core, click a neuron, and press "Break when it fires". Reset
+    and run: the run stops at the neuron's first spike. Press "Highlight
+    connections": its IF1 source cores turn blue on the chip.
+19. Drag an IF1 core onto an empty core. The Placement section shows the
+    pending swap. Press "Rebuild with edits" and run: the reference pill
+    stays "match".
+20. Open Compare. A is the edited run and B the previous run of the same
+    length. The summary reads "spike trains identical"; the hops differ.
+21. In Saved runs, open the raster export of a run. The SVG shows the
+    spikes, titled as modeled, not measured.
 
 ## Coverage of the Streamlit workbench
 
@@ -193,13 +249,13 @@ has a Studio home (end of stage 5).
 
 | Streamlit feature | Studio | Stage |
 | --- | --- | --- |
-| Run a mapped model: T menu, image, named or custom three-core placement | Session rail: typed T and image, whole-layer presets, chunked packed or spread placement | 3 (placement by drag: 4) |
+| Run a mapped model: T menu, image, named or custom three-core placement | Session rail: typed T and image, whole-layer presets, chunked packed or spread placement, and placement by drag | 3 and 4 |
 | Mesh at one update with recorded packet endpoints | Chip view, packets on recorded times along the X route | 2 |
 | Animated machine | Chip with both clocks | 2 |
 | Performance figure | Live performance | 2 |
 | Per-core activity | Timeline rows and the core inspector | 2 |
 | Three paths, one aligned computation: per-neuron agreement | Reference pill, per-update check of every neuron, reference traces in neuron watch | 3 |
-| Three paths, one aligned computation: the layer spike raster | Raster export from a saved run | 4 |
+| Three paths, one aligned computation: the layer spike raster | Raster export from a saved run (SANA-FE; the references agree by the per-update check) | 4 |
 | Network graph | Network mode | 3 |
 | Membrane of one neuron | Neuron watch | 3 |
 | Mapped cores and assumed resources | Core inspector on the candidate | 3 |
