@@ -102,10 +102,35 @@ Runs of different networks are reported as not comparable.
 saved run as SVG: `raster`, `potential`, `energy`, `throughput`, or
 `latency`. Titles state that the values are modeled, not measured.
 
-## Limits in this stage
+## Trace levels and chip scale
 
-Only the `full` trace level exists. A fault inside SANA-FE moves the session
-to `faulted`, and only `reset()` clears it.
+`full` keeps every message of every update. `aggregate` keeps, per update,
+the chip counts and energy, each core's counts, finish time, and energy,
+the packets over each mesh link (following the reconstructed x-then-y route,
+so marked X), and the membranes and spikes of watched neurons only. The
+worker still holds every update's full membranes and spikes as arrays: the
+reference check reads them, `session.core_state(core, update)` serves one
+core's neurons at any past update, and `neuron_detail` returns a neuron's
+whole history, so a watch added late still shows every update. A workload
+may declare `default_trace_level`; the rail can override it.
+
+The stage 5 probe (ResNet-20, T = 2, 109 cores, 286,720 neurons) measured
+0.1 to 2.4 s per `chip.sim(1)`, but 1.5 to 9.4 s to build a full record and
+6 to 12 MB of JSON per update, against a 5 s and live-playback budget. The
+simulator was not the bottleneck, so the aggregate level was added instead
+of C++ counters. On the same network it takes at most 0.7 s per update at
+T = 2 and 1.7 s at T = 8, with records of about 30 kB and a peak of about
+2 GB.
+
+At the aggregate level the chip draws link width by packets per link, the
+timeline keeps core finish bars and the barrier, Messages lists packets per
+link, and the core view fetches its membranes for the shown update.
+
+## Limits
+
+A fault inside SANA-FE moves the session to `faulted`, and only `reset()`
+clears it. The aggregate level keeps no per-message timing, so packets are
+not animated and the timeline has no message rows.
 
 ## Running the Studio
 
@@ -116,7 +141,7 @@ to `faulted`, and only `reset()` clears it.
 Open `http://127.0.0.1:8765/`. The server listens on this machine only. Add
 workloads with `--workload NAME=module:Class` and `--path DIR`. Add
 `--store-dir DIR` to save every run as a trace store. The thesis launcher
-registers the QCFS compact network:
+registers the QCFS compact network and QCFS ResNet-20:
 
 ```bash
 SANA-FE/.venv/bin/python SANA-FE-thesis/studio_workloads/launch.py
@@ -241,11 +266,21 @@ without a display.
     length. The summary reads "spike trains identical"; the hops differ.
 21. In Saved runs, open the raster export of a run. The SVG shows the
     spikes, titled as modeled, not measured.
+22. Start `qcfs-resnet20` with `T = 2` (the build takes about 30 s). 109
+    cores are colored, the chip note says "Aggregate trace level", and the
+    session info names the reference source (saved route traces with Lava,
+    or computed at build).
+23. Run to horizon. Twenty updates play; links thicken where traffic is
+    heavy, and the reference pill reads "match" at every update.
+24. Scrub back to update 5 and open core 0.0. Its 3,072 neurons show as a
+    1,024-bin heatmap of that update's membranes.
+25. Rebuild with `T = 8` (a larger, user-entered horizon). The run plays
+    26 updates with the reference pill at "match".
 
 ## Coverage of the Streamlit workbench
 
-`SANA-FE-thesis/virtual_loihi_ui.py` is retired once every feature below
-has a Studio home (end of stage 5).
+Every feature below has a Studio home, and `SANA-FE-thesis/virtual_loihi_ui.py`
+was retired at the end of stage 5.
 
 | Streamlit feature | Studio | Stage |
 | --- | --- | --- |
@@ -261,5 +296,5 @@ has a Studio home (end of stage 5).
 | Mapped cores and assumed resources | Core inspector on the candidate | 3 |
 | Recorded messages at this update | Messages | 2 |
 | Bundled Loihi 1 against the candidate | Architecture tab, diff against `loihi` | 3 |
-| Larger ResNet-20 mapping (occupancy) | ResNet-20 workload at chip scale | 5 |
+| Larger ResNet-20 mapping (occupancy) | `qcfs-resnet20` at chip scale: 109 used cores, per-core budgets in the inspector | 5 |
 | Plots from `sanafe.viz` | Export from a saved run | 4 |
