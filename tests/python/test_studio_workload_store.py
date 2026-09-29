@@ -80,6 +80,17 @@ class TestTraceStore(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 TraceStore.create(run, {'workload': 'test'})
 
+    def test_strict_json_helpers(self):
+        from sanafe.studio.engine import from_strict_json, to_strict_json
+        value = {'a': [float('inf'), 1.5, {'b': float('-inf')}], 'c': (2, float('nan'))}
+        encoded = to_strict_json(value)
+        self.assertEqual(encoded['a'][0], {'$float': 'inf'})
+        self.assertEqual(encoded['c'], [2, {'$float': 'nan'}])
+        decoded = from_strict_json(encoded)
+        self.assertEqual(decoded['a'][:2], [float('inf'), 1.5])
+        self.assertEqual(decoded['a'][2], {'b': float('-inf')})
+        self.assertTrue(math.isnan(decoded['c'][1]))
+
     def test_non_finite_values_round_trip(self):
         # A diverging float membrane reaches -inf; a debugger must keep it.
         with tempfile.TemporaryDirectory() as directory:

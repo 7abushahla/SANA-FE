@@ -14,25 +14,27 @@ TRACE_FORMAT = 'sanafe-studio-trace-v1'
 _NON_FINITE = {'inf': math.inf, '-inf': -math.inf, 'nan': math.nan}
 
 
-def _encode(value):
+def to_strict_json(value):
+    """Replace non-finite floats with {"$float": ...} tags, recursively."""
     if isinstance(value, float) and not math.isfinite(value):
         if math.isnan(value):
             return {'$float': 'nan'}
         return {'$float': 'inf' if value > 0 else '-inf'}
     if isinstance(value, dict):
-        return {key: _encode(item) for key, item in value.items()}
+        return {key: to_strict_json(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_encode(item) for item in value]
+        return [to_strict_json(item) for item in value]
     return value
 
 
-def _decode(value):
+def from_strict_json(value):
+    """Restore floats tagged by to_strict_json, recursively."""
     if isinstance(value, dict):
         if value.keys() == {'$float'}:
             return _NON_FINITE[value['$float']]
-        return {key: _decode(item) for key, item in value.items()}
+        return {key: from_strict_json(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [_decode(item) for item in value]
+        return [from_strict_json(item) for item in value]
     return value
 
 
@@ -51,7 +53,7 @@ class TraceStore:
         return cls(directory, manifest)
 
     def append(self, record):
-        line = json.dumps(_encode(record.to_dict()), allow_nan=False)
+        line = json.dumps(to_strict_json(record.to_dict()), allow_nan=False)
         with open(self.directory / 'records.jsonl', 'a', encoding='utf-8') as handle:
             handle.write(line + '\n')
 
@@ -63,5 +65,5 @@ class TraceStore:
             raise ValueError(f'{directory}: not a {TRACE_FORMAT} store')
         path = directory / 'records.jsonl'
         lines = path.read_text().splitlines() if path.exists() else []
-        return manifest, [UpdateRecord.from_dict(_decode(json.loads(line)))
+        return manifest, [UpdateRecord.from_dict(from_strict_json(json.loads(line)))
                           for line in lines if line]

@@ -8,7 +8,7 @@ import threading
 import uuid
 
 import sanafe
-from sanafe.loihi2 import architecture_fingerprint
+from sanafe.loihi2 import architecture_fingerprint, load_loihi2_candidate
 
 from .instrument import instrument_arch_yaml
 from .layout import ChipLayout
@@ -74,6 +74,7 @@ class Session:
         self._build()
 
     def _build(self):
+        self._pause.clear()
         if self._scratch is not None:
             self._scratch.cleanup()
         self._scratch = tempfile.TemporaryDirectory(prefix='sanafe-studio-')
@@ -116,13 +117,48 @@ class Session:
             'created': datetime.now(timezone.utc).isoformat(),
         }
 
+    def network_summary(self):
+        """Groups in SANA-FE trace order with their per-core neuron counts."""
+        groups = {}
+        for neuron in self.neurons:
+            entry = groups.setdefault(neuron.group,
+                                      {'name': neuron.group, 'size': 0, 'cores': {}})
+            entry['size'] += 1
+            entry['cores'][neuron.core] = entry['cores'].get(neuron.core, 0) + 1
+        return {'groups': list(groups.values()),
+                'occupied': sorted({neuron.core for neuron in self.neurons})}
+
+    def badge(self):
+        """The provenance line every view must show for this architecture."""
+        candidate = architecture_fingerprint(load_loihi2_candidate())
+        if architecture_fingerprint(self.built.arch) == candidate:
+            return 'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware'
+        return (f'{Path(self.built.arch_yaml).name} · modeled costs from this file · '
+                'not measurements')
+
+    def describe(self):
+        """Summary a viewer needs before the first update."""
+        return {'layout': self.layout.to_dict(), 'network': self.network_summary(),
+                'horizon': self.horizon, 'badge': self.badge(),
+                'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
+                'state': self.state.value, 'update': self.update}
+
     def pause(self):
-        """Stop at the next update boundary. Safe to call from another thread."""
+        """Stop the current or next run at an update boundary. Thread-safe.
+
+        A pause requested before a run starts stops that run before its first
+        update. The run that honors it consumes it; a run that ends, stops, or
+        faults discards it.
+        """
         self._pause.set()
 
-    def step(self, n=1):
+    def cancel_pause(self):
+        """Discard a pending pause that no run has honored."""
+        self._pause.clear()
+
+    def step(self, n=1, stop_when=None):
         ParameterSpec('n', 'int', minimum=1).validate(n)
-        return self._advance(n, None)
+        return self._advance(n, stop_when)
 
     def run_to_horizon(self, stop_when=None):
         return self._advance(max(self.horizon - self.update, 0), stop_when)
@@ -130,12 +166,12 @@ class Session:
     def _advance(self, count, stop_when):
         if self.state is SessionState.FAULTED:
             raise SessionFault(f'reset() is required after a fault: {self.fault}')
-        self._pause.clear()
         self.stop_reason = None
         self.state = SessionState.RUNNING
         produced = []
         for _ in range(count):
             if self._pause.is_set():
+                self._pause.clear()
                 self.state = SessionState.PAUSED
                 return produced
             # Once chip.sim returns, the chip has advanced. Any later failure
@@ -157,16 +193,17 @@ class Session:
             except Exception as error:
                 self._set_fault(error)
             if reason:
+                self._pause.clear()
                 self.state = SessionState.STOPPED
                 self.stop_reason = reason
                 return produced
-        if self._pause.is_set() or self.update < self.horizon:
-            self.state = SessionState.PAUSED
-        else:
-            self.state = SessionState.FINISHED
+        self._pause.clear()
+        self.state = (SessionState.FINISHED if self.update >= self.horizon
+                      else SessionState.PAUSED)
         return produced
 
     def _set_fault(self, error):
+        self._pause.clear()
         self.state = SessionState.FAULTED
         self.fault = f'{type(error).__name__}: {error}'
         raise SessionFault(self.fault) from error

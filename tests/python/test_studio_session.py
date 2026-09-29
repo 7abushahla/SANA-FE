@@ -122,6 +122,61 @@ class TestSession(unittest.TestCase):
         session.reset()
         self.assertEqual([r.update for r in session.step(2)], [1, 2])
 
+    def test_pause_before_run_is_honored(self):
+        session = self.session()
+        session.pause()
+        self.assertEqual(session.run_to_horizon(), [])
+        self.assertEqual(session.state, SessionState.PAUSED)
+        self.assertEqual(len(session.run_to_horizon()), 6)  # the pause was consumed
+        self.assertEqual(session.state, SessionState.FINISHED)
+
+    def test_pause_during_last_update_reports_finished(self):
+        session = self.session()
+        session.step(5)
+        produced = session.run_to_horizon(stop_when=lambda r: session.pause())
+        self.assertEqual(len(produced), 1)
+        self.assertEqual(session.state, SessionState.FINISHED)
+        self.assertEqual(len(session.step(1)), 1)  # no stale pause remains
+
+    def test_cancel_pause(self):
+        session = self.session()
+        session.pause()
+        session.cancel_pause()
+        self.assertEqual(len(session.step(2)), 2)
+
+    def test_step_accepts_stop_when(self):
+        session = self.session()
+        produced = session.step(5, stop_when=lambda r: 'two' if r.update == 2 else None)
+        self.assertEqual([r.update for r in produced], [1, 2])
+        self.assertEqual((session.state, session.stop_reason), (SessionState.STOPPED, 'two'))
+
+    def test_network_summary_badge_and_describe(self):
+        session = self.session()
+        summary = session.network_summary()
+        self.assertEqual(summary['groups'], [
+            {'name': 'layer_0', 'size': 8, 'cores': {'0.0': 8}},
+            {'name': 'layer_1', 'size': 4, 'cores': {'16.0': 4}},
+            {'name': 'layer_2', 'size': 2, 'cores': {'31.0': 2}}])
+        self.assertEqual(summary['occupied'], ['0.0', '16.0', '31.0'])
+        self.assertEqual(session.badge(),
+                         'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware')
+        described = session.describe()
+        self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
+                                          'metadata', 'state', 'update'})
+        self.assertEqual((described['state'], described['update'], described['horizon']),
+                         ('idle', 0, 6))
+        import json
+        from sanafe.studio.engine import to_strict_json
+        json.dumps(to_strict_json(described), allow_nan=False)
+
+    def test_badge_for_other_architectures(self):
+        session = Session(SanafeFiles(), {
+            'arch_yaml': str(REPO / 'arch' / 'example_chip.yaml'),
+            'net_file': str(REPO / 'snn' / 'example.net')})
+        self.addCleanup(session.close)
+        self.assertEqual(session.badge(),
+                         'example_chip.yaml · modeled costs from this file · not measurements')
+
     def test_aggregate_trace_level_is_stage_five(self):
         with self.assertRaisesRegex(ValueError, 'stage 5'):
             Session(ChainWorkload(), {}, trace_level='aggregate')
