@@ -115,7 +115,10 @@ class Session:
             self.core_budgets = {f'{stat["tile"]}.{stat["core"]}': stat for stat in
                                  validate_core_budgets(self.connectivity.core_stats())}
         self.records = []
-        self._cache = RecordCache(self.neurons, self.layout)
+        self._cache = self.lookup = RecordCache(self.neurons, self.layout)
+        bind = getattr(self.built.reference, 'bind', None)
+        if bind is not None:  # a checker may need the trace order of this chip
+            bind(self)
         self._history = []  # aggregate level: (membranes, fired indices) per update
         self.watched = [key for key in self.watched if key in self._cache.logged_pos]
         # Keep the breakpoints that still apply after a rebuild; say which did not.

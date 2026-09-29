@@ -58,7 +58,10 @@ class ReferenceChecker(Protocol):
     'reference', 'neuron', 'quantity', 'expected', 'actual', 'mismatches'}``
     naming the first differing neuron. A checker may also offer
     ``series(key)``: ``{reference: {'potential': [...], 'spike': [...]}}``
-    indexed from update 1, with None where that reference has no value.
+    indexed from update 1, with None where that reference has no value, and
+    ``bind(session)``, called once per build with the loaded session, whose
+    ``lookup`` gives the neuron order. At the aggregate trace level a record
+    carries the full membranes and spikes as ``record.state`` while checked.
     """
 
     def check(self, record) -> dict:

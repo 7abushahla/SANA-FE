@@ -92,6 +92,31 @@ class TestAggregate(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'trace level'):
             Session(ChainWorkload(), {}, trace_level='sparse')
 
+    def test_checkers_bind_and_read_full_state(self):
+        seen = {}
+
+        class Checker:
+            def bind(self, session):
+                seen['lookup'] = session.lookup
+
+            def check(self, record):
+                state = record.state
+                position = seen['lookup'].logged_pos['layer_0.3']
+                seen.setdefault('values', []).append(float(state['potentials'][position]))
+                return {'status': 'match', 'references': ['fake']}
+
+        class Checked(ChainWorkload):
+            def build(self, params):
+                built = super().build(params)
+                built.reference = Checker()
+                return built
+
+        session = Session(Checked(), {'placement': 'far'}, trace_level='aggregate')
+        self.addCleanup(session.close)
+        records = session.run_to_horizon()
+        self.assertEqual(seen['values'], [r.potentials['layer_0.3'] for r in self.full])
+        self.assertFalse(hasattr(records[0], 'state'))
+
     def test_full_level_core_state_and_history(self):
         session = Session(ChainWorkload(), {'placement': 'far'})
         self.addCleanup(session.close)
