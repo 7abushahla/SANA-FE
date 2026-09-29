@@ -32,6 +32,23 @@
     <button id="btnStart" class="go">Start session</button>
     <div id="formError" class="error"></div>
     <div id="sessionInfo" class="small"></div>
+    <h3>Breakpoints</h3>
+    <div id="bpForm" class="bpform">
+      <select id="bpKind"><option value="update">update equals</option><option value="neuron_fires">neuron fires</option>
+        <option value="core_sends">core sends more than</option><option value="step_time">step time exceeds</option>
+        <option value="reference_mismatch">reference mismatch</option></select>
+      <div id="bpNeuronRow"><input id="bpNeuron" placeholder="neuron, e.g. layer_2.4"></div>
+      <div id="bpCoreRow"><input id="bpCore" placeholder="core, e.g. 16.0"></div>
+      <div id="bpValueRow"><span id="bpValueLabel" class="hint"></span><input id="bpValue" type="number" min="0" step="any"></div>
+      <button id="bpAdd" class="plain">Add breakpoint</button>
+    </div>
+    <ul id="bpList" class="raillist"></ul>
+    <h3>Watches</h3>
+    <ul id="watchList" class="raillist"></ul>
+    <h3>Placement</h3>
+    <div id="editRail" class="small"></div>
+    <h3>Saved runs</h3>
+    <ul id="runsRail" class="raillist"></ul>
   </aside>
   <section class="pane center">
     <div class="cbar"><span class="modes"><button id="mChip" class="on">Chip</button><button id="mNet">Network</button></span>
@@ -58,7 +75,7 @@
   </aside>
 </main>
 <section class="dock">
-  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="watch">Neuron watch</button><button data-tab="messages">Messages</button><button data-tab="arch">Architecture</button></nav>
+  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="watch">Neuron watch</button><button data-tab="messages">Messages</button><button data-tab="arch">Architecture</button><button data-tab="compare">Compare</button></nav>
   <div id="dock" class="dockbody"></div>
 </section>
 <script src="js/util.js"></script>
@@ -73,6 +90,8 @@
 <script src="js/inspector.js"></script>
 <script src="js/watch.js"></script>
 <script src="js/arch.js"></script>
+<script src="js/rail.js"></script>
+<script src="js/compare.js"></script>
 <script src="js/player.js"></script>
 <script src="js/main.js"></script>
 </body>

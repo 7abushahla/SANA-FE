@@ -258,6 +258,14 @@ class TestServer(unittest.TestCase):
         self.assertEqual((final['state'], final['update'], final['reason']),
                          ('stopped', 3, 'breakpoint b: update 3'))
 
+    def test_create_carries_breakpoints(self):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'breakpoints': [{'id': 'b1', 'kind': 'update', 'equals': 2}]})
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()['breakpoints'][0]['id'], 'b1')
+        self.assertEqual(self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'breakpoints': 'b1'}).status_code, 400)
+
     def test_delete(self):
         sid = self.create()['id']
         self.assertEqual(self.client.delete(f'/api/sessions/{sid}').status_code, 204)

@@ -148,3 +148,24 @@ tr.msg:hover, tr.msg.on { background: #fff3e6; }
 tr.change.removed td { color: #b8445a; }
 tr.change.added td { color: #16846f; }
 pre.yaml { max-height: 260px; overflow: auto; background: #f8fafb; border: 1px solid var(--line); padding: 6px; font-size: 10.5px; }
+.rail h3 { margin-top: 14px; }
+.bpform select, .bpform input { margin-top: 3px; }
+.rail button.plain { background: #e9eff3; color: var(--ink); width: auto; padding: 3px 8px; margin: 4px 4px 0 0; }
+.rail button.plain:disabled, .rail .row button:disabled { opacity: .45; }
+.rail .row button { width: auto; padding: 3px 8px; margin: 4px 4px 0 0; }
+.raillist { list-style: none; margin: 4px 0; padding: 0; font-size: 11px; }
+.raillist li { padding: 3px 4px; border-bottom: 1px solid #eef2f5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.raillist li.run { display: block; }
+.raillist li.run.current { background: #eef6f3; }
+.raillist li.watch { cursor: pointer; color: #2368a0; }
+.raillist li.bp.hit { background: #fff0d9; font-weight: 600; }
+.raillist .bpDel { margin-left: auto; border: 0; background: none; color: #b8445a; cursor: pointer; width: auto; padding: 0 4px; margin-top: 0; }
+.raillist input[type=checkbox] { display: inline; width: auto; margin: 0; }
+a.export { color: #2368a0; }
+.actions { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.actions .watchbtn { margin-top: 0; }
+.hl-in { fill: none; stroke: #2368a0; stroke-width: 3; }
+.hl-out { fill: none; stroke: #16846f; stroke-width: 3; }
+.cmpok { color: #16846f; font-weight: 700; margin: 6px 0; }
+.cmpbad { color: #b8445a; font-weight: 700; margin: 6px 0; }
+.cmpchart { width: 100%; max-width: 620px; height: auto; display: block; }

@@ -6,9 +6,10 @@
     workloads: [], session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
     renderKey: null, alive: true, view: { mode: 'chip', level: 'chip', tile: null, core: null },
     details: {}, detailVersion: 0, watches: [],
+    breakpoints: [], hitId: null, runs: [], applied: {}, pending: {},
   };
 
-  const chip = new S.Chip($('chip'), select, zoomTo);
+  const chip = new S.Chip($('chip'), select, zoomTo, { onDrag: dragCore });
   const mini = new S.Chip($('minimap'), null, null, { mini: true });
   const zoom = new S.Zoom($('zoom'), { openCore: openCore, selectNeuron: (key) => select({ kind: 'neuron', key: key }) });
   const player = new S.Player(frame);
@@ -26,8 +27,77 @@
     player.dirty = true;
   }
 
+  /* ---- debugger rail: breakpoints, watches, placement edits, saved runs ---- */
+  function renderRail() {
+    S.rail.renderBreakpoints($('bpList'), app.breakpoints, app.hitId, { toggle: toggleBreakpoint, remove: removeBreakpoint });
+    S.rail.renderWatches($('watchList'), app.watches, (key) => select({ kind: 'neuron', key: key }));
+    S.rail.renderEdits($('editRail'), app.pending, app.applied, {
+      apply: () => startSession(app.pending),
+      discard: () => { app.pending = Object.assign({}, app.applied); renderRail(); },
+      reset: () => { app.pending = {}; renderRail(); },
+    });
+    S.rail.renderRuns($('runsRail'), app.runs, app.session && app.session.run);
+  }
+
+  async function saveBreakpoints(specs) {
+    if (!app.session) return;
+    $('formError').textContent = '';
+    try {
+      const reply = await S.api.setBreakpoints(app.session.id, specs);
+      app.breakpoints = reply.breakpoints;
+    } catch (error) {
+      $('formError').textContent = error.message;
+    }
+    renderRail();
+  }
+
+  function addBreakpoint(spec) {
+    const used = app.breakpoints.map((b) => Number(b.id.slice(1)) || 0);
+    spec.id = 'b' + (Math.max(0, ...used) + 1);
+    saveBreakpoints(app.breakpoints.concat([spec]));
+  }
+
+  function toggleBreakpoint(id, enabled) {
+    saveBreakpoints(app.breakpoints.map((b) => (b.id === id ? Object.assign({}, b, { enabled: enabled }) : b)));
+  }
+
+  function removeBreakpoint(id) {
+    if (app.hitId === id) app.hitId = null;
+    saveBreakpoints(app.breakpoints.filter((b) => b.id !== id));
+  }
+
+  async function refreshRuns() {
+    try {
+      app.runs = await S.api.runs();
+    } catch (error) {
+      app.runs = [];
+    }
+    renderRail();
+    if (app.tab === 'compare') redraw();
+  }
+
+  /* Swap the contents of two displayed cores. The core map is kept relative
+     to the workload's own placement: original core -> displayed core. */
+  function dragCore(from, to) {
+    const map = Object.assign({}, app.pending);
+    const origin = (shown) => {
+      const moved = Object.keys(map).find((key) => map[key] === shown);
+      if (moved !== undefined) return moved;
+      return map[shown] === undefined ? shown : null;  // null: nothing is shown there
+    };
+    const a = origin(from);
+    const b = origin(to);
+    if (a === null) return;
+    map[a] = to;
+    if (b !== null && b !== a) map[b] = from;
+    for (const key of Object.keys(map)) if (map[key] === key) delete map[key];
+    app.pending = map;
+    renderRail();
+  }
+
   /* ---- selection ---- */
   function select(selection) {
+    chip.highlight = null;
     app.selection = selection;
     chip.selected = selection.kind === 'core' ? selection.key : null;
     chip.route = selection.kind === 'message' ? selection.mid : null;
@@ -54,11 +124,23 @@
   function addWatch(key) {
     if (app.watches.indexOf(key) < 0) app.watches.push(key);
     loadDetail(key);
+    renderRail();
     redraw();
   }
 
   function removeWatch(key) {
     app.watches = app.watches.filter((k) => k !== key);
+    renderRail();
+    redraw();
+  }
+
+  /* Outline the cores this neuron hears from (blue) and talks to (green). */
+  function highlightConnections(key) {
+    const detail = app.details[key];
+    if (!detail || detail.error) return;
+    const cores = (edges) => Array.from(new Set(edges.map((e) => e.core)));
+    setView({ level: 'chip' });
+    chip.highlight = { in: cores(detail.fan_in), out: cores(detail.fan_out) };
     redraw();
   }
 
@@ -164,6 +246,11 @@
     S.inspector.render($('insTitle'), $('inspector'), sel, record, app.session, sel.kind === 'neuron' ? app.details[sel.key] : null);
     const watch = $('btnWatch');
     if (watch) watch.addEventListener('click', () => addWatch(sel.key));
+    const breakFire = $('btnBreakFire');
+    if (breakFire) breakFire.addEventListener('click', () => addBreakpoint({ kind: 'neuron_fires', neuron: sel.key }));
+    const highlight = $('btnHighlight');
+    if (highlight) highlight.addEventListener('click', () => highlightConnections(sel.key));
+    if (app.tab === 'compare') S.compare.render($('dock'), app.runs, app.session && app.session.run);
     $('uNum').textContent = player.records.length;
     const scrub = $('scrub');
     scrub.max = Math.max(1, player.records.length);
@@ -184,6 +271,10 @@
 
   function setState(info) {
     app.alive = info.alive !== false;
+    const hit = info.state === 'stopped' && /^breakpoint ([^:]+):/.exec(info.reason || '');
+    const hitId = hit ? hit[1] : null;
+    if (hitId !== app.hitId) { app.hitId = hitId; renderRail(); }
+    if (['finished', 'stopped', 'paused'].indexOf(info.state) >= 0) refreshRuns();
     const node = $('state');
     node.textContent = describeState(info);
     node.className = 'state ' + info.state;
@@ -227,6 +318,13 @@
     setState(typeof ready.state === 'object' ? ready.state : { state: ready.state, horizon: ready.horizon });
     const dock = $('dock');
     delete dock.dataset.session;
+    delete dock.dataset.compare;
+    app.breakpoints = ready.breakpoints || [];
+    app.applied = Object.assign({}, ready.core_map || {});
+    app.pending = Object.assign({}, app.applied);
+    app.hitId = null;
+    renderRail();
+    refreshRuns();
     for (const key of app.watches) loadDetail(key);
     setView(same ? app.view : { level: 'chip' });
   }
@@ -257,7 +355,13 @@
     }
   }
 
-  async function start() {
+  /* Start keeps the current placement edits while the workload is unchanged. */
+  function start() {
+    const same = app.session && app.session.workload === $('workload').value;
+    return startSession(same ? app.applied : {});
+  }
+
+  async function startSession(coreMap) {
     $('formError').textContent = '';
     const button = $('btnStart');
     const label = button.textContent;
@@ -266,6 +370,8 @@
     const body = { workload: $('workload').value, parameters: S.params.read($('params')) };
     const horizon = $('horizon').value.trim();
     if (horizon) body.horizon = /^\d+$/.test(horizon) ? Number(horizon) : horizon;
+    if (coreMap && Object.keys(coreMap).length) body.core_map = coreMap;
+    if (app.breakpoints.length) body.breakpoints = app.breakpoints;
     try {
       const created = await S.api.create(body);
       const previous = app.session;
@@ -365,8 +471,11 @@
       const dock = $('dock');
       dock.innerHTML = '';
       delete dock.dataset.session;
+      delete dock.dataset.compare;
       redraw();
     });
   }
+  S.rail.bindBreakpointForm($('bpForm'), addBreakpoint);
+  renderRail();
   init();
 })();

@@ -6,7 +6,12 @@
  * Run from the SANA-FE directory. Exits nonzero on failure.
  */
 const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { JSDOM } = require('jsdom');
+
+const STORE = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-smoke-runs-'));
 
 const PORT = 8800 + Math.floor(Math.random() * 100);
 const BASE = 'http://127.0.0.1:' + PORT + '/';
@@ -24,7 +29,7 @@ async function waitFor(check, what, timeout = 120000) {
 
 (async () => {
   const server = spawn('.venv/bin/python', ['-m', 'sanafe.studio', '--port', String(PORT), '--path', 'tests/python',
-    '--workload', 'test-chain=studio_helpers:ChainWorkload'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    '--workload', 'test-chain=studio_helpers:ChainWorkload', '--store-dir', STORE], { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   server.stdout.on('data', (d) => { log += d; });
   server.stderr.on('data', (d) => { log += d; });
@@ -112,6 +117,9 @@ async function waitFor(check, what, timeout = 120000) {
     click(document.querySelector('#zoom .ncell[data-neuron="layer_1.2"]'));
     await waitFor(() => /neuron layer_1\.2/.test(text('insTitle')) && /fan-in8\n/.test(text("inspector")),
       'neuron inspector').catch((e) => { throw new Error(e.message + ': ' + text('insTitle') + ' / ' + text('inspector').slice(0, 300)); });
+    $('btnHighlight').click();
+    await waitFor(() => shown('chip') && document.querySelector('#chip rect.hl-in[data-core="0.0"]') &&
+      document.querySelector('#chip rect.hl-out[data-core="31.0"]'), 'connections highlighted on the chip');
     $('btnWatch').click();
     document.querySelector('#tabs button[data-tab="watch"]').click();
     await waitFor(() => document.querySelectorAll('#dock svg.watchplot').length === 1, 'one watch plot');
@@ -133,6 +141,64 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => document.querySelectorAll('#dock tr.change').length > 0, 'architecture diff rows');
     if (!/loihi2_candidate/.test($('archText').textContent)) throw new Error('YAML text missing');
     if (text('refPill') !== 'reference: none') throw new Error('reference pill: ' + text('refPill'));
+
+    // Stage 4: breakpoints, neuron actions, placement drag, saved runs, compare, export.
+    const sid0 = /#session=(\w+)/.exec(dom.window.location.hash)[1];
+    const earlier = (await (await fetch(BASE + 'api/sessions/' + sid0 + '/updates?from=0')).json()).updates;
+    const firesAt = earlier.find((r) => r.fired.some((f) => f[0] === 'layer_2' && f[1] === 0)).update;
+    $('btnReset').click();
+    await waitFor(() => text('uNum') === '0' && text('state') === 'idle', 'reset to update 0');
+    $('bpKind').value = 'update';
+    $('bpKind').dispatchEvent(new Event('change'));
+    $('bpValue').value = '3';
+    $('bpAdd').click();
+    await waitFor(() => document.querySelectorAll('#bpList li.bp').length === 1, 'breakpoint listed');
+    $('btnRun').click();
+    await waitFor(() => /^stopped: breakpoint .*update 3$/.test(text('state')) && text('uNum') === '3', 'stopped at update 3');
+    if (!document.querySelector('#bpList li.bp.hit')) throw new Error('the hit breakpoint is not highlighted');
+    click(document.querySelector('#bpList li.bp button.bpDel'));
+    await waitFor(() => document.querySelectorAll('#bpList li.bp').length === 0, 'breakpoint removed');
+    $('btnRun').click();
+    await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'full run after removing it');
+    $('btnReset').click();
+    await waitFor(() => text('uNum') === '0' && text('state') === 'idle', 'second reset');
+    click($('mNet'));
+    await waitFor(() => document.querySelector('#network [data-core="31.0"]'), 'network chips');
+    click(document.querySelector('#network [data-core="31.0"]'));
+    await waitFor(() => document.querySelector('#zoom .ncell[data-neuron="layer_2.0"]'), 'IF2 core view');
+    click(document.querySelector('#zoom .ncell[data-neuron="layer_2.0"]'));
+    await waitFor(() => $('btnBreakFire'), 'neuron actions');
+    $('btnBreakFire').click();
+    await waitFor(() => /layer_2\.0 fires/.test($('bpList').textContent), 'fire breakpoint listed');
+    $('btnRun').click();
+    await waitFor(() => /^stopped: breakpoint .*layer_2\.0 fires$/.test(text('state')), 'stopped when layer_2.0 fired');
+    const stoppedAt = (await (await fetch(BASE + 'api/sessions/' + sid0)).json()).update;
+    if (stoppedAt !== firesAt) throw new Error('fire breakpoint stopped at ' + stoppedAt + ', expected ' + firesAt);
+    await waitFor(() => text('uNum') === String(firesAt), 'page shows the stopping update');
+    click(document.querySelector('#bpList li.bp button.bpDel'));
+    await waitFor(() => document.querySelectorAll('#bpList li.bp').length === 0, 'fire breakpoint removed');
+
+    click($('mChip'));
+    await waitFor(() => shown('chip'), 'chip view for dragging');
+    const at = (key) => document.querySelector('#chip rect.core[data-core="' + key + '"]');
+    at('16.0').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    at('5.1').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await waitFor(() => /16\.0/.test(text('editRail')) && /5\.1/.test(text('editRail')) && !$('btnApplyEdits').disabled, 'pending placement edit');
+    $('btnApplyEdits').click();
+    await waitFor(() => at('5.1') && /used/.test(at('5.1').getAttribute('class')) &&
+      /empty/.test(at('16.0').getAttribute('class')) && text('uHorizon') === '6', 'rebuilt with the swap');
+    $('btnRun').click();
+    await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'edited placement runs');
+    await waitFor(() => document.querySelectorAll('#runsRail li.run').length >= 4, 'saved runs listed');
+    document.querySelector('#tabs button[data-tab="compare"]').click();
+    await waitFor(() => $('btnCompare'), 'compare controls');
+    $('btnCompare').click();
+    await waitFor(() => $('cmpSummary') && /spike trains identical/.test(text('cmpSummary')), 'placements compare identical')
+      .catch((e) => { throw new Error(e.message + ': ' + ($('cmpSummary') ? text('cmpSummary') : 'no summary; result: ' + ($('cmpResult') ? text('cmpResult') : 'none') + '; dock: ' + text('dock').slice(0, 200))); });
+    if (document.querySelectorAll('#dock tr.cmprow').length !== 6) throw new Error('compare table should have 6 rows');
+    const link = document.querySelector('#runsRail a.export[data-kind="raster"]');
+    const exported = await fetch(new URL(link.getAttribute('href'), BASE));
+    if (exported.status !== 200 || !/svg/.test(await exported.text())) throw new Error('raster export failed');
 
     $('params').querySelector('[data-param="steps"]').value = '3000';
     $('btnStart').click();
@@ -175,7 +241,7 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => q('state').textContent === 'paused', 'paused after reload');
     await waitFor(async () => Number(q('uNum').textContent) === (await serverUpdate()), 'no missing or duplicate updates');
     if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, pause, X mark, reload resume)');
+    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume)');
     page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);
@@ -185,6 +251,9 @@ async function waitFor(check, what, timeout = 120000) {
     // The page's WebSocket reconnect timer would keep Node alive, so exit
     // explicitly once the server has had a moment to shut its workers down.
     server.kill('SIGTERM');
-    setTimeout(() => process.exit(process.exitCode || 0), 1500);
+    setTimeout(() => {
+      fs.rmSync(STORE, { recursive: true, force: true });
+      process.exit(process.exitCode || 0);
+    }, 1500);
   }
 })();

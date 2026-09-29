@@ -47,6 +47,9 @@
     this.onSelect = onSelect || function () {};
     this.onZoom = onZoom || function () {};
     this.mini = !!(options && options.mini);
+    this.onDrag = (options && options.onDrag) || null;
+    this.dragFrom = null;
+    this.highlight = null;  // { in: [cores], out: [cores] }
     this.selected = null;
     this.focusTile = null;
     this.route = null;
@@ -86,6 +89,17 @@
         if (core) this.onSelect({ kind: 'core', key: core });
         else if (tile !== null && tile !== undefined) this.onZoom({ tile: Number(tile) });
         else this.onSelect({ kind: 'chip' });
+      });
+      // Press on a used core and release on another core: a placement swap.
+      svg.addEventListener('mousedown', (event) => {
+        const target = event.target;
+        const cls = target.getAttribute && target.getAttribute('class');
+        this.dragFrom = cls === 'core used' ? target.getAttribute('data-core') : null;
+      });
+      svg.addEventListener('mouseup', (event) => {
+        const to = event.target.getAttribute && event.target.getAttribute('data-core');
+        if (this.onDrag && this.dragFrom && to && to !== this.dragFrom) this.onDrag(this.dragFrom, to);
+        this.dragFrom = null;
       });
       svg.addEventListener('dblclick', (event) => {
         const core = event.target.getAttribute && event.target.getAttribute('data-core');
@@ -201,6 +215,14 @@
         S.svg(overlay, 'polyline', { points: points.map((p) => p.join(',')).join(' '), class: 'route' });
         const end = points[points.length - 1];
         S.svg(overlay, 'text', { x: end[0] + 14, y: end[1] - 12, class: 'routemark' }, 'X route');
+      }
+    }
+    if (this.highlight) {
+      for (const [side, keys] of [['in', this.highlight.in], ['out', this.highlight.out]]) {
+        for (const key of keys) {
+          const at = this.corePos[key];
+          if (at) S.svg(overlay, 'rect', { x: at[0] - 15, y: at[1] - 15, width: 30, height: 30, rx: 6, class: 'hl-' + side, 'data-core': key });
+        }
       }
     }
     if (this.focusTile !== null && this.tileCenter[this.focusTile]) {

@@ -83,8 +83,16 @@ def run_worker(conn, ref, parameters, options):
         send({'type': 'error', 'message': f'{type(error).__name__}: {error}'})
         conn.close()
         return
+    carried = None
+    if options.get('breakpoints'):
+        try:  # a rebuild carries the previous session's breakpoints
+            session.set_breakpoints(options['breakpoints'])
+        except ValueError as error:
+            carried = f'breakpoints were not carried over: {error}'
     send({'type': 'ready', **session.describe(),
           'architecture_text': session.architecture_text})
+    if carried:
+        send({'type': 'error', 'message': carried})
 
     commands = queue.Queue()
     control = threading.Lock()

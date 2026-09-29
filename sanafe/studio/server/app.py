@@ -228,7 +228,10 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         horizon = body.get('horizon')
         trace_level = body.get('trace_level', 'full')
         core_map = body.get('core_map') or None
+        carried = body.get('breakpoints') or None
         try:
+            if carried is not None and not isinstance(carried, list):
+                raise ValueError('breakpoints: expected a list')
             if not isinstance(parameters, dict):
                 raise ValueError('parameters: expected an object')
             if core_map is not None and (not isinstance(core_map, dict) or not all(
@@ -244,6 +247,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             return _json({'error': str(error)}, 400)
         session_id = uuid.uuid4().hex[:12]
         options = {'trace_level': trace_level, 'horizon': horizon, 'core_map': core_map,
+                   'breakpoints': carried,
                    'store_dir': str(manager.store_dir) if manager.store_dir else None}
         session = ManagedSession(manager, session_id, name, manager.registry[name],
                                  parameters, options)

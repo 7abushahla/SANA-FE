@@ -30,6 +30,9 @@
       return request('GET', '/api/sessions/' + id + '/neurons/' + encodeURIComponent(key.slice(0, cut)) + '/' + key.slice(cut + 1));
     },
     architectures: () => request('GET', '/api/architectures'),
+    setBreakpoints: (id, specs) => request('PUT', '/api/sessions/' + id + '/breakpoints', { breakpoints: specs }),
+    runs: () => request('GET', '/api/runs'),
+    compare: (a, b) => request('POST', '/api/compare', { a: a, b: b }),
     architecture: (id, baseline) => request('GET', '/api/sessions/' + id + '/architecture' +
       (baseline ? '?baseline=' + encodeURIComponent(baseline) : '')),
 

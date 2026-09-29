@@ -111,16 +111,20 @@
       if (!detail) return [title, 'Loading…'];
       if (detail.error) return [title, S.escape(detail.error)];
       const [group, offset] = [detail.group, detail.offset];
-      const v = record.potentials[key];
-      const fired = record.fired.some((f) => f[0] === group && f[1] === offset);
       const items = [['core', detail.core, 'R']];
       for (const name in detail.attributes) {
         const value = detail.attributes[name];
         items.push(['  ' + name, Array.isArray(value) ? value.slice(0, 6).join(', ') + (value.length > 6 ? ' …' : '') : value, 'R']);
       }
-      items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
-      items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
-      if (detail.reference) {
+      if (!record) {
+        items.push(['this update', 'no update yet', '']);
+      } else {
+        const v = record.potentials[key];
+        const fired = record.fired.some((f) => f[0] === group && f[1] === offset);
+        items.push(['membrane after update ' + record.update, v === undefined ? 'not logged' : v, v === undefined ? '' : record.provenance.potentials]);
+        items.push(['fired this update', detail.log_spikes ? (fired ? 'yes' : 'no') : 'not logged', detail.log_spikes ? record.provenance.fired : '']);
+      }
+      if (detail.reference && record) {
         // Reference executions are not SANA-FE records: they carry their own mark.
         for (const name in detail.reference) {
           const value = detail.reference[name].potential[record.update - 1];
@@ -130,7 +134,10 @@
       }
       items.push(['fan-in', edges(detail.fan_in, detail.fan_in_total), 'R']);
       items.push(['fan-out', edges(detail.fan_out, detail.fan_out_total), 'R']);
-      return [title, rows(items) + '<button id="btnWatch" class="watchbtn">＋ Watch this neuron</button>'];
+      const actions = '<div class="actions"><button id="btnWatch" class="watchbtn">＋ Watch this neuron</button>' +
+        (detail.log_spikes ? '<button id="btnBreakFire" class="watchbtn">⏸ Break when it fires</button>' : '') +
+        '<button id="btnHighlight" class="watchbtn">◎ Highlight connections</button></div>';
+      return [title, rows(items) + actions];
     },
 
     message(record, session, selection) {
@@ -155,7 +162,7 @@
     referenceText: referenceText,
 
     render(titleNode, box, selection, record, session, detail) {
-      if (!session || !record) {
+      if (!session || (!record && selection.kind !== 'neuron')) {
         titleNode.textContent = 'Inspector';
         box.textContent = session ? 'No update yet.' : 'Start a session, then click a core.';
         return;
