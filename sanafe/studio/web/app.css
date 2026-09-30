@@ -146,12 +146,13 @@ td:first-child, th:first-child { text-align: left; }
 .ncell i { position: absolute; left: 0; right: 0; bottom: 0; background: #7fb0d8; }
 .ncell.fired { border-color: #db493b; box-shadow: inset 0 0 0 2px #db493b; }
 .ncell.unlogged { background: repeating-linear-gradient(45deg, #fff, #fff 3px, #eef2f5 3px, #eef2f5 6px); }
-.netview { width: 100%; height: auto; max-height: 62vh; }
+.netview { width: 100%; height: auto; }  /* rows of full-size boxes; the page scrolls */
 .group { cursor: pointer; }
 .groupname { font-size: 14px; font-weight: 700; fill: #fff; }
 .groupmeta { font-size: 11px; fill: #fff; }
 .edge { stroke: #607888; stroke-width: 2; fill: none; }
 .edgelabel { font-size: 10px; fill: #40596a; }
+.linklabel { font-size: 10px; fill: #2368a0; }
 .corechip { fill: #fff; cursor: pointer; stroke-width: 1.2; }
 .corechiptext { font-size: 8.5px; }
 .kv span { white-space: pre-line; overflow-wrap: anywhere; }

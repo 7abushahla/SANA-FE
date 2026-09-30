@@ -213,9 +213,11 @@ drive it.
   membrane divided by its threshold. A red cell fired in this update. Cores
   with more than 1,024 neurons show a heatmap. The breadcrumb and the
   mini-map lead back to the chip.
-- **Network mode.** Groups in dependency order with their synapse counts,
-  the host operations, and the cores each group is mapped to. Clicking a
-  core opens it.
+- **Network mode.** Groups top to bottom in dependency order, one per row,
+  with the host operations above and below. Consecutive groups are joined
+  by an arrow; skip connections (ResNet shortcuts) arc through lanes on the
+  left, labelled outside the lanes. Each box keeps its full name, and the
+  cores it is mapped to sit beside it. Clicking a core opens it.
 - **Inspector.** Numbers for the chip, a tile, a core, a group, a neuron, or
   a message, each with its R, D, or X mark. A neuron shows its attributes,
   fan-in and fan-out, and the reference values at this update. On the
