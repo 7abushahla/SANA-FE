@@ -63,7 +63,13 @@
      hidden SVG text in the page font measures it; where text is not laid out
      (headless tests) an estimate stands in. */
   let measure = null;
+  const measured = new Map();  // each measurement forces a layout: measure a label once
   S.textWidth = function (text, size) {
+    const key = size + '|' + text;
+    if (!measured.has(key)) measured.set(key, S.measureText(String(text), size));
+    return measured.get(key);
+  };
+  S.measureText = function (text, size) {
     if (measure === null) {
       const ns = 'http://www.w3.org/2000/svg';
       const svg = document.createElementNS(ns, 'svg');

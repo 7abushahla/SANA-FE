@@ -63,6 +63,10 @@
       const columns = byUpdates ? Array.from({ length: horizon }, (_, i) => i + 1) : Array.from({ length: spec.T }, (_, t) => t);
       const scroll = S.html(grid, 'div', { class: 'pscroll' });
       const table = S.html(scroll, 'table', { class: 'pgrid' });
+      // The label column fits the longest site name; the time columns share the rest.
+      const labelWidth = Math.ceil(Math.max(90, ...spec.rows.map((r) => S.textWidth(r.group, 11)), S.textWidth('step time / barrier', 11))) + 14;
+      const cols = S.html(table, 'colgroup', {});
+      S.html(cols, 'col', {}).style.width = labelWidth + 'px';
       const head = S.html(table, 'tr', {});
       S.html(head, 'th', {}, '');
       for (const c of columns) {

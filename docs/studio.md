@@ -218,6 +218,14 @@ drive it.
   by an arrow; skip connections (ResNet shortcuts) arc through lanes on the
   left, labelled outside the lanes. Each box keeps its full name, and the
   cores it is mapped to sit beside it. Clicking a core opens it.
+- **Pipeline.** For workloads that declare one (both QCFS workloads): the
+  input image and the host current it becomes, a space-time grid of every
+  IF site's firing rate (D) on either hardware updates (default; gated
+  cells outside each site's validity window are hatched, and a strip shows
+  each update's step time R and barrier share D) or algorithm timesteps (the
+  same run re-indexed, D), and the host readout accumulated over the output
+  window with the reference check. Both bundled checkpoints are untrained
+  fixtures; the view says so and the class it shows is not a result.
 - **Inspector.** Numbers for the chip, a tile, a core, a group, a neuron, or
   a message, each with its R, D, or X mark. A neuron shows its attributes,
   fan-in and fan-out, and the reference values at this update. On the
@@ -329,6 +337,11 @@ headless Chrome for every view and tab of both QCFS workloads.
     still animating (the server has finished): the frame holds. Press
     Stop: the state no longer offers Resume. Reset, Run, and press Stop
     mid-compute: the state reads "stopped at update N".
+28. Start `qcfs-resnet20` (T = 2), run to horizon, open Pipeline. Nineteen
+    rows show a diagonal wavefront over 20 columns with hatched gated cells;
+    the output panel shows class scores, a prediction, and "match". Switch
+    to algorithm timesteps: two aligned columns. Click a cell: the inspector
+    names the site and update, and the scrubber moves there.
 
 ## Coverage of the Streamlit workbench
 

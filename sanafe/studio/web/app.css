@@ -211,15 +211,15 @@ a.export { color: #2368a0; }
 .pipeline .paxis button { font-size: 11px; padding: 2px 9px; border: 1px solid #9fb3c0; background: #fff; border-radius: 4px; margin-right: 4px; cursor: pointer; }
 .pipeline .paxis button.on { background: #1d3a50; color: #fff; }
 .pipeline .pscroll { overflow-x: auto; }
-.pipeline table.pgrid { border-collapse: separate; border-spacing: 2px; }
+.pipeline table.pgrid { border-collapse: separate; border-spacing: 2px; width: 100%; max-width: 900px; table-layout: fixed; }
 .pipeline table.pgrid th { font-weight: 500; font-size: 11px; text-align: right; padding-right: 6px; white-space: nowrap; }
-.pipeline table.pgrid th.pu { text-align: center; font-size: 10px; color: var(--muted); padding: 0; }
+.pipeline table.pgrid th.pu { text-align: center; font-size: 9.5px; color: var(--muted); padding: 0; overflow: hidden; }
 .pipeline table.pgrid th.pu.play { color: #c9473a; font-weight: 700; }
-.pipeline td.pcell { width: 20px; min-width: 20px; height: 14px; border-radius: 2px; cursor: pointer; background: #f4f6f8; }
+.pipeline td.pcell { height: 14px; border-radius: 2px; cursor: pointer; background: #f4f6f8; }
 .pipeline td.pcell.gated { background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e3e8ec 3px, #e3e8ec 6px); }
 .pipeline td.pcell.play { outline: 2px solid #c9473a; outline-offset: -1px; }
 .pipeline td.pcell.future { background: #fff; border: 1px dashed #d5dee5; }
-.pipeline .pbar { height: 34px; width: 20px; display: flex; flex-direction: column-reverse; background: #f4f6f8; border-radius: 2px; overflow: hidden; }
+.pipeline .pbar { height: 34px; width: 100%; display: flex; flex-direction: column-reverse; background: #f4f6f8; border-radius: 2px; overflow: hidden; }
 .pipeline .pbar i { background: #607888; } .pipeline .pbar b { background: #c9473a; }
 .pipeline .pref { text-align: center; font-size: 10px; } .pipeline .pref.match { color: #16846f; } .pipeline .pref.mismatch { color: #c9473a; }
 .pipeline .lrow { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
