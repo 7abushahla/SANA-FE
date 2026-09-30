@@ -159,12 +159,15 @@ class TestSession(unittest.TestCase):
             {'name': 'layer_2', 'size': 2, 'cores': {'31.0': 2}}])
         self.assertEqual(summary['occupied'], ['0.0', '16.0', '31.0'])
         self.assertEqual(session.badge(),
-                         'Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · energy inherited from Loihi 1 · not hardware')
+                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                         'energy inherited from Loihi 1 · not hardware')
         described = session.describe()
         self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
                                           'metadata', 'state', 'update', 'core_map',
                                           'breakpoints', 'breakpoint_warnings', 'run',
-                                          'trace_level', 'watched'})
+                                          'trace_level', 'watched', 'platform'})
+        self.assertEqual(described['platform']['id'], 'loihi2')
+        self.assertEqual(described['manifest']['platform'], 'loihi2')
         self.assertEqual((described['state'], described['update'], described['horizon']),
                          ('idle', 0, 6))
         import json
@@ -220,3 +223,33 @@ class TestSession(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSessionPlatform(unittest.TestCase):
+    FILES = {'arch_yaml': str(REPO / 'arch' / 'example_chip.yaml'),
+             'net_file': str(REPO / 'sanafe' / 'examples' / 'example_snn.yaml')}
+
+    def test_default_is_the_first_listed_platform(self):
+        session = Session(ChainWorkload(), {}, store_dir=None)
+        try:
+            self.assertEqual(session.platform, 'loihi2')
+        finally:
+            session.close()
+
+    def test_unlisted_platform_is_rejected_with_the_allowed_ids(self):
+        with self.assertRaisesRegex(ValueError, r"platform 'truenorth'.*loihi2"):
+            Session(ChainWorkload(), {}, platform='truenorth', store_dir=None)
+
+    def test_file_workload_has_no_platform_and_keeps_its_badge(self):
+        session = Session(SanafeFiles(), dict(self.FILES), store_dir=None)
+        try:
+            self.assertIsNone(session.platform)
+            self.assertIsNone(session.describe()['platform'])
+            self.assertEqual(session.badge(),
+                             'example_chip.yaml · modeled costs from this file · not measurements')
+        finally:
+            session.close()
+
+    def test_platform_given_to_a_file_workload_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'does not take a platform'):
+            Session(SanafeFiles(), dict(self.FILES), platform='loihi', store_dir=None)

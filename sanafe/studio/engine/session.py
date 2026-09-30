@@ -9,6 +9,7 @@ import uuid
 
 import numpy as np
 import sanafe
+from sanafe import platforms as P
 from sanafe.loihi2 import (architecture_fingerprint, load_loihi2_candidate,
                            validate_core_budgets)
 
@@ -61,7 +62,7 @@ def _jsonable(value):
 
 
 class Session:
-    def __init__(self, workload, parameters=None, *, trace_level=None,
+    def __init__(self, workload, parameters=None, *, platform=None, trace_level=None,
                  horizon=None, store_dir=None, core_map=None):
         if trace_level is None:
             trace_level = getattr(workload, 'default_trace_level', 'full')
@@ -72,6 +73,7 @@ class Session:
             ParameterSpec('horizon', 'int', minimum=1).validate(horizon)
         self.workload = workload
         self.parameters = resolve_parameters(workload, parameters or {})
+        self.platform = self._choose_platform(workload, platform)
         self.trace_level = trace_level
         self._horizon_override = horizon
         if core_map is not None and not isinstance(core_map, dict):
@@ -88,12 +90,33 @@ class Session:
             self.close()
             raise
 
+    @staticmethod
+    def _choose_platform(workload, platform):
+        """The platform id this session runs on, or None for a workload that
+        brings its own architecture file."""
+        listed = tuple(getattr(workload, 'platforms', ()) or ())
+        if not listed:
+            if platform is not None:
+                raise ValueError(f'{workload.name} does not take a platform: its architecture '
+                                 'comes from the workload itself')
+            return None
+        if platform is None:
+            return listed[0]
+        if platform not in listed:
+            raise ValueError(f'platform {platform!r} is not supported by {workload.name}; '
+                             f'choose one of {", ".join(listed)}')
+        P.get(platform)  # unknown ids raise KeyError naming the catalog
+        return platform
+
     def _build(self):
         self._pause.clear()
         if self._scratch is not None:
             self._scratch.cleanup()
         self._scratch = tempfile.TemporaryDirectory(prefix='sanafe-studio-')
-        self.built = self.workload.build(dict(self.parameters))
+        build_params = dict(self.parameters)
+        if self.platform is not None:
+            build_params['platform'] = self.platform
+        self.built = self.workload.build(build_params)
         self.horizon = self._horizon_override or self.built.horizon
         # The text simulated, kept in case the file changes on disk later.
         self.architecture_text = Path(self.built.arch_yaml).read_text()
@@ -169,6 +192,7 @@ class Session:
         return {
             'workload': self.workload.name,
             'parameters': _jsonable(self.parameters),
+            'platform': self.platform,
             'architecture_yaml': str(self.built.arch_yaml),
             'architecture_sha256': architecture_fingerprint(self.built.arch),
             'simulated_architecture_sha256': architecture_fingerprint(self._sim_arch),
@@ -267,9 +291,8 @@ class Session:
 
     def badge(self):
         """The provenance line every view must show for this architecture."""
-        if self._candidate:
-            return ('Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
-                    'energy inherited from Loihi 1 · not hardware')
+        if self.platform is not None:
+            return P.badge(P.get(self.platform))
         return (f'{Path(self.built.arch_yaml).name} · modeled costs from this file · '
                 'not measurements')
 
@@ -277,6 +300,7 @@ class Session:
         """Summary a viewer needs before the first update."""
         return {'layout': self.layout.to_dict(), 'network': self.network_summary(),
                 'horizon': self.horizon, 'badge': self.badge(),
+                'platform': P.describe(P.get(self.platform)) if self.platform else None,
                 'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
                 'state': self.state.value, 'update': self.update,
                 'core_map': dict(self.core_map),
