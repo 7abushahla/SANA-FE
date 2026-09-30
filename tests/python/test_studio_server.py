@@ -95,6 +95,26 @@ class TestServer(unittest.TestCase):
             'workload': 'random-snn', 'platform': 7, 'parameters': {}})
         self.assertEqual(response.status_code, 400)
 
+    def test_a_broken_platform_card_is_reported_for_that_platform_only(self):
+        from unittest import mock
+        from sanafe import platforms as P
+        real = P.describe
+
+        def broken(platform):
+            if platform.id == 'truenorth':
+                raise ValueError("truenorth: cost attribute 'x' has no provenance entry")
+            return real(platform)
+
+        with mock.patch.object(P, 'describe', broken):
+            cards = {c['id']: c for c in self.client.get('/api/platforms').json()}
+            self.assertIn('no provenance entry', cards['truenorth']['error'])
+            self.assertEqual(cards['truenorth']['title'], 'IBM TrueNorth (functional)')
+            self.assertIn('costs', cards['loihi'])
+            response = self.client.post('/api/sessions', json={
+                'workload': 'random-snn', 'platform': 'truenorth', 'parameters': {}})
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('no provenance entry', response.json()['error'])
+
     def test_invalid_requests(self):
         bad = self.client.post('/api/sessions',
                                json={'workload': 'test-chain', 'parameters': {'steps': 0}})

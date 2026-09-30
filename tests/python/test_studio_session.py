@@ -261,6 +261,49 @@ class TestSessionPlatform(unittest.TestCase):
         with mock.patch.object(P, 'describe', side_effect=AssertionError('describe must not run')):
             session = Session(ChainWorkload(), {}, platform_card=card, store_dir=None)
             try:
-                self.assertEqual(session.describe()['platform'], card)
+                self.assertEqual(session.describe()['platform']['title'], 'supplied')
             finally:
                 session.close()
+
+    def test_own_architecture_workload_on_a_catalog_file_gets_that_badge_and_card(self):
+        class OwnFile(ChainWorkload):
+            platforms = ()
+        session = Session(OwnFile(), {}, store_dir=None)
+        try:
+            self.assertIsNone(session.platform)
+            self.assertEqual(session.badge(),
+                             'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                             'energy inherited from Loihi 1 · not hardware')
+            card = session.describe()['platform']
+            self.assertEqual((card['id'], card['selected'], card['architecture_matches']),
+                             ('loihi2', False, True))
+            self.assertIsNotNone(session.core_budgets)
+        finally:
+            session.close()
+
+    def test_modified_architecture_is_flagged_not_labeled_as_the_catalog_profile(self):
+        import tempfile
+        from pathlib import Path
+        from sanafe.studio.engine import BuiltWorkload
+        from studio_helpers import candidate_yaml, chain_network
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        modified = Path(scratch.name) / 'loihi2_modified.yaml'
+        modified.write_text(candidate_yaml().read_text().replace(
+            'energy_spike_out: 69.3e-12', 'energy_spike_out: 70.0e-12'))
+
+        class Modified(ChainWorkload):
+            def build(self, params):
+                arch = sanafe.load_arch(str(modified))
+                network = chain_network(arch, PLACEMENTS['far'], 6)
+                return BuiltWorkload(arch_yaml=modified, arch=arch, network=network, horizon=6)
+
+        session = Session(Modified(), {}, store_dir=None)
+        try:
+            self.assertEqual(session.platform, 'loihi2')
+            self.assertTrue(session.badge().startswith('Intel Loihi 2 candidate (modified architecture) · '))
+            self.assertIn('not the catalog profile', session.badge())
+            self.assertFalse(session.describe()['platform']['architecture_matches'])
+            self.assertIsNone(session.core_budgets)
+        finally:
+            session.close()

@@ -424,11 +424,14 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
 
     async def platforms(request):
         def cards():
-            return [P.describe(platform) for platform in P.registry()]
-        try:
-            return _json(await asyncio.to_thread(cards))
-        except ValueError as error:  # a cost attribute without provenance
-            return _json({'error': str(error)}, 500)
+            out = []
+            for platform in P.registry():
+                try:
+                    out.append(P.describe(platform))
+                except (KeyError, ValueError) as error:  # e.g. a cost without provenance
+                    out.append({'id': platform.id, 'title': platform.title, 'error': str(error)})
+            return out
+        return _json(await asyncio.to_thread(cards))
 
     async def architecture(request):
         session = lookup(request)

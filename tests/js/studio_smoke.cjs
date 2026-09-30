@@ -421,9 +421,9 @@ async function waitFor(check, what, timeout = 120000) {
     pdoc2.querySelector('#tabs button[data-tab="timeline"]').click();
     await sleep(300);
     if (!pdoc2.querySelector('#chip svg')) throw new Error('truenorth chip did not draw');
-    if (!/showing tiles/.test(pdoc2.querySelector('#chip').textContent)) throw new Error('large mesh window note missing');
+    if (!/Showing tiles/.test(pdoc2.querySelector('#chip').textContent)) throw new Error('large mesh window note missing');
     pdoc2.querySelector('#chip rect.core.used').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
-    await waitFor(() => /\(none\)/.test(q('inspector').textContent), 'inspector shows the provenance word "none"');
+    await waitFor(() => /R · none/.test(q('inspector').textContent), 'inspector shows the provenance word "none" after the mark');
     // Placement edits belong to one platform: an edit applied on Loihi 1 must
     // not be sent when the same workload is rebuilt on TrueNorth.
     q('platform').value = 'loihi';

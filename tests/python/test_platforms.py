@@ -170,3 +170,24 @@ class TestCatalogCost(unittest.TestCase):
         self.assertEqual(card['structure']['cores'], 128)
         soma = next(u for u in card['units'] if u['name'] == 'loihi_lif')
         self.assertIn('leak_decay', {a['name'] for a in soma['attributes']})
+
+
+class TestCatalogMatching(unittest.TestCase):
+    def test_input_placeholder_unit_is_not_labeled_fitted(self):
+        rows = {(r['unit'], r['attribute']): r for r in P.describe(P.get('loihi'))['costs']}
+        self.assertEqual(rows[('loihi_inputs', 'energy_access_neuron')]['status'], 'none')
+        self.assertEqual(rows[('loihi_lif', 'energy_access_neuron')]['status'], 'fitted')
+
+    def test_match_identifies_each_catalog_architecture_and_nothing_else(self):
+        for platform in P.registry():
+            with self.subTest(platform=platform.id):
+                self.assertEqual(P.match(sanafe.load_arch(str(platform.arch_yaml))), platform.id)
+        repo = Path(__file__).resolve().parents[2]
+        self.assertIsNone(P.match(sanafe.load_arch(str(repo / 'arch' / 'example_chip.yaml'))))
+        text = P.get('loihi2').arch_yaml.read_text().replace(
+            'energy_spike_out: 69.3e-12', 'energy_spike_out: 70.0e-12')
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / 'modified.yaml'
+            path.write_text(text)
+            self.assertIsNone(P.match(sanafe.load_arch(str(path))))

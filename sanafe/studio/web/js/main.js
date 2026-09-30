@@ -646,8 +646,10 @@
       S.html($('workload'), 'option', { value: workload.name }, workload.name);
     }
     const names = [...$('workload').options].map((o) => o.value);
-    $('workload').value = names.includes(keep) ? keep : (names.find((n) => n !== 'sanafe-files') || names[0] || '');
-    renderParams();
+    const next = names.includes(keep) ? keep : (names.find((n) => n !== 'sanafe-files') || names[0] || '');
+    $('workload').value = next;
+    // Keep what the user typed when the workload survives the platform change.
+    if (next !== keep || !$('params').children.length) renderParams();
   }
 
   function renderParams() {
@@ -674,10 +676,19 @@
         ? 'This Studio server was started before the platform catalog existed. Restart it to choose a platform; until then every workload runs on its own architecture.'
         : 'Platform catalog unavailable: ' + platforms.reason.message;
     }
-    $('platform').disabled = !app.platforms.length;
-    for (const platform of app.platforms) S.html($('platform'), 'option', { value: platform.id }, platform.title);
+    // A platform whose card failed stays listed, cannot be chosen, and says why.
+    const broken = app.platforms.filter((p) => p.error);
+    if (broken.length) $('formError').textContent = broken.map((p) => p.title + ' is unavailable: ' + p.error).join(' ');
+    app.platforms = app.platforms.filter((p) => !p.error).concat(broken);
+    $('platform').disabled = !app.platforms.some((p) => !p.error);
+    for (const platform of app.platforms) {
+      const option = S.html($('platform'), 'option', { value: platform.id }, platform.title + (platform.error ? ' (unavailable)' : ''));
+      if (platform.error) option.disabled = true;
+    }
+    const usable = app.platforms.filter((p) => !p.error).map((p) => p.id);
     const preferred = app.workloads.find((w) => w.name !== 'sanafe-files');
-    $('platform').value = preferred && preferred.platforms.length ? preferred.platforms[0] : (app.platforms[0] ? app.platforms[0].id : '');
+    const first = preferred ? preferred.platforms.find((id) => usable.includes(id)) : null;
+    $('platform').value = first || usable[0] || '';
     filterWorkloads();
     if (preferred && [...$('workload').options].some((o) => o.value === preferred.name)) { $('workload').value = preferred.name; renderParams(); }
     await resume();

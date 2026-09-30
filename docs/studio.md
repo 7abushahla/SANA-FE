@@ -248,7 +248,8 @@ drive it.
   Lava and SpikingJelly traces dashed when the workload provides them.
 - **Messages.** Filter by core or neuron. Clicking a message draws its
   reconstructed route (X) on the chip.
-- **Platform.** The card for the session's platform: title, vendor and
+- **Platform.** The card for the session's platform. Its first line says
+  nothing on it is a hardware measurement. Then come the title, vendor and
   generation, the execution rule, a summary, the structure read from the
   loaded architecture (mesh, tiles, cores, neurons per core, buffer
   position, synchronization), the units of the reference core with the
@@ -256,11 +257,17 @@ drive it.
   every coefficient's value, status and source, the validation statement,
   the not-modeled list, and references. Status words use the mark colors:
   `fitted` and `documented` in green, `scaled` and `inherited` in orange,
-  `none` in gray. The same words follow modeled times and energies in the
-  inspector, as "(fitted)", "(scaled)", "(inherited)", "(documented)" or
-  "(none)". The Architecture view (the loaded YAML and its differences
-  from a bundled baseline) sits under the card. Nothing on the card is a
-  hardware measurement.
+  `none` in gray. In the inspector every modeled time and energy shows the
+  platform's word after its mark, as "R · fitted", "R · scaled",
+  "R · inherited", "R · documented" or "R · none". A workload that
+  declares a platform but simulates a modified architecture is badged
+  "(modified architecture)" and its card says the costs table describes
+  the catalog profile, not what ran. A workload that brings its own file
+  gets the card and badge of the catalog platform that file matches
+  exactly, if any. A platform whose card cannot be built stays in the
+  dropdown as "(unavailable)" with the reason under the form. The
+  Architecture view (the loaded YAML and its differences from a bundled
+  baseline) sits under the card.
 - **Debugger rail.** Breakpoints (add by kind, enable or disable, remove;
   the one that stopped the run is highlighted), watches, and the placement
   core map with pending edits.
@@ -374,16 +381,20 @@ headless Chrome for every view and tab of both QCFS workloads.
     horizon of 3, run to horizon. The badge reads "IBM TrueNorth (functional)
     · no cost model: energy and time are zero · not hardware", the chip shows
     the occupied window of the 64 × 64 mesh, the timeline has bars of zero
-    length, and the inspector's energy reads "0.00 pJ (none)".
+    length, and the inspector's energy reads "0.00 pJ" with "R · none"
+    beside it.
 30. Open Platform. The card lists Structure (4,096 tiles, 256 neurons per
     core), Units (core_soma runs `truenorth`), Costs with every status
     "none", Validation, Not modeled and References; the Architecture file
     sits below. Choose "IBM TrueNorth (documented costs)" and rebuild: the
-    step time is 1 ms and the synapse energy row reads "documented".
+    step time reads "1.000 ms" and the synapse energy row reads
+    "documented". The mini-map in a core view shows the used tiles in blue.
 31. Choose "Intel Loihi 1", start `random-snn` with the defaults, open
     Platform: the hop latency rows read "documented" and the soma rows
-    "fitted"; the inspector's step time reads "(fitted)". Reload the page: the
-    platform and workload dropdowns come back as they were.
+    "fitted"; the inspector's step time shows "R · fitted". Type a horizon,
+    switch to the Loihi 2 candidate: `random-snn` stays selected and the
+    typed value stays. Reload the page: the platform and workload dropdowns
+    come back as they were.
 
 ## Coverage of the Streamlit workbench
 

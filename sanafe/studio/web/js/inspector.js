@@ -14,8 +14,11 @@
     return '<div class="kv">' + items.map((item) => {
       const l = label(item[0]);
       if (item[1] === '' && !item[2]) return '<i class="note ' + l.cls + '">' + S.escape(l.text) + '</i>';  // spans the row
-      return '<i class="' + l.cls + '">' + S.escape(l.text) + '</i><span>' + S.breakable(String(item[1])) + '</span>' +
-        (item[2] ? S.mark(item[2]) : '<span></span>');
+      // item[3]: the platform's provenance word for a modeled time or energy, after the mark.
+      const mark = item[2] ? S.mark(item[2]) : '';
+      const cell = item[3] && item[2] ? '<span class="mw">' + mark + ' · ' + S.escape(item[3]) + '</span>'
+        : (mark || '<span></span>');
+      return '<i class="' + l.cls + '">' + S.escape(l.text) + '</i><span>' + S.breakable(String(item[1])) + '</span>' + cell;
     }).join('') + '</div>';
   }
 
@@ -27,11 +30,10 @@
       ' (expected ' + reference.expected + ', got ' + reference.actual + '; ' + reference.mismatches + ' differ)';
   }
 
-  /* The platform's provenance word beside a modeled time or energy. */
-  function withWord(text, session, kind) {
+  /* The platform's provenance word for a modeled time or energy, or null. */
+  function word(session, kind) {
     const platform = session && session.platform;
-    const word = platform ? (kind === 'time' ? platform.time_word : platform.energy_word) : null;
-    return word ? text + ' (' + word + ')' : text;
+    return platform ? (kind === 'time' ? platform.time_word : platform.energy_word) : null;
   }
 
   function edges(list, total) {
@@ -45,13 +47,13 @@
       const share = record.step_time > 0 ? ' (' + Math.round(100 * record.barrier / record.step_time) + '%)' : '';
       return ['Inspector · chip', rows([
         ['update', record.update, ''],
-        ['modeled step time', withWord(S.fmtTime(record.step_time), session, 'time'), p.step_time],
-        ['last core or message activity', S.fmtTime(record.last_activity), p.last_activity],
-        ['barrier', S.fmtTime(record.barrier) + share, p.barrier],
+        ['modeled step time', S.fmtTime(record.step_time), p.step_time, word(session, 'time')],
+        ['last core or message activity', S.fmtTime(record.last_activity), p.last_activity, word(session, 'time')],
+        ['barrier', S.fmtTime(record.barrier) + share, p.barrier, word(session, 'time')],
         ['messages', record.counts.messages, p.counts],
         ['hops', record.counts.hops, p.counts],
         ['fired (all neurons)', record.counts.fired, p.counts],
-        ['energy', withWord(S.fmtEnergy(record.energy.total), session, 'energy'), p.energy],
+        ['energy', S.fmtEnergy(record.energy.total), p.energy, word(session, 'energy')],
         ['occupied cores', session.network.occupied.length, ''],
         ['reference check', referenceText(record.reference), record.reference ? 'D' : ''],
       ])];
@@ -82,7 +84,8 @@
         ['packets in', inn, 'D'],
         ['messages routed through its router', through, 'X'],
         ['network energy', record.tile_network_energy[tile.id] === undefined ? 'not recorded' :
-          withWord(S.fmtEnergy(record.tile_network_energy[tile.id]), session, 'energy'), record.tile_network_energy[tile.id] === undefined ? '' : record.provenance.tile_network_energy],
+          S.fmtEnergy(record.tile_network_energy[tile.id]), record.tile_network_energy[tile.id] === undefined ? '' : record.provenance.tile_network_energy,
+          word(session, 'energy')],
       ])];
     },
 
@@ -96,15 +99,15 @@
       if (counts) fired = counts.fired === null ? 'unknown (neurons without log_spikes)' : counts.fired;
       const items = [
         ['neurons', groups.length ? groups.join(', ') : 'none mapped', 'R'],
-        ['neuron processing ends', key in record.core_finish ? withWord(S.fmtTime(record.core_finish[key]), session, 'time') : 'no records', p.core_finish],
+        ['neuron processing ends', key in record.core_finish ? S.fmtTime(record.core_finish[key]) : 'no records', p.core_finish, key in record.core_finish ? word(session, 'time') : null],
         ['fired this update', fired, p.core_counts],
         ['packets in / out', counts ? counts.packets_in + ' / ' + counts.packets_out : '0 / 0', p.core_counts],
         ['spikes in', counts ? counts.spikes_in : 0, p.core_counts],
-        ['energy', energy ? withWord(S.fmtEnergy(energy.total), session, 'energy') : 'not recorded', energy ? p['core_energy.total'] : ''],
+        ['energy', energy ? S.fmtEnergy(energy.total) : 'not recorded', energy ? p['core_energy.total'] : '', word(session, 'energy')],
       ];
       if (energy) {
-        for (const unit in energy.units) items.push(['  ' + unit, S.fmtEnergy(energy.units[unit]), p['core_energy.units']]);
-        if (energy.axon !== null) items.push(['  axon in and out', S.fmtEnergy(energy.axon), p['core_energy.axon']]);
+        for (const unit in energy.units) items.push(['  ' + unit, S.fmtEnergy(energy.units[unit]), p['core_energy.units'], word(session, 'energy')]);
+        if (energy.axon !== null) items.push(['  axon in and out', S.fmtEnergy(energy.axon), p['core_energy.axon'], word(session, 'energy')]);
       }
       const budget = session.network.core_budgets && session.network.core_budgets[key];
       if (budget) {
@@ -208,11 +211,11 @@
         ['hops', m.hops, 'R'],
         ['route (tiles)', m.path.join(' → '), 'X'],
         ['spikes', m.spikes, 'R'],
-        ['generation delay', S.fmtTime(m.generation_delay), 'R'],
-        ['network delay', S.fmtTime(m.network_delay), 'R'],
-        ['blocking delay', S.fmtTime(m.blocking_delay), 'R'],
-        ['processing delay', S.fmtTime(m.processing_delay), 'R'],
-        ['send · receive · processed', S.fmtTime(m.send) + ' · ' + S.fmtTime(m.receive) + ' · ' + S.fmtTime(m.processed), 'R'],
+        ['generation delay', S.fmtTime(m.generation_delay), 'R', word(session, 'time')],
+        ['network delay', S.fmtTime(m.network_delay), 'R', word(session, 'time')],
+        ['blocking delay', S.fmtTime(m.blocking_delay), 'R', word(session, 'time')],
+        ['processing delay', S.fmtTime(m.processing_delay), 'R', word(session, 'time')],
+        ['send · receive · processed', S.fmtTime(m.send) + ' · ' + S.fmtTime(m.receive) + ' · ' + S.fmtTime(m.processed), 'R', word(session, 'time')],
       ])];
     },
   };

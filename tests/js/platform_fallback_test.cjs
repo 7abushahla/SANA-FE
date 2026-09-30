@@ -64,9 +64,29 @@ const options = (window, id) => [...window.document.getElementById(id).options].
   q('platform').dispatchEvent(new now.Event('change'));
   assert.deepStrictEqual(options(now, 'workload'), ['random-snn', 'sanafe-files']);
   assert.strictEqual(q('workload').value, 'random-snn');
+  // Switching platform keeps what the user typed when the workload stays.
+  q('params').querySelector('[data-param="horizon"]').value = '9';
+  q('platform').value = 'loihi2';
+  q('platform').dispatchEvent(new now.Event('change'));
+  assert.strictEqual(q('workload').value, 'random-snn');
+  assert.strictEqual(q('params').querySelector('[data-param="horizon"]').value, '9');
   q('workload').value = 'sanafe-files';
   q('workload').dispatchEvent(new now.Event('change'));
   assert.strictEqual(q('platformHint').textContent, 'architecture from file');
+
+  // A platform whose card failed is listed but cannot be chosen, and the reason is shown.
+  const broken = page({
+    '/api/workloads': [{ name: 'random-snn', platforms: ['loihi', 'truenorth'], parameters: [param] }],
+    '/api/platforms': [{ id: 'truenorth', title: 'IBM TrueNorth (functional)', error: "truenorth: cost attribute 'x' has no provenance entry" },
+      { id: 'loihi', title: 'Intel Loihi 1' }],
+    '/api/runs': [] });
+  await settle();
+  const b = (id) => broken.document.getElementById(id);
+  const tn = [...b('platform').options].find((o) => o.value === 'truenorth');
+  assert.ok(tn.disabled, 'broken platform option disabled');
+  assert.match(tn.textContent, /unavailable/);
+  assert.strictEqual(b('platform').value, 'loihi');
+  assert.match(b('formError').textContent, /no provenance entry/);
   console.log('platform fallback test: OK');
   process.exit(0);
 })().catch((error) => { console.error('platform fallback test: FAIL: ' + error.message); process.exit(1); });

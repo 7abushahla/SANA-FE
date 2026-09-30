@@ -70,7 +70,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sa
 /* Labels take what they need up to half the pane and wrap past it; values
    take the rest and wrap, so neither can push the grid past its pane (long
    names such as conv2_x.0.shortcut_relay). */
-.kv { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) 18px; gap: 3px 8px; align-items: center; font-size: 11.5px; color: var(--ink); }
+.kv { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; font-size: 11.5px; color: var(--ink); }
 .kv i { font-style: normal; color: var(--muted); }
 .kv i.sub { padding-left: 1em; }
 .kv i.note { grid-column: 1 / -1; }
@@ -241,3 +241,9 @@ a.export { color: #2368a0; }
 .status.fitted, .status.documented { background: #16846f; }
 .status.scaled, .status.inherited { background: #c77622; }
 .status.none { background: #8aa0ad; }
+.kv .mw { white-space: nowrap; font-size: 9.5px; color: var(--muted); }
+.platformcard .modified { color: #b8445a; font-weight: 600; margin: 3px 0; }
+.platformcard .matchnote { color: var(--muted); margin: 3px 0; }
+svg.mini rect.tile.used { fill: #2368a0; stroke: #2368a0; }
+.kv > .m { justify-self: start; }  /* marks keep their size in the widened mark column */
+.chip .chipwindow { margin: 2px 0 4px; }

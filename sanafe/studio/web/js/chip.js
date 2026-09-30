@@ -89,6 +89,11 @@
     const hostWidth = !this.mini && metadata && metadata.host_operations ? 150 : 0;
     const width = hostWidth + 2 * MARGIN + winWidth * PITCH;
     const height = 2 * MARGIN + winHeight * PITCH;
+    if (this.window) {  // page text, so a two-tile window never has to hold it
+      S.html(this.container, 'div', { class: 'small muted chipwindow' },
+        'Showing tiles x ' + this.window.x0 + '–' + this.window.x1 + ', y ' + this.window.y0 + '–' + this.window.y1 +
+        ' of a ' + layout.width + ' × ' + layout.height + ' mesh: the occupied tiles and a one-tile margin.');
+    }
     const svg = S.svg(this.container, 'svg', { viewBox: '0 0 ' + width + ' ' + height, role: 'img',
       'aria-label': this.mini ? 'chip mini-map' : 'chip mesh', class: this.mini ? 'mini' : '' });
     const left = hostWidth + MARGIN + PITCH / 2;
@@ -107,11 +112,7 @@
     });
 
     S.svg(svg, 'rect', { x: hostWidth + MARGIN / 2, y: MARGIN / 2, width: winWidth * PITCH + MARGIN, height: winHeight * PITCH + MARGIN, rx: 12, class: 'chipframe' });
-    if (this.window) {
-      S.svg(svg, 'text', { x: hostWidth + MARGIN, y: MARGIN / 2 - 6, class: 'tilelabel' },
-        'showing tiles x ' + this.window.x0 + '–' + this.window.x1 + ', y ' + this.window.y0 + '–' + this.window.y1 +
-        ' of a ' + layout.width + ' × ' + layout.height + ' mesh (occupied tiles and a one-tile margin)');
-    }
+
     if (!this.mini) {
       svg.addEventListener('click', (event) => {
         const target = event.target;
@@ -334,9 +335,9 @@
     }
     if (this.route && record) {
       const message = record.messages.find((m) => m.mid === this.route);
-      if (message) {
-        const points = [this.corePos[message.src]]
-          .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]).filter((pt) => pt);
+      const points = message ? [this.corePos[message.src]]
+        .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]).filter((pt) => pt) : [];
+      if (points.length >= 2) {  // a route outside the drawn window is not drawn
         S.svg(overlay, 'polyline', { points: points.map((p) => p.join(',')).join(' '), class: 'route' });
         const end = points[points.length - 1];
         S.svg(overlay, 'text', { x: end[0] + 14, y: end[1] - 12, class: 'routemark' }, 'X route');

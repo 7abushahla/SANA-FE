@@ -24,7 +24,10 @@
   S.fmtTime = function (seconds) {
     if (typeof seconds !== 'number' || !isFinite(seconds)) return String(seconds);
     const ns = seconds * 1e9;
-    return Math.abs(ns) < 1000 ? ns.toFixed(1) + ' ns' : (ns / 1000).toFixed(3) + ' µs';
+    if (Math.abs(ns) < 1e3) return ns.toFixed(1) + ' ns';
+    if (Math.abs(ns) < 1e6) return (ns / 1e3).toFixed(3) + ' µs';
+    if (Math.abs(ns) < 1e9) return (ns / 1e6).toFixed(3) + ' ms';
+    return (ns / 1e9).toFixed(3) + ' s';
   };
 
   S.fmtEnergy = function (joules) {

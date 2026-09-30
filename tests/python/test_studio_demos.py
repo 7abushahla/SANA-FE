@@ -59,3 +59,29 @@ class TestRandomSNN(unittest.TestCase):
         self.assertEqual(tiles, sorted(set(tiles)))
         self.assertTrue(all(tile % 64 == 0 for tile in tiles), tiles)   # y = 0
         self.assertLessEqual(max(tiles) // 64, 7)                        # x <= 7
+
+    def test_drive_neurons_fire_with_the_same_exact_period_on_every_platform(self):
+        periods = {}
+        for platform in P.registry():
+            session = Session(RandomSNN(), {'groups': 2, 'neurons_per_group': 12, 'seed': 4,
+                                            'connection_percent': 0, 'horizon': 45},
+                              platform=platform.id, store_dir=None)
+            try:
+                session.run_to_horizon()
+                trains = {}
+                for record in session.records:
+                    for group, offset in record.fired:
+                        if group == 'group_0':
+                            trains.setdefault(offset, []).append(record.update)
+            finally:
+                session.close()
+            found = {}
+            for offset in range(12):
+                train = trains.get(offset, [])
+                self.assertTrue(train, (platform.id, offset, 'never fired'))
+                period = train[0]
+                self.assertTrue(1 <= period <= 20, (platform.id, offset, period))
+                self.assertEqual(train, list(range(period, 46, period)), (platform.id, offset))
+                found[offset] = period
+            periods[platform.id] = found
+        self.assertEqual(len({tuple(sorted(v.items())) for v in periods.values()}), 1, periods)

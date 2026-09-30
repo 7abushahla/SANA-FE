@@ -42,9 +42,18 @@
         S.html(card, 'div', { class: 'small muted' },
           'This workload brings its own architecture file; no catalog platform applies. The file is shown below.');
       } else {
+        S.html(card, 'div', { class: 'small nothw' }, p.not_hardware);
         S.html(card, 'h4', {}, p.title);
         S.html(card, 'div', { class: 'small muted' }, p.vendor + ' · ' + p.generation + ' · ' + p.yaml);
-        S.html(card, 'div', { class: 'small nothw' }, p.not_hardware);
+        if (p.architecture_matches === false) {
+          S.html(card, 'div', { class: 'small modified' }, 'This session simulates a modified architecture, not the ' +
+            'packaged ' + p.yaml + '. Costs come from the workload\'s own file; the costs table below describes the ' +
+            'catalog profile, not what was simulated.');
+        }
+        if (p.selected === false) {
+          S.html(card, 'div', { class: 'small matchnote' }, 'The workload\'s own architecture file is identical to this ' +
+            'catalog platform, so this card applies.');
+        }
         S.html(card, 'p', {}, p.summary);
         S.html(card, 'p', {}, 'Execution: ' + p.execution + '. ' + p.time_rule);
         S.html(card, 'h5', {}, 'Structure');

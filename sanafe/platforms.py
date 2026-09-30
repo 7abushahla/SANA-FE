@@ -16,7 +16,8 @@ import tempfile
 import yaml
 
 import sanafe
-from sanafe.loihi2 import INTEL_BRIEF, LOIHI1_COSTS, RUNTIME_PAPER, candidate_cost_provenance
+from sanafe.loihi2 import (INTEL_BRIEF, LOIHI1_COSTS, RUNTIME_PAPER, architecture_fingerprint,
+                           candidate_cost_provenance)
 
 STATUSES = ('fitted', 'scaled', 'inherited', 'documented', 'none')
 NOT_HARDWARE = ('Nothing on this card is a hardware measurement: structure and values are '
@@ -67,7 +68,7 @@ class Platform:
     time_rule: str        # one sentence on how modeled time advances
     summary: str
     cost_summary: str     # the middle of the badge
-    costs: dict           # attribute -> {'status', 'source', 'note', ['factor']}
+    costs: dict           # attribute, or 'unit.attribute' override -> {'status', 'source', 'note', ['factor']}
     time_word: str        # provenance word shown beside modeled times
     energy_word: str      # provenance word shown beside modeled energies
     validation: str
@@ -96,13 +97,23 @@ _loihi_costs = _all('fitted', LOIHI1_COSTS,
 for _name in ('latency_north_hop', 'latency_south_hop', 'latency_east_hop', 'latency_west_hop',
               'energy_east_hop', 'energy_west_hop'):
     _loihi_costs[_name] = _status('documented', DAVIES_2018, 'matches Davies et al. 2018, Table 2')
+# The loihi_inputs unit (model: input) is a zero-cost placeholder for spike
+# sources, not a fitted unit.
+for _name in ('energy_access_neuron', 'latency_access_neuron', 'energy_update_neuron',
+              'latency_update_neuron', 'energy_spike_out', 'latency_spike_out'):
+    _loihi_costs[f'loihi_inputs.{_name}'] = _status(
+        'none', LOIHI1_COSTS, 'input placeholder unit (model: input): zero by construction, not fitted')
+
+# Drive neurons: one draw n in 1..20 per neuron, the same draw on every
+# platform, and integer state so each fires exactly every n updates (no
+# rounding or 1/64 truncation can stretch the period).
 
 
 def _loihi_neuron(kind, rng):
-    attrs = {'threshold': 1.0, 'leak_decay': 1.0, 'reset_mode': 'hard'}
-    if kind == 'input':
-        attrs['bias'] = round(1.0 / rng.randint(1, 20), 4)  # fires every 1 to 20 updates
-    return attrs
+    if kind == 'input':  # potential k after k updates; fires when k > n - 0.5
+        return {'threshold': rng.randint(1, 20) - 0.5, 'leak_decay': 1.0,
+                'reset_mode': 'hard', 'bias': 1.0}
+    return {'threshold': 1.0, 'leak_decay': 1.0, 'reset_mode': 'hard'}
 
 
 def _float_weight(rng):
@@ -123,10 +134,9 @@ def _loihi2_costs():
 
 
 def _loihi2_neuron(kind, rng):
-    attrs = {'threshold': 20}
-    if kind == 'input':
-        attrs['bias'] = rng.randint(1, 20)  # fires every 1 to 20 updates
-    return attrs
+    if kind == 'input':  # potential 2k; fires when 2k >= 2n (thresholds must be even)
+        return {'threshold': 2 * rng.randint(1, 20), 'bias': 2}
+    return {'threshold': 20}
 
 
 def _int_weight(rng):
@@ -135,10 +145,10 @@ def _int_weight(rng):
 
 # --- TrueNorth --------------------------------------------------------------
 def _truenorth_neuron(kind, rng):
-    attrs = {'threshold': 1.0, 'leak': 0.0, 'reset_mode': 'hard'}
-    if kind == 'input':
-        attrs['bias'] = round(1.0 / rng.randint(1, 20), 4)
-    return attrs
+    if kind == 'input':  # potential k; fires when k >= n
+        return {'threshold': float(rng.randint(1, 20)), 'leak': 0.0,
+                'reset_mode': 'hard', 'bias': 1.0}
+    return {'threshold': 1.0, 'leak': 0.0, 'reset_mode': 'hard'}
 
 
 _truenorth_costs = _all('none', AUDIT_NOTE, 'the shipped file sets every cost to zero; '
@@ -259,6 +269,29 @@ def badge(platform):
     return f'{platform.title} · {platform.cost_summary} · not hardware'
 
 
+@lru_cache(maxsize=None)
+def fingerprint(platform_id):
+    """Fingerprint of the platform's packaged architecture (see sanafe.loihi2)."""
+    return architecture_fingerprint(sanafe.load_arch(str(get(platform_id).arch_yaml)))
+
+
+@lru_cache(maxsize=None)
+def _arch_name(platform_id):
+    return yaml.safe_load(get(platform_id).arch_yaml.read_text())['architecture']['name']
+
+
+def match(arch, candidates=None):
+    """The catalog platform whose packaged architecture equals ``arch`` in every
+    configured value, or None. Only platforms with the same architecture name
+    are loaded, so an unrelated file costs nothing."""
+    ids = list(candidates) if candidates is not None else [p.id for p in PLATFORMS]
+    named = [pid for pid in ids if _arch_name(pid) == arch.configuration()['name']]
+    if not named:
+        return None
+    wanted = architecture_fingerprint(arch)
+    return next((pid for pid in named if fingerprint(pid) == wanted), None)
+
+
 _BUFFER_NAMES = {'buffer_before_dendrite_unit': 'before the dendrite unit',
                  'buffer_before_soma_unit': 'before the soma unit',
                  'buffer_before_axon_out_unit': 'before the axon-out unit'}
@@ -371,7 +404,7 @@ def describe(platform):
     structure, units, values = _facts(platform.id)
     rows = []
     for unit, attribute, value in values:
-        entry = platform.costs.get(attribute)
+        entry = platform.costs.get(f'{unit}.{attribute}') or platform.costs.get(attribute)
         if entry is None or entry['status'] not in STATUSES:
             raise ValueError(f'{platform.id}: cost attribute {attribute!r} has no provenance entry')
         row = {'unit': unit, 'attribute': attribute, 'value': value, 'status': entry['status'],

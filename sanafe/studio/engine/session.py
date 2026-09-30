@@ -10,8 +10,7 @@ import uuid
 import numpy as np
 import sanafe
 from sanafe import platforms as P
-from sanafe.loihi2 import (architecture_fingerprint, load_loihi2_candidate,
-                           validate_core_budgets)
+from sanafe.loihi2 import architecture_fingerprint, validate_core_budgets
 
 from .breakpoints import Breakpoints
 from .connectivity import Connectivity
@@ -133,8 +132,12 @@ class Session:
         self.layout = ChipLayout.from_chip(self.chip, self._sim_arch)
         self.neurons = neuron_map(self.chip)
         self.connectivity = Connectivity.from_network(self.built.network, self.neurons)
-        self._candidate = (architecture_fingerprint(self.built.arch) ==
-                           architecture_fingerprint(load_loihi2_candidate()))
+        # A chosen platform must be simulated on its packaged architecture for
+        # the catalog's badge and card to apply; a workload that brings its own
+        # file gets the card of the catalog platform it matches exactly, if any.
+        self._matched = P.match(self.built.arch, [self.platform] if self.platform else None)
+        self.architecture_matches = self._matched is not None
+        self._candidate = self._matched == 'loihi2'
         self.core_budgets = None
         if self._candidate:
             # The budgets are Loihi 2 figures, so only the candidate is held to them.
@@ -295,7 +298,13 @@ class Session:
     def badge(self):
         """The provenance line every view must show for this architecture."""
         if self.platform is not None:
-            return P.badge(P.get(self.platform))
+            platform = P.get(self.platform)
+            if not self.architecture_matches:
+                return (f'{platform.title} (modified architecture) · costs from the workload\'s '
+                        'own architecture file, not the catalog profile · not hardware')
+            return P.badge(platform)
+        if self._matched is not None:
+            return P.badge(P.get(self._matched))
         return (f'{Path(self.built.arch_yaml).name} · modeled costs from this file · '
                 'not measurements')
 
@@ -313,11 +322,16 @@ class Session:
                 'run': self.store.directory.name if self.store is not None else None}
 
     def platform_card(self):
-        if self.platform is None:
+        """The catalog card for the chosen platform, or for the platform a
+        workload's own file matches; ``architecture_matches`` says whether the
+        simulated architecture is that platform's packaged one."""
+        shown = self.platform or self._matched
+        if shown is None:
             return None
-        if self._platform_card is None:
-            self._platform_card = P.describe(P.get(self.platform))
-        return self._platform_card
+        if self._platform_card is None or self._platform_card.get('id') != shown:
+            self._platform_card = P.describe(P.get(shown))
+        return dict(self._platform_card, architecture_matches=self.architecture_matches,
+                    selected=self.platform is not None)
 
     def carry_breakpoints(self, specs):
         """Adopt another session's breakpoints; return the reasons for any dropped."""
