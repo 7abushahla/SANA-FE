@@ -48,6 +48,7 @@ class BuiltWorkload:
     horizon: int
     metadata: dict = field(default_factory=dict)
     reference: Any = None
+    readout: Any = None  # optional Readout: turns records into class scores (host)
 
 
 class ReferenceChecker(Protocol):
@@ -66,6 +67,19 @@ class ReferenceChecker(Protocol):
 
     def check(self, record) -> dict:
         ...
+
+
+
+class Readout(Protocol):
+    """Host readout of a workload's output (for the Pipeline view).
+
+    ``decode(record)`` runs once per update after the reference check, with
+    ``record.state`` present at the aggregate level, and returns ``{'step',
+    'scores', 'cumulative', 'predicted', 'reference', 'quantity'}`` (see the
+    Pipeline view spec). ``bind(session)``, if present, is called once per build.
+    """
+
+    def decode(self, record): ...
 
 
 class Workload(Protocol):

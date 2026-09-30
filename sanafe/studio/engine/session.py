@@ -119,6 +119,9 @@ class Session:
         bind = getattr(self.built.reference, 'bind', None)
         if bind is not None:  # a checker may need the trace order of this chip
             bind(self)
+        bind = getattr(self.built.readout, 'bind', None)
+        if bind is not None:
+            bind(self)
         self._history = []  # aggregate level: (membranes, fired indices) per update
         self.watched = [key for key in self.watched if key in self._cache.logged_pos]
         # Keep the breakpoints that still apply after a rebuild; say which did not.
@@ -339,6 +342,8 @@ class Session:
                                                  self.neurons, self._cache)
                 if self.built.reference is not None:
                     record.reference = self.built.reference.check(record)
+                if self.built.readout is not None:
+                    record.readout = self.built.readout.decode(record)
                 if self.store is not None:
                     self.store.append(record)
             except Exception as error:
