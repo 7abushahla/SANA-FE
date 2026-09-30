@@ -29,7 +29,7 @@ async function waitFor(check, what, timeout = 120000) {
 
 (async () => {
   const server = spawn('.venv/bin/python', ['-m', 'sanafe.studio', '--port', String(PORT), '--path', 'tests/python',
-    '--workload', 'test-chain=studio_helpers:ChainWorkload', '--store-dir', STORE], { stdio: ['ignore', 'pipe', 'pipe'] });
+    '--workload', 'test-chain=studio_helpers:ChainWorkload', '--workload', 'test-pipeline=studio_helpers:PipelineChainWorkload', '--store-dir', STORE], { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   server.stdout.on('data', (d) => { log += d; });
   server.stderr.on('data', (d) => { log += d; });
@@ -57,7 +57,8 @@ async function waitFor(check, what, timeout = 120000) {
     $('btnStart').click();
     await waitFor(() => text('uHorizon') === '6', 'session ready');
     // Playback speed prices the whole horizon, not one update.
-    if (text('speedHint') !== '6 updates \u2248 7.2 s') throw new Error('speed hint: ' + text('speedHint'));
+    await waitFor(() => text('speedHint') === '6 updates \u2248 7.2 s', 'speed hint prices the horizon', 5000)
+      .catch(() => { throw new Error('speed hint: ' + text('speedHint')); });
     const used = document.querySelectorAll('#chip rect.core.used').length;
     if (used !== 3) throw new Error('expected 3 occupied cores, found ' + used);
     // Group names live in a legend under the chip, not on top of the mesh.
@@ -82,6 +83,9 @@ async function waitFor(check, what, timeout = 120000) {
     $('btnPause').click();
     await waitFor(() => text('clockText') !== held && /Pause/.test(text('btnPause')), 'resume continues playback');
     await waitFor(() => /^update 6 ·/.test(text('clockText')), 'playback of update 6', 90000);
+
+    // Pipeline: absent for a workload without one.
+    if (!$('mPipe').disabled) throw new Error('Pipeline must be disabled for a workload without a pipeline');
 
     // Instant playback draws each update once instead of animating it: a replay
     // lands at the end of the update within a frame, far inside 1.2 s.
@@ -349,8 +353,39 @@ async function waitFor(check, what, timeout = 120000) {
       const line = page.window.document.querySelector('#dock svg.watchplot polyline.trace.t0');
       return line && line.getAttribute('points').trim().split(/\s+/).length === 6;
     }, 'late watch shows all 6 updates');
+    // Pipeline view on the test workload with a declared pipeline and readout.
+    const pdoc = page.window.document;
+    const ptext = (id) => q(id).textContent;
+    q('workload').value = 'test-pipeline';
+    q('workload').dispatchEvent(new page.window.Event('change'));
+    q('traceLevel').value = '';
+    q('horizon').value = '';
+    q('speed').value = '0';
+    q('speed').dispatchEvent(new page.window.Event('change'));
+    q('btnStart').click();
+    await waitFor(() => !q('mPipe').disabled && q('uNum').textContent === '0', 'pipeline available');
+    q('btnRun').click();
+    await waitFor(() => ptext('state') === 'finished' && ptext('uNum') === '6', 'pipeline run finished');
+    pageClick(q('mPipe'));
+    await waitFor(() => pdoc.querySelectorAll('#pipeline table.pgrid tr.prow').length === 3, 'three pipeline rows');
+    const hw = pdoc.querySelectorAll('#pipeline tr.prow td.pcell[data-group="layer_0"]').length;
+    if (hw !== 6) throw new Error('hardware axis should have 6 columns, found ' + hw);
+    if (!pdoc.querySelector('#pipeline td.pcell.gated')) throw new Error('cells outside a window must be gated');
+    await waitFor(() => /odd|even/.test(ptext('pOutput')), 'output panel names a class');
+    if (!/untrained|fixture/i.test(ptext('pipeline'))) throw new Error('fixture banner missing');
+    pageClick(pdoc.querySelector('#pipeline [data-axis="steps"]'));
+    await waitFor(() => pdoc.querySelectorAll('#pipeline tr.prow td.pcell[data-group="layer_0"]').length === 6 &&
+      /t=0/.test(ptext('pipeline')), 'timestep axis: T columns');
+    pageClick(pdoc.querySelector('#pipeline [data-axis="updates"]'));
+    await waitFor(() => !/t=0/.test(ptext('pipeline')), 'back to the update axis');
+    pageClick(pdoc.querySelector('#pipeline td.pcell[data-update="2"][data-group="layer_1"]'));
+    await waitFor(() => /layer_1 at update 2/.test(ptext('insTitle')) && /^update 2 ·/.test(ptext('clockText')), 'cell click inspects and scrubs');
+    // Scrub before the output window: the output panel waits.
+    q('scrub').value = '1';
+    q('scrub').dispatchEvent(new page.window.Event('input'));
+    await waitFor(() => /waiting/i.test(ptext('pOutput')), 'output waits before its window');
     if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume, aggregate level)');
+    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume, aggregate level, pipeline view)');
     page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);

@@ -1,5 +1,6 @@
 """Shared fixtures for the Studio engine tests (not a test module)."""
 from importlib.resources import files
+import base64
 import os
 from pathlib import Path
 
@@ -97,4 +98,42 @@ class SlowFirstUpdate(ChainWorkload):
     def build(self, params):
         built = super().build(params)
         built.reference = _SlowFirstUpdate()
+        return built
+
+
+class ChainReadout:
+    """layer_2 spike counts per step over its window, lowest index wins ties."""
+
+    def __init__(self, T):
+        self.T, self.total = T, None
+
+    def decode(self, record):
+        step = record.update - 1 - 2
+        if not 0 <= step < self.T:
+            return {'step': None, 'scores': None, 'cumulative': self.total,
+                    'predicted': None if self.total is None else self.total.index(max(self.total)),
+                    'reference': {'status': 'waiting', 'max_abs_diff': None}, 'quantity': 'spike counts'}
+        fired = {o for g, o in record.fired if g == 'layer_2'}
+        scores = [int(o in fired) for o in range(2)]
+        self.total = [a + b for a, b in zip(self.total or [0, 0], scores)]
+        return {'step': step, 'scores': scores, 'cumulative': list(self.total),
+                'predicted': self.total.index(max(self.total)),
+                'reference': {'status': 'match', 'max_abs_diff': 0}, 'quantity': 'spike counts'}
+
+
+class PipelineChainWorkload(ChainWorkload):
+    """The test chain with a declared pipeline and a readout."""
+
+    name = 'test-pipeline'
+
+    def build(self, params):
+        built = super().build(params)
+        T = params['steps']
+        built.readout = ChainReadout(T)
+        pixels = bytes((x * 8 + c * 60) % 256 for x in range(32 * 32) for c in range(3))
+        built.metadata['pipeline'] = {
+            'T': T, 'output_group': 'layer_2', 'classes': ['even', 'odd'], 'fixture': True,
+            'rows': [{'group': f'layer_{i}', 'depth': i, 'window': [i, i + T]} for i in range(3)],
+            'input': {'index': 0, 'label': 1, 'pixels': base64.b64encode(pixels).decode(),
+                      'drive': 'constant test currents', 'currents': 8, 'group': 'layer_0'}}
         return built

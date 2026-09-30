@@ -109,6 +109,22 @@
       return ['Inspector · core ' + key, rows(items)];
     },
 
+    cell(record, session, selection) {
+      const spec = session.metadata.pipeline;
+      const site = spec.rows.find((r) => r.group === selection.group);
+      const group = session.network.groups.find((g) => g.name === selection.group);
+      const shown = record.update === selection.update ? record : null;
+      const count = shown && shown.group_fired ? shown.group_fired[selection.group] : null;
+      const inside = selection.update - 1 >= site.window[0] && selection.update - 1 < site.window[1];
+      return ['Inspector · ' + selection.group + ' at update ' + selection.update, rows([
+        ['depth', site.depth, ''],
+        ['window', 'updates ' + (site.window[0] + 1) + '–' + site.window[1] + (inside ? '' : ' (gated here)'), ''],
+        ['algorithm step', inside ? selection.update - 1 - site.depth : 'none', 'D'],
+        ['spikes', count === null ? 'not logged' : count + ' of ' + group.size, 'D'],
+        ['firing rate', count === null ? '–' : (count / group.size).toFixed(3), 'D'],
+        ['reference', shown ? referenceText(shown.reference) : '–', 'D'],
+      ])];
+    },
     group(record, session, selection) {
       const group = session.network.groups.find((g) => g.name === selection.name);
       const theta = (session.network.group_attributes[group.name] || {}).threshold;

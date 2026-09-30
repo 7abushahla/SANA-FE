@@ -233,9 +233,11 @@
     $('zoom').style.display = zoomed ? '' : 'none';
     $('minimap').style.display = zoomed ? '' : 'none';
     $('network').style.display = v.mode === 'net' ? '' : 'none';
+    $('pipeline').style.display = v.mode === 'pipe' ? '' : 'none';
     $('chipNote').style.display = v.mode === 'chip' && v.level === 'chip' ? '' : 'none';
     $('mChip').className = v.mode === 'chip' ? 'on' : '';
     $('mNet').className = v.mode === 'net' ? 'on' : '';
+    $('mPipe').className = v.mode === 'pipe' ? 'on' : '';
     mini.focusTile = zoomed ? v.tile : null;
     if (app.session) {
       if (zoomed) zoom.show(context(), v.level, v.level === 'tile' ? v.tile : v.core);
@@ -250,6 +252,7 @@
     node.innerHTML = '';
     const v = app.view;
     if (v.mode === 'net') { node.textContent = 'Network: groups, connections, and their cores'; return; }
+    if (v.mode === 'pipe') { node.textContent = 'Pipeline: input, every site per update, and the readout'; return; }
     const link = (label, view) => {
       const a = S.html(node, 'a', { href: '#' }, label);
       a.addEventListener('click', (event) => { event.preventDefault(); setView(view); });
@@ -292,6 +295,17 @@
     const record = player.current();
     const v = app.view;
     if (v.mode === 'chip' && v.level === 'chip') chip.render(record, player.t);
+    if (v.mode === 'pipe' && app.session) {
+      const key = [player.index, player.records.length, S.pipeline.axis].join('|');
+      if (key !== app.pipeKey) {
+        app.pipeKey = key;
+        S.pipeline.render($('pipeline'), app.session, player.records, player.index, {
+          pick: (group, update) => { const i = player.records.findIndex((r) => r.update === update); if (i >= 0) player.show(i); select({ kind: 'cell', group: group, update: update }); },
+          open: (group) => { const g = app.session.network.groups.find((x) => x.name === group); const core = g && Object.keys(g.cores)[0]; if (core) openCore(core); },
+          redraw: () => { app.pipeKey = null; redraw(); },
+        });
+      }
+    }
     if (v.mode === 'chip' && v.level !== 'chip') {
       mini.render(record, player.t);
       zoom.update(record, player.t);
@@ -473,6 +487,8 @@
     app.details = {};
     app.coreStates = {};
     app.detailVersion += 1;
+    $('mPipe').disabled = !(app.session.metadata && app.session.metadata.pipeline);
+    app.pipeKey = null;
     $('chipNote').innerHTML = ready.trace_level === 'aggregate'
       ? 'Aggregate trace level. Moving packets are a sample: the first message between each pair of cores, sent at its recorded time ' +
         S.mark('R') + '. In slow motion each stays visible for at least 4% of the update (flights are nanoseconds in updates of tens of microseconds). ' +
@@ -673,6 +689,7 @@
   $('btnLatest').addEventListener('click', () => player.latest());
   $('mChip').addEventListener('click', () => setView({ mode: 'chip', level: 'chip' }));
   $('mNet').addEventListener('click', () => setView({ mode: 'net' }));
+  $('mPipe').addEventListener('click', () => { app.pipeKey = null; setView({ mode: 'pipe' }); });
   $('minimap').addEventListener('click', () => { setView({ level: 'chip' }); select({ kind: 'chip' }); });
   for (const tab of document.querySelectorAll('#tabs button')) {
     tab.addEventListener('click', () => {
