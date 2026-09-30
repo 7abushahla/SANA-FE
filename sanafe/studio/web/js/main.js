@@ -3,7 +3,7 @@
   const S = window.Studio;
   const $ = (id) => document.getElementById(id);
   const app = {
-    workloads: [], session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
+    workloads: [], platforms: [], session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
     renderKey: null, alive: true, view: { mode: 'chip', level: 'chip', tile: null, core: null },
     details: {}, detailVersion: 0, watches: [],
     breakpoints: [], hitId: null, runs: [], applied: {}, pending: {}, coreStates: {},
@@ -141,6 +141,7 @@
     } catch (error) {
       app.runs = [];
     }
+    if (!window.document || !$('bpList')) return;  // the page was closed while the request was in flight
     renderRail();
     renderRunsTab();
     if (app.tab === 'compare') redraw();
@@ -336,7 +337,7 @@
     if (app.tab === 'perf') S.perf.render($('dock'), player.records, record ? record.update : null);
     if (app.tab === 'messages') S.messages.render($('dock'), record, sel.kind === 'message' ? sel.mid : null, pickMessage);
     if (app.tab === 'watch') S.watch.render($('dock'), app.watches, player.records, app.details, player.index >= 0 ? player.index : null, removeWatch);
-    if (app.tab === 'arch' && app.session) S.arch.render($('dock'), app.session);
+    if (app.tab === 'platform' && app.session) S.platform.render($('dock'), app.session);
     S.inspector.render($('insTitle'), $('inspector'), sel, record, app.session, sel.kind === 'neuron' ? app.details[sel.key] : null);
     const watch = $('btnWatch');
     if (watch) watch.addEventListener('click', () => addWatch(sel.key));
@@ -568,6 +569,7 @@
     button.disabled = true;
     button.textContent = 'Building…';
     const body = { workload: $('workload').value, parameters: S.params.read($('params')) };
+    if (platformOf(body.workload).platforms.length) body.platform = $('platform').value;
     const horizon = $('horizon').value.trim();
     if (horizon) body.horizon = /^\d+$/.test(horizon) ? Number(horizon) : horizon;
     if (coreMap && Object.keys(coreMap).length) body.core_map = coreMap;
@@ -603,6 +605,7 @@
     if (!match) return;
     try {
       const snapshot = await S.api.get(match[1]);
+      if (snapshot.platform) { $('platform').value = snapshot.platform.id; filterWorkloads(); }
       $('workload').value = snapshot.workload;
       renderParams();
       const values = (snapshot.manifest && snapshot.manifest.parameters) || {};
@@ -626,25 +629,46 @@
     }
   }
 
+  function platformOf(workload) {
+    return app.workloads.find((w) => w.name === workload) || { platforms: [] };
+  }
+
+  /* Workloads that list the chosen platform, plus those that bring their own file. */
+  function filterWorkloads() {
+    const platform = $('platform').value;
+    const keep = $('workload').value;
+    $('workload').innerHTML = '';
+    for (const workload of app.workloads) {
+      if (workload.platforms.length && !workload.platforms.includes(platform)) continue;
+      S.html($('workload'), 'option', { value: workload.name }, workload.name);
+    }
+    const names = [...$('workload').options].map((o) => o.value);
+    $('workload').value = names.includes(keep) ? keep : (names.find((n) => n !== 'sanafe-files') || names[0] || '');
+    renderParams();
+  }
+
   function renderParams() {
     const workload = app.workloads.find((w) => w.name === $('workload').value);
     S.params.render($('params'), workload ? workload.parameters : []);
+    $('platformHint').textContent = workload && !workload.platforms.length ? 'architecture from file' : '';
   }
 
   async function init() {
     try {
-      app.workloads = await S.api.workloads();
+      [app.workloads, app.platforms] = await Promise.all([S.api.workloads(), S.api.platforms()]);
     } catch (error) {
       $('formError').textContent = error.message;
       return;
     }
-    for (const workload of app.workloads) S.html($('workload'), 'option', { value: workload.name }, workload.name);
+    for (const platform of app.platforms) S.html($('platform'), 'option', { value: platform.id }, platform.title);
     const preferred = app.workloads.find((w) => w.name !== 'sanafe-files');
-    if (preferred) $('workload').value = preferred.name;
-    renderParams();
+    $('platform').value = preferred && preferred.platforms.length ? preferred.platforms[0] : (app.platforms[0] ? app.platforms[0].id : '');
+    filterWorkloads();
+    if (preferred && [...$('workload').options].some((o) => o.value === preferred.name)) { $('workload').value = preferred.name; renderParams(); }
     await resume();
   }
 
+  $('platform').addEventListener('change', filterWorkloads);
   $('workload').addEventListener('change', renderParams);
   $('btnStart').addEventListener('click', start);
   $('btnStep').addEventListener('click', () => runCommand('step', 1));

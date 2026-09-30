@@ -228,3 +228,16 @@ a.export { color: #2368a0; }
 .pipeline .lbar { flex: 0 1 260px; height: 11px; background: #f0f3f5; border-radius: 2px; }
 .pipeline .lbar i { display: block; height: 100%; background: #9fb3c0; border-radius: 2px; }
 .pipeline .lrow.win .lbar i { background: #2368a0; } .pipeline .lrow.win span { font-weight: 700; }
+
+/* Platform card */
+.platformcard h4 { margin: 4px 0 2px; }
+.platformcard h5, .dockbody h5 { margin: 10px 0 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.platformcard p { font-size: 11.5px; margin: 3px 0; }
+.platformcard .nothw { color: #7a5a00; }
+.platformcard ul, .platformcard ol { font-size: 11.5px; margin: 2px 0; padding-left: 20px; }
+.cardtable { border-collapse: collapse; font-size: 10.5px; max-width: 100%; }
+.cardtable th, .cardtable td { text-align: left; vertical-align: top; padding: 2px 6px; border-bottom: 1px solid var(--line); white-space: pre-line; overflow-wrap: anywhere; }
+.status { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 0 4px; color: #fff; white-space: nowrap; }
+.status.fitted, .status.documented { background: #16846f; }
+.status.scaled, .status.inherited { background: #c77622; }
+.status.none { background: #8aa0ad; }

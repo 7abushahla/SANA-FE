@@ -49,7 +49,15 @@ async function waitFor(check, what, timeout = 120000) {
     const $ = (id) => document.getElementById(id);
     const text = (id) => $(id).textContent;
 
-    await waitFor(() => [...$('workload').options].some((o) => o.value === 'test-chain'), 'workload list');
+    await waitFor(() => [...$('platform').options].length === 4, 'platform list');
+    // The chain workload lists loihi2 only: choosing loihi hides it.
+    $('platform').value = 'loihi';
+    $('platform').dispatchEvent(new Event('change'));
+    if ([...$('workload').options].some((o) => o.value === 'test-chain')) throw new Error('workload filter did not hide test-chain on loihi');
+    if (![...$('workload').options].some((o) => o.value === 'sanafe-files')) throw new Error('file workload must stay listed');
+    $('platform').value = 'loihi2';
+    $('platform').dispatchEvent(new Event('change'));
+    await waitFor(() => [...$('workload').options].some((o) => o.value === 'test-chain'), 'workload list on loihi2');
     $('workload').value = 'test-chain';
     $('workload').dispatchEvent(new Event('change'));
     $('speed').value = '1200';
@@ -170,7 +178,13 @@ async function waitFor(check, what, timeout = 120000) {
     }, 'filtered messages');
     click(document.querySelector('#dock tr.msg'));
     await waitFor(() => document.querySelector('#chip .route'), 'selected message route drawn');
-    document.querySelector('#tabs button[data-tab="arch"]').click();
+    document.querySelector('#tabs button[data-tab="platform"]').click();
+    await waitFor(() => $('platformCard') && /Intel Loihi 2 candidate/.test($('platformCard').textContent), 'platform card');
+    for (const word of ['Structure', 'Units', 'Costs', 'Validation', 'Not modeled', 'References']) {
+      if (!$('platformCard').textContent.includes(word)) throw new Error('platform card lacks ' + word);
+    }
+    if (!document.querySelector('#platformCard .status.scaled')) throw new Error('costs table lacks a scaled status');
+    if (!/latencies scaled from Loihi 1/.test(text('badge'))) throw new Error('badge is not the platform badge');
     await waitFor(() => $('archBaseline') && [...$('archBaseline').options].some((o) => o.value === 'loihi'), 'baseline list');
     $('archBaseline').value = 'loihi';
     $('archBaseline').dispatchEvent(new Event('change'));
@@ -384,8 +398,45 @@ async function waitFor(check, what, timeout = 120000) {
     q('scrub').value = '1';
     q('scrub').dispatchEvent(new page.window.Event('input'));
     await waitFor(() => /waiting/i.test(ptext('pOutput')), 'output waits before its window');
+    // A cost-free platform: zero step time must not break playback, the timeline or the inspector,
+    // and a reload restores the platform before the workload.
+    page.window.close();
+    page = await open();
+    q = (id) => page.window.document.getElementById(id);
+    const pdoc2 = page.window.document;
+    await waitFor(() => [...q('platform').options].length === 4, 'platform list (truenorth page)');
+    q('platform').value = 'truenorth';
+    q('platform').dispatchEvent(new page.window.Event('change'));
+    await waitFor(() => [...q('workload').options].some((o) => o.value === 'random-snn'), 'random-snn on truenorth');
+    q('workload').value = 'random-snn';
+    q('workload').dispatchEvent(new page.window.Event('change'));
+    await waitFor(() => pdoc2.querySelector('[data-param="neurons_per_group"]'), 'random-snn form');
+    pdoc2.querySelector('[data-param="neurons_per_group"]').value = '8';
+    pdoc2.querySelector('[data-param="horizon"]').value = '3';
+    q('btnStart').click();
+    await waitFor(() => q('uHorizon').textContent === '3', 'truenorth session ready', 300000);
+    if (!/IBM TrueNorth \(functional\)/.test(q('badge').textContent)) throw new Error('truenorth badge: ' + q('badge').textContent);
+    q('btnRun').click();
+    await waitFor(() => q('uNum').textContent === '3' && q('state').textContent === 'finished', 'truenorth run', 120000);
+    pdoc2.querySelector('#tabs button[data-tab="timeline"]').click();
+    await sleep(300);
+    if (!pdoc2.querySelector('#chip svg')) throw new Error('truenorth chip did not draw');
+    if (!/showing tiles/.test(pdoc2.querySelector('#chip').textContent)) throw new Error('large mesh window note missing');
+    pdoc2.querySelector('#chip rect.core.used').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await waitFor(() => /\(none\)/.test(q('inspector').textContent), 'inspector shows the provenance word "none"');
+    const tnUrl = page.window.location.href;
+    page.window.close();
+    page = await JSDOM.fromURL(tnUrl, {
+      runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
+      beforeParse(window) {
+        window.fetch = (input, init) => fetch(new URL(input, window.location.href), init);
+        window.addEventListener('error', (event) => errors.push(event.message));
+      },
+    });
+    q = (id) => page.window.document.getElementById(id);
+    await waitFor(() => q('platform').value === 'truenorth' && q('workload').value === 'random-snn', 'reload restores platform then workload');
     if (errors.length) throw new Error('page errors: ' + errors.join('; '));
-    console.log('studio smoke: OK (3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume, aggregate level, pipeline view)');
+    console.log('studio smoke: OK (platform dropdown and filter, platform card, truenorth demo run, 3 cores, 6 updates played, 24 bars, messages, inspector, zoom and mini-map, network mode, neuron watch, message route, architecture diff, breakpoints, neuron actions, placement drag, saved runs, compare, export, pause, X mark, reload resume, aggregate level, pipeline view)');
     page.window.close();
   } catch (error) {
     console.error('studio smoke: FAIL: ' + error.message);

@@ -26,6 +26,8 @@
 <main class="main">
   <aside class="pane rail">
     <h3>Session</h3>
+    <label>platform <select id="platform"></select></label>
+    <div id="platformHint" class="hint"></div>
     <label>workload <select id="workload"></select></label>
     <div id="params"></div>
     <label>horizon override <input id="horizon" type="number" min="1" step="1" placeholder="workload default"></label>
@@ -77,7 +79,7 @@
   </aside>
 </main>
 <section class="dock">
-  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="watch">Neuron watch</button><button data-tab="messages">Messages</button><button data-tab="arch">Architecture</button><button data-tab="runs">Saved runs</button><button data-tab="compare">Compare</button></nav>
+  <nav id="tabs" class="tabs"><button data-tab="timeline" class="on">In-update timeline</button><button data-tab="perf">Live performance</button><button data-tab="watch">Neuron watch</button><button data-tab="messages">Messages</button><button data-tab="platform">Platform</button><button data-tab="runs">Saved runs</button><button data-tab="compare">Compare</button></nav>
   <div id="dock" class="dockbody"></div>
 </section>
 <script src="js/util.js"></script>
@@ -92,6 +94,7 @@
 <script src="js/inspector.js"></script>
 <script src="js/watch.js"></script>
 <script src="js/arch.js"></script>
+<script src="js/platform.js"></script>
 <script src="js/rail.js"></script>
 <script src="js/compare.js"></script>
 <script src="js/pipeline.js"></script>

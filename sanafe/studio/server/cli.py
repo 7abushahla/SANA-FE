@@ -12,15 +12,19 @@ DEFAULT_WORKLOADS = {
 
 
 def build_registry(workload_args, paths, extra=None):
-    """Default workloads, plus NAME=module:Class entries, plus ``extra``."""
-    registry = dict(DEFAULT_WORKLOADS)
+    """``extra`` workloads, then NAME=module:Class entries, then the bundled
+    defaults. The page takes its default workload, and so its default
+    platform, from the first entry, so a launcher's own workloads come first;
+    a later entry never overrides an earlier name."""
+    registry = dict(extra or {})
     sys_path = tuple(str(Path(path).resolve()) for path in paths)
     for item in workload_args:
         name, separator, target = item.partition('=')
         if not name or not separator or ':' not in target:
             raise ValueError(f'--workload expects NAME=module:Class, got {item!r}')
-        registry[name] = WorkloadRef(target, sys_path)
-    registry.update(extra or {})
+        registry.setdefault(name, WorkloadRef(target, sys_path))
+    for name, ref in DEFAULT_WORKLOADS.items():
+        registry.setdefault(name, ref)
     return registry
 
 

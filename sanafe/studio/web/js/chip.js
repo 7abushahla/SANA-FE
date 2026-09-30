@@ -63,9 +63,32 @@
     this.pending = pending || new Set();
     this.container.innerHTML = '';
     this.layout = layout;
+    /* Meshes over 256 tiles (TrueNorth's 64 x 64) draw only the occupied
+       tiles and a one-tile margin; the mini-map draws every tile as a dot. */
+    const occupied = new Set();
+    network.groups.forEach((g) => Object.keys(g.cores).forEach((c) => occupied.add(Number(c.split('.')[0]))));
+    const large = layout.tiles.length > 256;
+    let tiles = layout.tiles;
+    let x0 = 0, y0 = 0, winWidth = layout.width, winHeight = layout.height;
+    this.window = null;
+    if (large && !this.mini) {
+      const used = layout.tiles.filter((t) => occupied.has(t.id));
+      const xs = used.length ? used.map((t) => t.x) : [0];
+      const ys = used.length ? used.map((t) => t.y) : [0];
+      x0 = Math.max(0, Math.min(...xs) - 1);
+      y0 = Math.max(0, Math.min(...ys) - 1);
+      const x1 = Math.min(layout.width - 1, Math.max(...xs) + 1);
+      const y1 = Math.min(layout.height - 1, Math.max(...ys) + 1);
+      this.window = { x0: x0, x1: x1, y0: y0, y1: y1 };
+      winWidth = x1 - x0 + 1;
+      winHeight = y1 - y0 + 1;
+      tiles = layout.tiles.filter((t) => t.x >= x0 && t.x <= x1 && t.y >= y0 && t.y <= y1);
+    }
+    const miniLarge = large && this.mini;
+    const drawn = new Set(tiles.map((t) => t.id));
     const hostWidth = !this.mini && metadata && metadata.host_operations ? 150 : 0;
-    const width = hostWidth + 2 * MARGIN + layout.width * PITCH;
-    const height = 2 * MARGIN + layout.height * PITCH;
+    const width = hostWidth + 2 * MARGIN + winWidth * PITCH;
+    const height = 2 * MARGIN + winHeight * PITCH;
     const svg = S.svg(this.container, 'svg', { viewBox: '0 0 ' + width + ' ' + height, role: 'img',
       'aria-label': this.mini ? 'chip mini-map' : 'chip mesh', class: this.mini ? 'mini' : '' });
     const left = hostWidth + MARGIN + PITCH / 2;
@@ -83,7 +106,12 @@
       }
     });
 
-    S.svg(svg, 'rect', { x: hostWidth + MARGIN / 2, y: MARGIN / 2, width: layout.width * PITCH + MARGIN, height: layout.height * PITCH + MARGIN, rx: 12, class: 'chipframe' });
+    S.svg(svg, 'rect', { x: hostWidth + MARGIN / 2, y: MARGIN / 2, width: winWidth * PITCH + MARGIN, height: winHeight * PITCH + MARGIN, rx: 12, class: 'chipframe' });
+    if (this.window) {
+      S.svg(svg, 'text', { x: hostWidth + MARGIN, y: MARGIN / 2 - 6, class: 'tilelabel' },
+        'showing tiles x ' + this.window.x0 + '–' + this.window.x1 + ', y ' + this.window.y0 + '–' + this.window.y1 +
+        ' of a ' + layout.width + ' × ' + layout.height + ' mesh (occupied tiles and a one-tile margin)');
+    }
     if (!this.mini) {
       svg.addEventListener('click', (event) => {
         const target = event.target;
@@ -111,10 +139,14 @@
     }
 
     this.tileCenter = {};
-    for (const tile of layout.tiles) {
-      const cx = left + tile.x * PITCH;
-      const cy = top + (layout.height - 1 - tile.y) * PITCH;
+    for (const tile of tiles) {
+      const cx = left + (tile.x - x0) * PITCH;
+      const cy = top + (winHeight - 1 - (tile.y - y0)) * PITCH;
       this.tileCenter[tile.id] = [cx, cy];
+      if (miniLarge) {  // one dot per tile, colored when occupied
+        S.svg(svg, 'rect', { x: cx - 40, y: cy - 40, width: 80, height: 80, class: occupied.has(tile.id) ? 'tile used' : 'tile', 'data-tile': tile.id });
+        continue;
+      }
       const box = S.svg(svg, 'rect', { x: cx - 44, y: cy - 44, width: 88, height: 88, rx: 8, class: 'tile', 'data-tile': tile.id });
       if (!this.mini) {
         S.svg(box, 'title', {}, 'tile ' + tile.id + ' · click to zoom in');
@@ -123,12 +155,12 @@
     }
 
     this.links = {};
-    for (const tile of layout.tiles) {
+    for (const tile of miniLarge ? [] : tiles) {
       const neighbors = [];
       if (tile.x + 1 < layout.width) neighbors.push((tile.x + 1) * layout.height + tile.y);
       if (tile.y + 1 < layout.height) neighbors.push(tile.x * layout.height + tile.y + 1);
       for (const other of neighbors) {
-        if (other >= layout.tiles.length) continue;
+        if (other >= layout.tiles.length || !drawn.has(other)) continue;
         const a = this.tileCenter[tile.id];
         const b = this.tileCenter[other];
         this.links[linkKey(tile.id, other)] = S.svg(svg, 'line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: 'link' });
@@ -136,9 +168,13 @@
     }
 
     this.corePos = {};
-    for (const tile of layout.tiles) {
+    for (const tile of tiles) {
       const center = this.tileCenter[tile.id];
       const offsets = coreOffsets(tile.cores.length);
+      if (miniLarge) {
+        tile.cores.forEach((core) => { this.corePos[core.key] = center; });
+        continue;
+      }
       tile.cores.forEach((core, index) => {
         const x = center[0] + offsets[index][0];
         const y = center[1] + offsets[index][1];
@@ -275,7 +311,8 @@
         const end = S.flightEnd(message, record, this.clock);
         if (t >= message.send && t <= end) {
           const points = [this.corePos[message.src]]
-            .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]);
+            .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]).filter((pt) => pt);
+          if (points.length < 2) continue;
           const span = end - message.send;
           const at = along(points, span > 0 ? (t - message.send) / span : 1);
           S.svg(overlay, 'circle', { cx: at[0], cy: at[1], r: 4.5, class: 'packet' });
@@ -299,7 +336,7 @@
       const message = record.messages.find((m) => m.mid === this.route);
       if (message) {
         const points = [this.corePos[message.src]]
-          .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]);
+          .concat(message.path.map((tile) => this.tileCenter[tile]), [this.corePos[message.dst]]).filter((pt) => pt);
         S.svg(overlay, 'polyline', { points: points.map((p) => p.join(',')).join(' '), class: 'route' });
         const end = points[points.length - 1];
         S.svg(overlay, 'text', { x: end[0] + 14, y: end[1] - 12, class: 'routemark' }, 'X route');

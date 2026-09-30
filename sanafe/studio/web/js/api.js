@@ -30,6 +30,7 @@
       return request('GET', '/api/sessions/' + id + '/neurons/' + encodeURIComponent(key.slice(0, cut)) + '/' + key.slice(cut + 1));
     },
     architectures: () => request('GET', '/api/architectures'),
+    platforms: () => request('GET', '/api/platforms'),
     setBreakpoints: (id, specs) => request('PUT', '/api/sessions/' + id + '/breakpoints', { breakpoints: specs }),
     runs: () => request('GET', '/api/runs'),
     setWatches: (id, keys) => request('PUT', '/api/sessions/' + id + '/watches', { watches: keys }),

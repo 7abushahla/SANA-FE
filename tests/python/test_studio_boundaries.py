@@ -10,7 +10,8 @@ ALLOWED = {'__future__', 'argparse', 'ast', 'asyncio', 'collections', 'concurren
            'multiprocessing', 'os', 'pathlib', 'queue', 're', 'subprocess', 'sys',
            'tempfile', 'threading', 'typing', 'uuid', 'numpy', 'pandas', 'yaml',
            'sanafe', 'sanafecpp', 'starlette', 'uvicorn',
-           'io', 'numbers', 'matplotlib'}  # matplotlib: only to close sanafe.viz figures
+           'io', 'numbers', 'matplotlib',  # matplotlib: only to close sanafe.viz figures
+           'random'}  # random: the seeded generator of the random-snn demo workload
 
 
 class TestStudioBoundaries(unittest.TestCase):

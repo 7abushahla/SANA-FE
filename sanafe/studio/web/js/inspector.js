@@ -27,6 +27,13 @@
       ' (expected ' + reference.expected + ', got ' + reference.actual + '; ' + reference.mismatches + ' differ)';
   }
 
+  /* The platform's provenance word beside a modeled time or energy. */
+  function withWord(text, session, kind) {
+    const platform = session && session.platform;
+    const word = platform ? (kind === 'time' ? platform.time_word : platform.energy_word) : null;
+    return word ? text + ' (' + word + ')' : text;
+  }
+
   function edges(list, total) {
     const shown = list.slice(0, 8).map((e) => e.neuron + ' @' + e.core + ' w=' + e.weight).join('\n');
     return total + (total ? '\n' + shown + (total > 8 ? '\n…' : '') : '');
@@ -38,13 +45,13 @@
       const share = record.step_time > 0 ? ' (' + Math.round(100 * record.barrier / record.step_time) + '%)' : '';
       return ['Inspector · chip', rows([
         ['update', record.update, ''],
-        ['modeled step time', S.fmtTime(record.step_time), p.step_time],
+        ['modeled step time', withWord(S.fmtTime(record.step_time), session, 'time'), p.step_time],
         ['last core or message activity', S.fmtTime(record.last_activity), p.last_activity],
         ['barrier', S.fmtTime(record.barrier) + share, p.barrier],
         ['messages', record.counts.messages, p.counts],
         ['hops', record.counts.hops, p.counts],
         ['fired (all neurons)', record.counts.fired, p.counts],
-        ['energy', S.fmtEnergy(record.energy.total), p.energy],
+        ['energy', withWord(S.fmtEnergy(record.energy.total), session, 'energy'), p.energy],
         ['occupied cores', session.network.occupied.length, ''],
         ['reference check', referenceText(record.reference), record.reference ? 'D' : ''],
       ])];
@@ -75,7 +82,7 @@
         ['packets in', inn, 'D'],
         ['messages routed through its router', through, 'X'],
         ['network energy', record.tile_network_energy[tile.id] === undefined ? 'not recorded' :
-          S.fmtEnergy(record.tile_network_energy[tile.id]), record.tile_network_energy[tile.id] === undefined ? '' : record.provenance.tile_network_energy],
+          withWord(S.fmtEnergy(record.tile_network_energy[tile.id]), session, 'energy'), record.tile_network_energy[tile.id] === undefined ? '' : record.provenance.tile_network_energy],
       ])];
     },
 
@@ -89,11 +96,11 @@
       if (counts) fired = counts.fired === null ? 'unknown (neurons without log_spikes)' : counts.fired;
       const items = [
         ['neurons', groups.length ? groups.join(', ') : 'none mapped', 'R'],
-        ['neuron processing ends', key in record.core_finish ? S.fmtTime(record.core_finish[key]) : 'no records', p.core_finish],
+        ['neuron processing ends', key in record.core_finish ? withWord(S.fmtTime(record.core_finish[key]), session, 'time') : 'no records', p.core_finish],
         ['fired this update', fired, p.core_counts],
         ['packets in / out', counts ? counts.packets_in + ' / ' + counts.packets_out : '0 / 0', p.core_counts],
         ['spikes in', counts ? counts.spikes_in : 0, p.core_counts],
-        ['energy', energy ? S.fmtEnergy(energy.total) : 'not recorded', energy ? p['core_energy.total'] : ''],
+        ['energy', energy ? withWord(S.fmtEnergy(energy.total), session, 'energy') : 'not recorded', energy ? p['core_energy.total'] : ''],
       ];
       if (energy) {
         for (const unit in energy.units) items.push(['  ' + unit, S.fmtEnergy(energy.units[unit]), p['core_energy.units']]);

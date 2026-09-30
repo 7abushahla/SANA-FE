@@ -19,6 +19,13 @@ class TestCli(unittest.TestCase):
         extra = {'x': WorkloadRef('m:C')}
         self.assertEqual(build_registry([], [], extra)['x'], extra['x'])
 
+    def test_registry_lists_explicit_workloads_before_the_bundled_ones(self):
+        """The page picks its default workload (and so its default platform)
+        from the first listed workload, so the launcher's own come first."""
+        extra = {'x': DEFAULT_WORKLOADS['sanafe-files']}
+        registry = build_registry(['test-chain=studio_helpers:ChainWorkload'], [str(TESTS)], extra)
+        self.assertEqual(list(registry), ['x', 'test-chain', 'random-snn', 'sanafe-files'])
+
     def test_registry_rejects_malformed_workloads(self):
         for bad in ('noequals', '=m:C', 'name=nocolon'):
             with self.subTest(bad=bad):
