@@ -143,7 +143,9 @@ about 80 µs, so at true proportions they would never be visible. The
 ## Limits
 
 A fault inside SANA-FE moves the session to `faulted`, and only `reset()`
-clears it. The aggregate level keeps no per-message timing, so packets are
+clears it. Meshes with more than 256 tiles (TrueNorth's 64 × 64) draw the
+occupied tiles and a one-tile margin; the mini-map shows every tile as a
+dot. The aggregate level keeps no per-message timing, so packets are
 not animated and the timeline has no message rows.
 
 ## Running the Studio
@@ -173,9 +175,18 @@ drive it.
 - **Transport bar.** Step, Run n updates, Run to horizon, Pause, and Reset.
   A pause stops the run at the next update boundary. A pause sent while
   nothing runs is ignored.
-- **Session rail.** The form comes from the workload's parameter schema.
-  `T` and the image index are typed numbers. Changing them and pressing
-  Rebuild starts a fresh session.
+- **Session rail.** A platform dropdown comes first: the catalog in
+  `sanafe.platforms` (Intel Loihi 1, the Intel Loihi 2 candidate, IBM
+  TrueNorth functional, IBM TrueNorth with documented costs). The workload
+  list shows only workloads that list the chosen platform, plus the file
+  workload, which shows "architecture from file". The form below comes from
+  the workload's parameter schema. `T` and the image index are typed
+  numbers. Changing them and pressing Rebuild starts a fresh session.
+- **Demo workload.** `random-snn` runs on every platform: a seeded random
+  feed-forward network in the shape of the TCAD 2025 randomized benchmark,
+  with a bias-driven first group, the connection percentage, packed or
+  spread placement, and each platform's own soma model. It has no
+  reference and no readout.
 - **Chip.** Tiles hold a router and their cores. Cores take the color of
   the group with most neurons on them. Packets move on their recorded send
   and receive times along the reconstructed x-then-y route. Yellow dots mark
@@ -234,8 +245,19 @@ drive it.
   Lava and SpikingJelly traces dashed when the workload provides them.
 - **Messages.** Filter by core or neuron. Clicking a message draws its
   reconstructed route (X) on the chip.
-- **Architecture.** The loaded YAML and its differences from a bundled
-  baseline, such as the Loihi 1 file.
+- **Platform.** The card for the session's platform: title, vendor and
+  generation, the execution rule, a summary, the structure read from the
+  loaded architecture (mesh, tiles, cores, neurons per core, buffer
+  position, synchronization), the units of the reference core with the
+  model each runs and the attributes that model accepts, a costs table with
+  every coefficient's value, status and source, the validation statement,
+  the not-modeled list, and references. Status words use the mark colors:
+  `fitted` and `documented` in green, `scaled` and `inherited` in orange,
+  `none` in gray. The same words follow modeled times and energies in the
+  inspector, as "(fitted)", "(scaled)", "(inherited)", "(documented)" or
+  "(none)". The Architecture view (the loaded YAML and its differences
+  from a bundled baseline) sits under the card. Nothing on the card is a
+  hardware measurement.
 - **Debugger rail.** Breakpoints (add by kind, enable or disable, remove;
   the one that stopped the run is highlighted), watches, and the placement
   core map with pending edits.
@@ -343,6 +365,22 @@ headless Chrome for every view and tab of both QCFS workloads.
     the output panel shows class scores, a prediction, and "match". Switch
     to algorithm timesteps: two aligned columns. Click a cell: the inspector
     names the site and update, and the scrubber moves there.
+29. Choose platform "IBM TrueNorth (functional)": `qcfs-compact` and
+    `qcfs-resnet20` disappear from the workload list; `random-snn` and
+    `sanafe-files` remain. Start `random-snn` with 8 neurons per group and a
+    horizon of 3, run to horizon. The badge reads "IBM TrueNorth (functional)
+    · no cost model: energy and time are zero · not hardware", the chip shows
+    the occupied window of the 64 × 64 mesh, the timeline has bars of zero
+    length, and the inspector's energy reads "0.00 pJ (none)".
+30. Open Platform. The card lists Structure (4,096 tiles, 256 neurons per
+    core), Units (core_soma runs `truenorth`), Costs with every status
+    "none", Validation, Not modeled and References; the Architecture file
+    sits below. Choose "IBM TrueNorth (documented costs)" and rebuild: the
+    step time is 1 ms and the synapse energy row reads "documented".
+31. Choose "Intel Loihi 1", start `random-snn` with the defaults, open
+    Platform: the hop latency rows read "documented" and the soma rows
+    "fitted"; the inspector's step time reads "(fitted)". Reload the page: the
+    platform and workload dropdowns come back as they were.
 
 ## Coverage of the Streamlit workbench
 
@@ -362,6 +400,6 @@ was retired at the end of stage 5.
 | Membrane of one neuron | Neuron watch | 3 |
 | Mapped cores and assumed resources | Core inspector on the candidate | 3 |
 | Recorded messages at this update | Messages | 2 |
-| Bundled Loihi 1 against the candidate | Architecture tab, diff against `loihi` | 3 |
+| Bundled Loihi 1 against the candidate | Platform tab, Architecture view, diff against `loihi` | 3 |
 | Larger ResNet-20 mapping (occupancy) | `qcfs-resnet20` at chip scale: 109 used cores, per-core budgets in the inspector | 5 |
 | Plots from `sanafe.viz` | Export from a saved run | 4 |
