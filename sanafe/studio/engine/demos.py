@@ -77,10 +77,16 @@ class RandomSNN:
             raise ValueError(f"neurons_per_group={size} exceeds this platform's {limit} "
                              'neurons per core; lower neurons_per_group')
         if placement == 'spread':
-            stride = max(1, len(arch.tiles) // groups)
+            # One group per tile along the bottom row, spaced across at most
+            # eight columns, so a 64 x 64 mesh still draws a small window.
+            config = arch.configuration()
+            width, height = config['width'], config['height']
+            span = min(width - 1, 7)
+            stride = max(1, span // max(1, groups - 1))
             out = []
             for i in range(groups):
-                tile = arch.tiles[min(i * stride, len(arch.tiles) - 1)]
+                x = min(i * stride, width - 1)
+                tile = arch.tiles[x * height]  # tile id = x * height + y, y = 0
                 out.append((tile.cores[0], f'{tile.id}.0'))
             return out
         out, used = [], 0

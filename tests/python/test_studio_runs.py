@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sanafe.studio.engine import (EXPORT_KINDS, SanafeFiles, Session, compare_runs,
+from sanafe.studio.engine import (EXPORT_KINDS, RandomSNN, SanafeFiles, Session, compare_runs,
                                   export_plot, list_runs, load_run)
 
 from studio_helpers import REPO, ChainWorkload
@@ -15,13 +15,16 @@ class TestRuns(unittest.TestCase):
     def setUpClass(cls):
         cls.store = Path(tempfile.mkdtemp())
         cls.ids = {}
-        for name, workload, parameters in (
-                ('far', ChainWorkload(), {'placement': 'far'}),
-                ('near', ChainWorkload(), {'placement': 'near'}),
+        small = {'groups': 2, 'neurons_per_group': 8, 'horizon': 3, 'seed': 5}
+        for name, workload, parameters, platform in (
+                ('far', ChainWorkload(), {'placement': 'far'}, None),
+                ('near', ChainWorkload(), {'placement': 'near'}, None),
                 ('files', SanafeFiles(), {'arch_yaml': str(REPO / 'arch' / 'example_chip.yaml'),
                                           'net_file': str(REPO / 'snn' / 'example.net'),
-                                          'horizon': 6})):
-            session = Session(workload, parameters, store_dir=cls.store)
+                                          'horizon': 6}, None),
+                ('rnd_loihi', RandomSNN(), small, 'loihi'),
+                ('rnd_loihi2', RandomSNN(), small, 'loihi2')):
+            session = Session(workload, parameters, platform=platform, store_dir=cls.store)
             session.run_to_horizon()
             cls.ids[name] = session.store.directory.name
             session.close()
@@ -33,14 +36,15 @@ class TestRuns(unittest.TestCase):
     def test_list_runs_newest_first(self):
         runs = list_runs(self.store)
         self.assertEqual([r['id'] for r in runs],
-                         [self.ids['files'], self.ids['near'], self.ids['far']])
-        far = runs[2]
+                         [self.ids['rnd_loihi2'], self.ids['rnd_loihi'], self.ids['files'],
+                          self.ids['near'], self.ids['far']])
+        far = runs[4]
         self.assertEqual((far['workload'], far['updates'], far['horizon']), ('test-chain', 6, 6))
         self.assertEqual(far['parameters']['placement'], 'far')
         self.assertEqual(far['core_map'], {})
         self.assertEqual(far['architecture'], 'loihi2.yaml')
         (self.store / 'not-a-run').mkdir(exist_ok=True)
-        self.assertEqual(len(list_runs(self.store)), 3)
+        self.assertEqual(len(list_runs(self.store)), 5)
         self.assertEqual(list_runs(self.store / 'missing'), [])
 
     def test_placements_compare_with_identical_spikes(self):
@@ -53,6 +57,19 @@ class TestRuns(unittest.TestCase):
         hops = [(u['a']['hops'], u['b']['hops']) for u in result['updates']]
         self.assertTrue(any(a != b for a, b in hops), hops)
         self.assertGreater(result['totals']['a']['hops'], result['totals']['b']['hops'])
+
+    def test_runs_and_comparisons_name_their_platform(self):
+        by_id = {run['id']: run for run in list_runs(self.store)}
+        self.assertEqual(by_id[self.ids['far']]['platform'], 'loihi2')
+        self.assertIsNone(by_id[self.ids['files']]['platform'])
+        self.assertEqual(by_id[self.ids['rnd_loihi']]['platform'], 'loihi')
+        result = compare_runs(load_run(self.store, self.ids['rnd_loihi']),
+                              load_run(self.store, self.ids['rnd_loihi2']))
+        self.assertEqual((result['a']['platform'], result['b']['platform']), ('loihi', 'loihi2'))
+        self.assertIn('different platforms', result['note'])
+        same = compare_runs(load_run(self.store, self.ids['far']),
+                            load_run(self.store, self.ids['near']))
+        self.assertIsNone(same['note'])
 
     def test_different_networks_are_not_comparable(self):
         result = compare_runs(load_run(self.store, self.ids['far']),

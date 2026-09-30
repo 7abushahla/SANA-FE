@@ -62,8 +62,8 @@ def _jsonable(value):
 
 
 class Session:
-    def __init__(self, workload, parameters=None, *, platform=None, trace_level=None,
-                 horizon=None, store_dir=None, core_map=None):
+    def __init__(self, workload, parameters=None, *, platform=None, platform_card=None,
+                 trace_level=None, horizon=None, store_dir=None, core_map=None):
         if trace_level is None:
             trace_level = getattr(workload, 'default_trace_level', 'full')
         if trace_level not in TRACE_LEVELS:
@@ -74,6 +74,9 @@ class Session:
         self.workload = workload
         self.parameters = resolve_parameters(workload, parameters or {})
         self.platform = self._choose_platform(workload, platform)
+        # The server computes the card once and hands it over, so a worker
+        # process does not load the platform's architecture a second time.
+        self._platform_card = platform_card if self.platform is not None else None
         self.trace_level = trace_level
         self._horizon_override = horizon
         if core_map is not None and not isinstance(core_map, dict):
@@ -300,7 +303,7 @@ class Session:
         """Summary a viewer needs before the first update."""
         return {'layout': self.layout.to_dict(), 'network': self.network_summary(),
                 'horizon': self.horizon, 'badge': self.badge(),
-                'platform': P.describe(P.get(self.platform)) if self.platform else None,
+                'platform': self.platform_card(),
                 'manifest': self.manifest(), 'metadata': _jsonable(self.built.metadata),
                 'state': self.state.value, 'update': self.update,
                 'core_map': dict(self.core_map),
@@ -308,6 +311,13 @@ class Session:
                 'breakpoint_warnings': list(self.breakpoint_warnings),
                 'trace_level': self.trace_level, 'watched': list(self.watched),
                 'run': self.store.directory.name if self.store is not None else None}
+
+    def platform_card(self):
+        if self.platform is None:
+            return None
+        if self._platform_card is None:
+            self._platform_card = P.describe(P.get(self.platform))
+        return self._platform_card
 
     def carry_breakpoints(self, specs):
         """Adopt another session's breakpoints; return the reasons for any dropped."""

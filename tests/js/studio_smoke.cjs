@@ -424,6 +424,28 @@ async function waitFor(check, what, timeout = 120000) {
     if (!/showing tiles/.test(pdoc2.querySelector('#chip').textContent)) throw new Error('large mesh window note missing');
     pdoc2.querySelector('#chip rect.core.used').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
     await waitFor(() => /\(none\)/.test(q('inspector').textContent), 'inspector shows the provenance word "none"');
+    // Placement edits belong to one platform: an edit applied on Loihi 1 must
+    // not be sent when the same workload is rebuilt on TrueNorth.
+    q('platform').value = 'loihi';
+    q('platform').dispatchEvent(new page.window.Event('change'));
+    await waitFor(() => q('workload').value === 'random-snn', 'random-snn kept on loihi');
+    pdoc2.querySelector('[data-param="neurons_per_group"]').value = '8';
+    pdoc2.querySelector('[data-param="horizon"]').value = '3';
+    q('btnStart').click();
+    await waitFor(() => /Intel Loihi 1/.test(q('badge').textContent) && q('uHorizon').textContent === '3', 'loihi session ready', 120000);
+    const at2 = (key) => pdoc2.querySelector('#chip rect.core[data-core="' + key + '"]');
+    await waitFor(() => at2('0.0') && /used/.test(at2('0.0').getAttribute('class')), 'loihi chip drawn');
+    at2('0.0').dispatchEvent(new page.window.MouseEvent('mousedown', { bubbles: true }));
+    at2('0.3').dispatchEvent(new page.window.MouseEvent('mouseup', { bubbles: true }));
+    await waitFor(() => !q('btnApplyEdits').disabled, 'pending edit on loihi');
+    q('btnApplyEdits').click();
+    await waitFor(() => q('btnApplyEdits').disabled && /used/.test(at2('0.3').getAttribute('class')), 'edit applied on loihi', 120000);
+    q('platform').value = 'truenorth';
+    q('platform').dispatchEvent(new page.window.Event('change'));
+    await waitFor(() => q('workload').value === 'random-snn', 'random-snn kept on truenorth');
+    q('btnStart').click();
+    await waitFor(() => /IBM TrueNorth \(functional\)/.test(q('badge').textContent) || q('formError').textContent, 'rebuild on truenorth', 300000);
+    if (q('formError').textContent) throw new Error('platform change carried a stale core map: ' + q('formError').textContent);
     const tnUrl = page.window.location.href;
     page.window.close();
     page = await JSDOM.fromURL(tnUrl, {

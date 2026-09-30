@@ -205,9 +205,17 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
                allowed_hosts=('127.0.0.1', 'localhost')):
     manager = SessionManager(registry, store_dir, build_timeout)
 
+    def warm_catalog():
+        for platform in P.registry():
+            try:
+                P.describe(platform)
+            except Exception:  # a broken entry is reported by the endpoint, not at start
+                pass
+
     @contextlib.asynccontextmanager
     async def lifespan(app):
         manager.loop = asyncio.get_running_loop()
+        threading.Thread(target=warm_catalog, name='platform-catalog', daemon=True).start()
         yield
         manager.close_all()
 
@@ -258,8 +266,15 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         except ValueError as error:
             return _json({'error': str(error)}, 400)
         session_id = uuid.uuid4().hex[:12]
+        card = None
+        if listed:  # computed once here (cached), so the worker does not reload the platform
+            chosen = platform if platform is not None else listed[0]
+            try:
+                card = await asyncio.to_thread(P.describe, P.get(chosen))
+            except (KeyError, ValueError) as error:
+                return _json({'error': str(error)}, 400)
         options = {'trace_level': trace_level, 'horizon': horizon, 'core_map': core_map,
-                   'platform': platform,
+                   'platform': platform, 'platform_card': card,
                    'breakpoints': carried,
                    'store_dir': str(manager.store_dir) if manager.store_dir else None}
         session = ManagedSession(manager, session_id, name, manager.registry[name],
@@ -408,7 +423,12 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         return _json(sorted(bundled_architectures()))
 
     async def platforms(request):
-        return _json([P.describe(platform) for platform in P.registry()])
+        def cards():
+            return [P.describe(platform) for platform in P.registry()]
+        try:
+            return _json(await asyncio.to_thread(cards))
+        except ValueError as error:  # a cost attribute without provenance
+            return _json({'error': str(error)}, 500)
 
     async def architecture(request):
         session = lookup(request)

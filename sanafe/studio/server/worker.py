@@ -80,6 +80,7 @@ def run_worker(conn, ref, parameters, options):
     try:
         session = Session(ref.load(), parameters,
                           platform=options.get('platform'),
+                          platform_card=options.get('platform_card'),
                           trace_level=options.get('trace_level'),
                           horizon=options.get('horizon'),
                           store_dir=options.get('store_dir'),

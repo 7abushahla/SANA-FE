@@ -96,7 +96,7 @@
         const item = S.html(list, 'li', { class: 'run' + (run.id === currentRun ? ' current' : ''), 'data-run': run.id });
         const params = Object.keys(run.parameters || {}).map((k) => k + '=' + run.parameters[k]).join(' ');
         const edits = Object.keys(run.core_map || {}).length ? ' · edited placement' : '';
-        S.html(item, 'div', {}, (run.id === currentRun ? '● ' : '') + run.workload + ' · ' + run.updates + ' updates');
+        S.html(item, 'div', {}, (run.id === currentRun ? '● ' : '') + run.workload + ' · ' + (run.platform || 'from file') + ' · ' + run.updates + ' updates');
         S.html(item, 'div', { class: 'hint' }, params + edits + ' · ' + (run.created || '').slice(11, 19));
         const links = S.html(item, 'div', { class: 'hint' }, 'export: ');
         for (const kind of ['raster', 'potential', 'energy', 'throughput', 'latency']) {

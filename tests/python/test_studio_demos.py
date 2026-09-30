@@ -51,3 +51,11 @@ class TestRandomSNN(unittest.TestCase):
     def test_packed_shares_a_core_when_groups_fit(self):
         built = self.build('loihi2', neurons_per_group=8, groups=4)
         self.assertEqual(len(built.metadata['cores']), 1)
+
+    def test_spread_on_a_large_mesh_stays_within_eight_columns(self):
+        built = self.build('truenorth', placement='spread', groups=8, neurons_per_group=8)
+        tiles = [int(core.split('.')[0]) for core in built.metadata['cores']]
+        self.assertEqual(len(tiles), 8)
+        self.assertEqual(tiles, sorted(set(tiles)))
+        self.assertTrue(all(tile % 64 == 0 for tile in tiles), tiles)   # y = 0
+        self.assertLessEqual(max(tiles) // 64, 7)                        # x <= 7

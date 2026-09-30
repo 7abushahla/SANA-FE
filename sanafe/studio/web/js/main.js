@@ -556,9 +556,11 @@
     }
   }
 
-  /* Start keeps the current placement edits while the workload is unchanged. */
+  /* Start keeps the current placement edits while the workload and the
+     platform are unchanged; a core map belongs to one mesh. */
   function start() {
-    const same = app.session && app.session.workload === $('workload').value;
+    const same = app.session && app.session.workload === $('workload').value &&
+      (!app.session.platform || app.session.platform.id === $('platform').value);
     return startSession(same ? app.applied : {});
   }
 

@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
+import re
+import tempfile
+
+import yaml
 
 import sanafe
 from sanafe.loihi2 import INTEL_BRIEF, LOIHI1_COSTS, RUNTIME_PAPER, candidate_cost_provenance
@@ -267,13 +271,39 @@ def _buffer_name(value):
         return str(value)
 
 
+_RANGE = re.compile(r'\[\d+\.\.\d+\]$')
+
+
+def _one_core_description(yaml_path):
+    """``SpikingChip.describe()`` of the same file reduced to one tile with one
+    core. Unit roles and accepted attributes are per-unit-template facts, so a
+    one-core chip reports them without building the full mesh (seconds and
+    gigabytes for Loihi 1)."""
+    data = yaml.safe_load(Path(yaml_path).read_text())
+    arch = data['architecture']
+    arch['attributes']['width'] = 1
+    arch['attributes']['height'] = 1
+    tile = arch['tile'][0]
+    tile['name'] = _RANGE.sub('', tile['name'])
+    core = tile['core'][0]
+    core['name'] = _RANGE.sub('', core['name'])
+    for role in ('axon_in', 'synapse', 'dendrite', 'soma', 'axon_out'):
+        for unit in core.get(role, []) or []:
+            unit['name'] = _RANGE.sub('', unit['name'])
+    arch['tile'] = [tile]
+    tile['core'] = [core]
+    with tempfile.TemporaryDirectory(prefix='sanafe-platform-') as scratch:
+        reduced = Path(scratch) / 'one_core.yaml'
+        reduced.write_text(yaml.safe_dump(data, sort_keys=False))
+        return sanafe.SpikingChip(sanafe.load_arch(str(reduced))).describe()
+
+
 @lru_cache(maxsize=None)
 def _facts(platform_id):
     """Structure, units and cost values read from the loaded architecture."""
     platform = get(platform_id)
-    arch = sanafe.load_arch(str(platform.arch_yaml))
-    config = arch.configuration()
-    described = sanafe.SpikingChip(arch).describe()
+    config = sanafe.load_arch(str(platform.arch_yaml)).configuration()
+    described = _one_core_description(platform.arch_yaml)
     tile, core = config['tiles'][0], config['tiles'][0]['cores'][0]
     dcore = described['tiles'][0]['cores'][0]
     framework = sanafe.framework_attributes
@@ -288,23 +318,27 @@ def _facts(platform_id):
                  'sync_table': sync_table,
                  'timestep_delay': config['timestep_delay'],
                  'link_buffer_size': config['link_buffer_size']}
-    models = {u['name']: u for u in core['pipeline']}
+    models = {u['name'].split('[')[0]: u for u in reversed(core['pipeline'])}
     # A YAML unit such as loihi_inputs[0..1023] expands to one instance per
-    # index; the card lists the template once with its instance count.
+    # index in the full chip; the card lists the template once with its
+    # instance count (from the full configuration, not the one-core chip).
+    instances = {}
+    for unit in core['pipeline']:
+        base = unit['name'].split('[')[0]
+        instances[base] = instances.get(base, 0) + 1
     units, by_base = [], {}
     for unit in dcore['pipeline_units']:
         base = unit['name'].split('[')[0]
         if base in by_base:
-            by_base[base]['instances'] += 1
             continue
         role = '+'.join(r for r in ('synapse', 'dendrite', 'soma') if unit[f'implements_{r}'])
         accepted = [{'name': name, 'help': text}
                     for name, text in sorted(unit['supported_attributes'].items())
                     if name not in framework and name not in COST_ATTRIBUTES]
         entry = {'name': base, 'role': role,
-                 'model': models.get(unit['name'], {}).get('model', ''),
-                 'plugin': models.get(unit['name'], {}).get('plugin', ''),
-                 'instances': 1, 'attributes': accepted}
+                 'model': models.get(base, {}).get('model', ''),
+                 'plugin': models.get(base, {}).get('plugin', ''),
+                 'instances': instances.get(base, 1), 'attributes': accepted}
         by_base[base] = entry
         units.append(entry)
     for name, _energy, _latency in core['axon_in']:

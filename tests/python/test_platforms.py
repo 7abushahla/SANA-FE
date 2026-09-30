@@ -149,3 +149,24 @@ class TestRegistry(unittest.TestCase):
     def test_card_is_json_serializable(self):
         for platform in P.registry():
             json.dumps(P.describe(platform))
+
+
+class TestCatalogCost(unittest.TestCase):
+    def test_facts_never_build_a_full_chip(self):
+        """The card needs only one core's units, so the catalog must not
+        construct the whole chip (seconds and gigabytes for Loihi 1)."""
+        from unittest import mock
+        seen = []
+        real = sanafe.SpikingChip
+
+        def recording(arch, *args, **kwargs):
+            seen.append(arch.configuration()['core_count'])
+            return real(arch, *args, **kwargs)
+
+        P._facts.cache_clear()
+        with mock.patch.object(sanafe, 'SpikingChip', recording):
+            card = P.describe(P.get('loihi'))
+        self.assertEqual(seen, [1])
+        self.assertEqual(card['structure']['cores'], 128)
+        soma = next(u for u in card['units'] if u['name'] == 'loihi_lif')
+        self.assertIn('leak_decay', {a['name'] for a in soma['attributes']})

@@ -4,7 +4,7 @@
 
   function label(run) {
     const params = Object.keys(run.parameters || {}).map((k) => k + '=' + run.parameters[k]).join(' ');
-    return run.workload + ' · ' + params + (Object.keys(run.core_map || {}).length ? ' · edited' : '') +
+    return run.workload + ' · ' + (run.platform || 'from file') + ' · ' + params + (Object.keys(run.core_map || {}).length ? ' · edited' : '') +
       ' · ' + run.updates + ' updates · ' + (run.created || '').slice(11, 19);
   }
 

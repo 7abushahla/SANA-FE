@@ -37,6 +37,7 @@ def list_runs(store_dir):
                      'core_map': manifest.get('core_map', {}),
                      'created': manifest.get('created'), 'updates': updates,
                      'horizon': manifest.get('horizon'),
+                     'platform': manifest.get('platform'),
                      'architecture': Path(manifest.get('architecture_yaml', '')).name})
     return sorted(runs, key=lambda run: run['created'] or '', reverse=True)
 
@@ -92,14 +93,20 @@ def compare_runs(a, b):
     if aggregate and note is None:
         note = ('spike trains not compared: aggregate runs keep only watched neurons; '
                 'time, energy, hops, and per-core load are compared')
+    platform_a, platform_b = manifest_a.get('platform'), manifest_b.get('platform')
+    if platform_a != platform_b:
+        warning = (f'different platforms ({platform_a or "file"} against {platform_b or "file"}): '
+                   'time and energy come from different cost models and are not a '
+                   'generation comparison')
+        note = warning if note is None else note + '; ' + warning
     return {'comparable': comparable, 'note': note,
             'identical_spikes': comparable and not aggregate and first is None and common > 0,
             'first_difference': first, 'updates': updates,
             'updates_a': len(records_a), 'updates_b': len(records_b),
             'totals': {'a': totals(records_a), 'b': totals(records_b)},
-            'a': {'workload': manifest_a.get('workload'),
+            'a': {'workload': manifest_a.get('workload'), 'platform': platform_a,
                   'parameters': manifest_a.get('parameters'),
                   'core_map': manifest_a.get('core_map', {})},
-            'b': {'workload': manifest_b.get('workload'),
+            'b': {'workload': manifest_b.get('workload'), 'platform': platform_b,
                   'parameters': manifest_b.get('parameters'),
                   'core_map': manifest_b.get('core_map', {})}}

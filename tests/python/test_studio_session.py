@@ -253,3 +253,14 @@ class TestSessionPlatform(unittest.TestCase):
     def test_platform_given_to_a_file_workload_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'does not take a platform'):
             Session(SanafeFiles(), dict(self.FILES), platform='loihi', store_dir=None)
+
+    def test_a_supplied_card_is_used_without_recomputing_it(self):
+        from unittest import mock
+        from sanafe import platforms as P
+        card = {'id': 'loihi2', 'title': 'supplied', 'time_word': 'scaled', 'energy_word': 'inherited'}
+        with mock.patch.object(P, 'describe', side_effect=AssertionError('describe must not run')):
+            session = Session(ChainWorkload(), {}, platform_card=card, store_dir=None)
+            try:
+                self.assertEqual(session.describe()['platform'], card)
+            finally:
+                session.close()
