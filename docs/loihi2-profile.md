@@ -1,8 +1,22 @@
 # Loihi 2 candidate profile
 
-`sanafe.loihi2.load_loihi2_candidate()` returns an architectural candidate with 128 cores in an 8 × 4 mesh of four-core tiles. It selects `integrate_fire_int24`, `accumulator_int`, and `current_based_int` with an external pre-soma buffer. All timing, synchronization, and energy coefficients remain inherited from the bundled Loihi 1 configuration. They are not Loihi 2 measurements or calibrated predictions.
+`sanafe.loihi2.load_loihi2_candidate()` returns an architectural candidate with 128 cores in an 8 × 4 mesh of four-core tiles. It selects `integrate_fire_int24`, `accumulator_int`, and `current_based_int` with an external pre-soma buffer. Its cost coefficients start from the bundled, Nahuku-fitted Loihi 1 configuration. Four latencies and the barrier table are scaled by the factors Intel states for Loihi 2 over Loihi 1; every energy, hop and message coefficient is inherited unchanged (see [Cost derivation](#cost-derivation)). They are scaled estimates, not Loihi 2 measurements or calibrated predictions.
 
 `candidate_profile()` returns a serializable specification with parameter provenance, profile version 1, and numerical profile identifier `qcfs-if-int24-binary-v1`. The restricted numerical contract uses signed 16-bit effective weight transport, input, and bias, signed 32-bit accumulation with overflow rejection, and signed 24-bit voltage clipping before a `>=` threshold comparison. Effective weight transport is not a statement of physical Loihi 2 weight precision. Documented native stored synapses have at most 8-bit weights [2]. `audit_unit_scale_signed8_weights()` flags effective software values outside a direct signed8 unit-scale scenario; it does not test exponent selection, parallel synapses, or physical packing. Each valid update emits at most one binary event and subtracts the threshold once. Connections have one logical update of delay. These are candidate software semantics, not a verified Loihi 2 neuron program or a complete implementation of Loihi 2 capabilities.
+
+## Cost derivation
+
+Decided 2026-09-30. The candidate's costs are the fitted Loihi 1 coefficients of `arch/loihi.yaml` (see that file's header for their Nahuku provenance), with the following changes and nothing else. `sanafe.loihi2.candidate_cost_provenance()` returns the same table programmatically and `test_loihi2_profile` checks the YAML against it.
+
+| Coefficient | Loihi 1 fitted | Factor | Candidate | Basis |
+| --- | --- | --- | --- | --- |
+| `latency_access_neuron`, `latency_update_neuron` | 6.0 ns, 3.7 ns | ÷ 2 | 3.0 ns, 1.85 ns | "2x for simple neuron state updates" [1] |
+| `latency_process_spike` | 3.8 ns | ÷ 5 | 0.76 ns | "5x for synaptic operations" [1] |
+| `latency_spike_out` | 30 ns | ÷ 10 | 3.0 ns | "10x for spike generation" [1] |
+| `latency_sync` table, 1 / 2 / 4 / 29 tiles | 0.6 / 1.0 / 1.4 / 1.8 µs | ÷ 9 | 66.7 / 111 / 156 / 200 ns | chip-wide entry set to the stated "minimum chip-wide time steps under 200ns" [1] |
+| every `energy_*`, hop and message coefficient, `link_buffer_size` | as Loihi 1 | 1 | unchanged | no public Loihi 2 datum |
+
+Intel's footnote to the factors states that they are "based on comparisons between barrier synchronization time, synaptic update time, neuron update time, and neuron spike times between Loihi 1 and 2", with Loihi 1 measured on Nahuku-32 silicon and Loihi 2 measured on N3B1 silicon and pre-silicon circuit simulation [1]. The mapping of those four quantities onto SANA-FE's soma, synapse and synchronization attributes is ours. Limits of the derivation: it compounds the Loihi 1 fit error (TCAD 2025: within 24.3% on latency) with the uncertainty of vendor-stated ratios; the 200 ns floor is an upper bound of "under 200ns"; NoC hop latencies are inherited because Intel's "4x faster" signaling figure concerns chip-to-chip links [1], not the on-chip mesh; energy has no scaling datum at all, so candidate energies remain Loihi 1 energies on Intel 4 silicon and must not be read as Loihi 2 energy. Runtime rates measured on Loihi 2 exist only as Figure 4 of Timcheck et al. [2]; when they are read off or measured, they belong in `loihi2_runtime.py`, not in this file.
 
 ## Architecture files and authoritative specifications
 

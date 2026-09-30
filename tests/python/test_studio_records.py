@@ -47,7 +47,12 @@ class TestUpdateRecords(unittest.TestCase):
             self.assertTrue(all(value > 0 for value in record.core_finish.values()))
 
     def test_barrier_equals_sync_table_entry(self):
-        for placement, barrier in (('far', 1.0e-6), ('one_router', 0.6e-6)):
+        import yaml
+        from importlib.resources import files
+        table = yaml.safe_load((files('sanafe.examples') / 'loihi2.yaml').read_text())
+        table = table['architecture']['attributes']['latency_sync']
+        # far occupies three tiles (table entry 2 applies); one_router occupies one.
+        for placement, barrier in (('far', table[2]), ('one_router', table[1])):
             with self.subTest(placement=placement):
                 records, _ = stepped_records(placement)
                 for record in records:

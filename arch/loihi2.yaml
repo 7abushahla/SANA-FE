@@ -2,27 +2,42 @@
 # Topology: 8 x 4 routers, four neurocores/router, 128 neurocores total.
 # Intel's 8 x 16 description counts CORES, not routers.
 # Sources and limitations: docs/loihi2-profile.md and sanafe/loihi2.py.
-# Timing, synchronization, and energy costs below are inherited Loihi 1
-# estimates, NOT calibrated Loihi 2 measurements.
+#
+# Cost provenance (decided 2026-09-30; sanafe.loihi2.candidate_cost_provenance()):
+#  - Base values are the fitted Loihi 1 (Nahuku) coefficients of arch/loihi.yaml.
+#  - Four latencies are scaled by the factors Intel states for Loihi 2 over
+#    Loihi 1 in "Taking Neuromorphic Computing to the Next Level with Loihi 2"
+#    (2021), "Faster circuit speeds" and footnote 2 (Loihi 1 from silicon
+#    characterization on Nahuku-32; Loihi 2 from N3B1 silicon and pre-silicon
+#    circuit simulation): neuron state update 2x, synaptic operation 5x,
+#    spike generation 10x. The barrier table is scaled so that the chip-wide
+#    entry equals the stated "minimum chip-wide time steps under 200ns"
+#    (factor 9 against the fitted 1.8 us).
+#  - Every energy value, the NoC hop costs and the axon message costs are
+#    inherited from Loihi 1 unchanged: no public Loihi 2 datum scales them.
+#  These are scaled estimates, NOT calibrated Loihi 2 measurements.
 # One effective mesh is modeled; two physical fabrics are not explicit.
 # Integer IF semantics are implemented directly, not via Intel microcode.
 # Learning engines and embedded management CPUs are not modeled.
-# Keep arch/loihi2.yaml and sanafe/examples/loihi2.yaml identical.
+# Keep arch/loihi2.yaml and sanafe/examples/loihi2.yaml identical; the test
+# test_loihi2_profile checks this file against arch/loihi.yaml and the factors.
 architecture:
   name: loihi2_candidate
   attributes:
     topology: mesh
     width: 8
     height: 4
-    link_buffer_size: 16
+    link_buffer_size: 16  # inherited Loihi 1
     #sync_model: fixed
     #latency_sync: 0.0
     # Enable this if simulating with more detailed timing models
     sync_model: table
-    latency_sync: { 1: 0.6e-6, 2: 1.0e-6, 4: 1.4e-6, 29: 1.8e-6 }
+    # Loihi 1 fitted {0.6, 1.0, 1.4, 1.8} us divided by 9: chip-wide 200 ns
+    latency_sync: { 1: 6.6667e-8, 2: 1.1111e-7, 4: 1.5556e-7, 29: 2.0e-7 }
   tile:
     - name: loihi_tile[0..31]
       attributes:
+        # NoC hop costs inherited from Loihi 1 (no public on-chip Loihi 2 datum)
         energy_north_hop: 4.2e-12
         latency_north_hop: 6.5e-9
         energy_east_hop: 3.0e-12
@@ -40,18 +55,18 @@ architecture:
           axon_in:
             - name: loihi_in
               attributes:
-                energy_message_in: 0.0e-12
-                latency_message_in: 16.0e-9
+                energy_message_in: 0.0e-12  # inherited Loihi 1
+                latency_message_in: 16.0e-9  # inherited Loihi 1
           soma:
             - name: loihi_lif
               attributes:
                 model: integrate_fire_int24
-                energy_access_neuron: 51.2e-12
-                latency_access_neuron: 6.0e-9
-                energy_update_neuron: 21.6e-12
-                latency_update_neuron: 3.7e-9
-                energy_spike_out: 69.3e-12
-                latency_spike_out: 30.0e-9
+                energy_access_neuron: 51.2e-12  # inherited Loihi 1
+                latency_access_neuron: 3.0e-9  # Loihi 1 6.0 ns / 2 (neuron update 2x)
+                energy_update_neuron: 21.6e-12  # inherited Loihi 1
+                latency_update_neuron: 1.85e-9  # Loihi 1 3.7 ns / 2 (neuron update 2x)
+                energy_spike_out: 69.3e-12  # inherited Loihi 1
+                latency_spike_out: 3.0e-9  # Loihi 1 30 ns / 10 (spike generation 10x)
           dendrite:
             - name: loihi_dendrites
               attributes:
@@ -62,10 +77,10 @@ architecture:
             - name: loihi_dense_synapse  # Use the name to link
               attributes:
                 model: current_based_int
-                energy_process_spike: 35.5e-12
-                latency_process_spike: 3.8e-9
+                energy_process_spike: 35.5e-12  # inherited Loihi 1
+                latency_process_spike: 0.76e-9  # Loihi 1 3.8 ns / 5 (synaptic operation 5x)
           axon_out:
             - name: loihi_out
               attributes:
-                energy_message_out: 111.0e-12
-                latency_message_out: 5.1e-9
+                energy_message_out: 111.0e-12  # inherited Loihi 1
+                latency_message_out: 5.1e-9  # inherited Loihi 1

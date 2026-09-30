@@ -268,7 +268,8 @@ class Session:
     def badge(self):
         """The provenance line every view must show for this architecture."""
         if self._candidate:
-            return 'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware'
+            return ('Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                    'energy inherited from Loihi 1 · not hardware')
         return (f'{Path(self.built.arch_yaml).name} · modeled costs from this file · '
                 'not measurements')
 

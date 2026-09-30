@@ -70,6 +70,50 @@ class TestLoihi2Profile(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 Allocation(**kwargs)
 
+    def test_candidate_costs_derive_from_loihi1_by_the_stated_factors(self):
+        """Every cost is the fitted Loihi 1 value, scaled only where a factor is declared."""
+        import yaml
+        from sanafe.loihi2 import (LATENCY_SCALING, SYNC_SCALING, INHERITED_COSTS,
+                                   candidate_cost_provenance)
+        base = yaml.safe_load((files('sanafe.examples') / 'loihi.yaml').read_text())['architecture']
+        cand = yaml.safe_load((files('sanafe.examples') / 'loihi2.yaml').read_text())['architecture']
+
+        def flat(node, path=()):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    yield from flat(value, path + (key,))
+            elif isinstance(node, list):
+                for item in node:
+                    yield from flat(item, path + (item.get('name', '?') if isinstance(item, dict) else '?',))
+            else:
+                yield path, node
+
+        base_costs = {path: value for path, value in flat(base)
+                      if path[-1] in LATENCY_SCALING or path[-1] in INHERITED_COSTS}
+        seen = set()
+        for path, value in flat(cand):
+            name = path[-1]
+            if name in LATENCY_SCALING:
+                factor, _ = LATENCY_SCALING[name]
+                self.assertIn(path, base_costs, path)
+                self.assertAlmostEqual(value, base_costs[path] / factor, delta=abs(value) * 1e-3)
+                seen.add(name)
+            elif name in INHERITED_COSTS:
+                self.assertIn(path, base_costs, path)
+                self.assertEqual(value, base_costs[path], path)
+                seen.add(name)
+        self.assertEqual(seen, set(LATENCY_SCALING) | set(INHERITED_COSTS))
+        base_sync = base['attributes']['latency_sync']
+        cand_sync = cand['attributes']['latency_sync']
+        self.assertEqual(set(cand_sync), set(base_sync))
+        for tiles, value in cand_sync.items():
+            self.assertAlmostEqual(value, base_sync[tiles] / SYNC_SCALING[0], delta=value * 1e-3)
+        self.assertAlmostEqual(cand_sync[max(cand_sync)], 200e-9, delta=1e-12)
+        provenance = candidate_cost_provenance()
+        self.assertEqual({k for k, v in provenance.items() if v['status'] == 'scaled'},
+                         set(LATENCY_SCALING) | {'latency_sync'})
+        self.assertEqual(provenance, candidate_profile()['cost_provenance'])
+
     def test_candidate_architecture_uses_only_integer_models(self):
         profile = candidate_profile()
         self.assertEqual(profile['limits']['native_stored_weight_bits_max'], 8)

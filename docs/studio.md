@@ -263,7 +263,8 @@ overlap; `SANA-FE-thesis/studio_workloads/smoke_layout.cjs` measures that in
 headless Chrome for every view and tab of both QCFS workloads.
 
 1. Start the thesis launcher and open the page. The badge reads "Loihi 2
-   candidate · costs inherited from Loihi 1 · not hardware".
+   candidate · latencies scaled from Loihi 1 by Intel-stated factors · energy
+   inherited from Loihi 1 · not hardware".
 2. Start `qcfs-compact` with `T = 3`. The used cores are colored, and a
    legend under the chip names each layer and its core count. One dashed
    arrow runs from the host box to a dashed outline around IF0's cores. The

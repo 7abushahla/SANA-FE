@@ -159,7 +159,7 @@ class TestSession(unittest.TestCase):
             {'name': 'layer_2', 'size': 2, 'cores': {'31.0': 2}}])
         self.assertEqual(summary['occupied'], ['0.0', '16.0', '31.0'])
         self.assertEqual(session.badge(),
-                         'Loihi 2 candidate · costs inherited from Loihi 1 · not hardware')
+                         'Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · energy inherited from Loihi 1 · not hardware')
         described = session.describe()
         self.assertEqual(set(described), {'layout', 'network', 'horizon', 'badge', 'manifest',
                                           'metadata', 'state', 'update', 'core_map',

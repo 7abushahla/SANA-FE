@@ -14,6 +14,46 @@ INTEL_BRIEF = 'https://www.intel.com/content/dam/www/central-libraries/us/en/doc
 RUNTIME_PAPER = 'https://arxiv.org/html/2601.10035v2'
 LOIHI1_COSTS = 'https://github.com/SLAM-Lab/SANA-FE/blob/93926ec8019206c1c6e6709448ac4c67f46d57db/sanafe/examples/loihi.yaml'
 
+# Latency scaling from the fitted Loihi 1 file to the candidate, decided
+# 2026-09-30. Factors are Intel's stated Loihi 2 over Loihi 1 speed-ups
+# (technology brief, "Faster circuit speeds" and footnote 2: Loihi 1 from
+# silicon characterization on Nahuku-32, Loihi 2 from N3B1 silicon and
+# pre-silicon circuit simulation). The barrier table is scaled so that its
+# chip-wide entry equals the stated "minimum chip-wide time steps under
+# 200ns". Everything not listed here is inherited from Loihi 1 unchanged.
+LATENCY_SCALING = {
+    'latency_access_neuron': (2.0, 'neuron state update 2x'),
+    'latency_update_neuron': (2.0, 'neuron state update 2x'),
+    'latency_process_spike': (5.0, 'synaptic operation 5x'),
+    'latency_spike_out': (10.0, 'spike generation 10x'),
+}
+SYNC_SCALING = (9.0, 'chip-wide barrier table scaled to the stated 200 ns floor '
+                     '(fitted Loihi 1 chip-wide entry 1.8 us / 9)')
+INHERITED_COSTS = ('energy_access_neuron', 'energy_update_neuron', 'energy_spike_out',
+                   'energy_process_spike', 'energy_message_in', 'latency_message_in',
+                   'energy_message_out', 'latency_message_out', 'energy_update',
+                   'latency_update', 'energy_north_hop', 'latency_north_hop',
+                   'energy_east_hop', 'latency_east_hop', 'energy_south_hop',
+                   'latency_south_hop', 'energy_west_hop', 'latency_west_hop',
+                   'link_buffer_size')
+
+
+def candidate_cost_provenance():
+    """Per-attribute origin of every cost coefficient in the candidate YAML."""
+    scaled = {name: {'status': 'scaled', 'factor': factor, 'basis': basis,
+                     'base': 'fitted Loihi 1 (Nahuku) value in loihi.yaml',
+                     'source': INTEL_BRIEF}
+              for name, (factor, basis) in LATENCY_SCALING.items()}
+    scaled['latency_sync'] = {'status': 'scaled', 'factor': SYNC_SCALING[0],
+                              'basis': SYNC_SCALING[1],
+                              'base': 'fitted Loihi 1 (Nahuku) table in loihi.yaml',
+                              'source': INTEL_BRIEF}
+    inherited = {name: {'status': 'inherited', 'base': 'fitted Loihi 1 (Nahuku) value in loihi.yaml',
+                        'source': LOIHI1_COSTS,
+                        'reason': 'no public Loihi 2 datum scales this coefficient'}
+                 for name in INHERITED_COSTS}
+    return {**scaled, **inherited}
+
 
 def _integer(value, name, minimum, maximum=None):
     if isinstance(value, bool) or not isinstance(value, Integral):
@@ -97,8 +137,11 @@ def candidate_profile():
         'weight_mapping': 'signed16 effective software weights are not certified as '
                           'one native stored synapse; wider values may require '
                           'multiple 8-bit synapses and change workload',
-        'timing': 'inherited Loihi 1 costs; not calibrated for Loihi 2',
-        'energy': 'inherited Loihi 1 costs; not calibrated for Loihi 2',
+        'timing': 'fitted Loihi 1 latencies scaled by Intel-stated Loihi 2 factors '
+                  '(neuron 2x, synapse 5x, spike 10x, barrier to a 200 ns chip-wide '
+                  'floor); hop and message latencies inherited; not calibrated for Loihi 2',
+        'energy': 'inherited Loihi 1 costs; no public Loihi 2 datum; not calibrated for Loihi 2',
+        'cost_provenance': candidate_cost_provenance(),
         'provenance': {
             'limits': {'status': 'public specification', 'source': INTEL_BRIEF,
                        'locator': 'resource comparison table and NeuroCore memory discussion',
@@ -115,14 +158,17 @@ def candidate_profile():
                                    'units': 'bits per native synapse'},
             'semantics': {'status': 'restricted functional candidate; not verified neuron program'},
             'allocation': {'status': 'assumed byte layout'},
-            'timing_and_energy': {'status': 'inherited Loihi 1', 'source': LOIHI1_COSTS,
-                                  'locator': 'latency_* and energy_* attributes; latency_sync table',
-                                  'units': 'seconds and joules'}},
+            'timing': {'status': 'scaled from fitted Loihi 1 where Intel states a factor; '
+                                 'inherited elsewhere', 'source': INTEL_BRIEF,
+                       'locator': '"Faster circuit speeds" and footnote 2; see cost_provenance',
+                       'units': 'seconds'},
+            'energy': {'status': 'inherited Loihi 1', 'source': LOIHI1_COSTS,
+                       'locator': 'energy_* attributes', 'units': 'joules'}},
     }
 
 
 def load_loihi2_candidate():
-    """Load the packaged candidate architecture with inherited Loihi 1 costs."""
+    """Load the packaged candidate architecture (Loihi 1 costs, latencies scaled)."""
     from sanafecpp import load_arch
     with as_file(files('sanafe.examples') / 'loihi2.yaml') as path:
         return load_arch(str(path))

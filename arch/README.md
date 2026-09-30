@@ -64,5 +64,6 @@ is `sanafe/examples/loihi2.yaml`; keep both identical. The Python helper
 `sanafe.loihi2.load_loihi2_candidate()` reads the packaged copy through the
 standard architecture loader. See [the profile documentation](../docs/loihi2-profile.md)
 for sources, resource checks, and unsupported hardware capabilities.
-Timing and energy coefficients remain inherited from Loihi 1 and are not
-calibrated Loihi 2 estimates.
+Its latencies are the fitted Loihi 1 values scaled by Intel's stated Loihi 2
+factors; its energies are inherited from Loihi 1. Neither is a calibrated
+Loihi 2 estimate (see the profile documentation's cost derivation).
