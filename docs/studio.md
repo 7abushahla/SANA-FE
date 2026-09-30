@@ -184,6 +184,15 @@ drive it.
 - **Clock.** "Modeled time" keeps true proportions, so packets appear only
   briefly. "Slow motion around packets" slows the clock only while packets
   fly. Both keep the recorded order.
+- **Pause, Stop, Reset.** The simulation runs on the server and the page
+  animates the updates it has received, often long after the server has
+  finished. Pause (or the space bar) freezes the animation where it is and,
+  if the simulation is still computing, holds it at the next update
+  boundary; Resume continues both. Stop ends the run: the simulation halts
+  at the next boundary, the view freezes on the current frame, and nothing
+  resumes. Run or Step then continues from the halted update, and every
+  computed update stays on the scrubber. Reset works at any time; mid-run it
+  halts first, then rebuilds at update 0.
 - **Playback.** Wall-clock seconds spent on each update, from 6 s down to
   0.15 s, plus "instant", which draws each update once and moves on without
   animating it. The hint beside the control gives the playback time for the
@@ -312,6 +321,12 @@ headless Chrome for every view and tab of both QCFS workloads.
     "instant". The remaining updates draw one after another with no
     animation, and the hint reads "no animation". Set it back to 1.2 s and
     press Replay; packets move again.
+27. Run ResNet-20 at 3 s per update and press space after a second. The
+    frame and the computed count both hold, and the button reads Resume.
+    Press it: both continue to update 20. Press Pause again while it is
+    still animating (the server has finished): the frame holds. Press
+    Stop: the state no longer offers Resume. Reset, Run, and press Stop
+    mid-compute: the state reads "stopped at update N".
 
 ## Coverage of the Streamlit workbench
 

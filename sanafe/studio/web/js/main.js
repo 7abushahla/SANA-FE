@@ -341,9 +341,11 @@
     $('follow').checked = player.follow;
     $('btnReplay').disabled = !record;
     $('btnLatest').disabled = !player.records.length;
+    updateControls();
   }
 
   function describeState(info) {
+    if (app.stopped && info.state === 'paused') return 'stopped at update ' + info.update;
     if (info.state === 'stopped') return 'stopped: ' + info.reason;
     if (info.state === 'faulted') {
       return 'faulted: ' + (info.fault || 'unknown') + (info.alive === false ? ' · start a new session' : ' · reset to continue');
@@ -366,15 +368,96 @@
     const node = $('state');
     node.textContent = describeState(info);
     node.className = 'state ' + info.state;
+    app.server = info;
+    if (typeof info.horizon === 'number') $('uHorizon').textContent = info.horizon;
+    if (!serverRunning()) settle();
+    updateControls();
+  }
+
+  /* Two clocks run here: the simulation on the server and the playback in the
+     page, which animates updates the server may have finished long before.
+     Pause, Resume and Stop act on both; the buttons follow both. */
+  function serverRunning() {
+    return !!app.server && (app.server.state === 'running' || app.server.state === 'starting');
+  }
+
+  function updateControls() {
     const usable = !!app.session && app.alive;
-    const running = info.state === 'running' || info.state === 'starting';
-    const blocked = !usable || running || info.state === 'faulted';
+    const running = serverRunning();
+    const faulted = !!app.server && app.server.state === 'faulted';
+    const blocked = !usable || running || faulted;
     $('btnStep').disabled = blocked;
     $('btnRunN').disabled = blocked;
     $('btnRun').disabled = blocked;
-    $('btnPause').disabled = !usable || !running;
-    $('btnReset').disabled = !usable || running;
-    if (typeof info.horizon === 'number') $('uHorizon').textContent = info.horizon;
+    const held = player.paused || app.heldServer;
+    const moving = running || player.busy();
+    $('btnPause').disabled = !usable || !(moving || held);
+    $('btnPause').textContent = held ? '▶ Resume' : '❚❚ Pause';
+    $('btnStop').disabled = !usable || !(moving || held);
+    $('btnReset').disabled = !usable || (!!app.server && app.server.state === 'starting');
+  }
+
+  /* Actions that wait for the server to reach an update boundary. */
+  function settle() {
+    if (app.resetWhenSettled) { app.resetWhenSettled = false; command(S.api.reset); return; }
+    if (app.resumeWhenSettled) { app.resumeWhenSettled = false; continueRun(); }
+  }
+
+  /* Start the server again on the command the pause interrupted. */
+  function continueRun() {
+    const last = app.lastRun;
+    if (!last || !app.server || app.server.state !== 'paused') return;
+    if (last.kind === 'run') command(S.api.run);
+    else if (last.target > app.server.update) command((id) => S.api.step(id, last.target - app.server.update));
+  }
+
+  function clearHolds() {
+    app.stopped = false;
+    app.heldServer = false;
+    app.resumeWhenSettled = false;
+    player.resume();
+  }
+
+  function runCommand(kind, n) {
+    clearHolds();
+    const from = app.server ? app.server.update : 0;
+    app.lastRun = kind === 'run' ? { kind: 'run' } : { kind: 'step', target: from + (Number(n) || 0) };
+    command(kind === 'run' ? S.api.run : (id) => S.api.step(id, n));
+  }
+
+  function togglePause() {
+    if (!app.session) return;
+    if (player.paused || app.heldServer) {  // resume both clocks
+      player.resume();
+      if (app.heldServer) {
+        app.heldServer = false;
+        if (serverRunning()) app.resumeWhenSettled = true;  // the pause has not landed yet
+        else continueRun();
+      }
+    } else {
+      player.pause();
+      if (serverRunning()) { app.heldServer = true; command(S.api.pause); }
+    }
+    app.stopped = false;
+    updateControls();
+  }
+
+  function stopRun() {
+    if (!app.session) return;
+    player.stop();
+    app.stopped = true;
+    app.heldServer = false;
+    app.resumeWhenSettled = false;
+    if (serverRunning()) command(S.api.pause);  // relabelled when the server settles
+    updateControls();
+  }
+
+  /* Reset is allowed mid-run: halt at the next boundary, then rebuild. */
+  function resetSession() {
+    if (!app.session) return;
+    clearHolds();
+    if (serverRunning()) { player.stop(); app.resetWhenSettled = true; command(S.api.pause); }
+    else command(S.api.reset);
   }
 
   function applyReady(ready) {
@@ -443,6 +526,9 @@
       await catchUp();
     } else if (message.type === 'ready') {
       player.reset();
+      app.stopped = false;
+      app.heldServer = false;
+      app.resumeWhenSettled = false;
       applyReady(message);
     } else if (message.type === 'update') {
       player.add(message.record);
@@ -545,14 +631,21 @@
 
   $('workload').addEventListener('change', renderParams);
   $('btnStart').addEventListener('click', start);
-  $('btnStep').addEventListener('click', () => command((id) => S.api.step(id, 1)));
+  $('btnStep').addEventListener('click', () => runCommand('step', 1));
   $('btnRunN').addEventListener('click', () => {
     const raw = $('runN').value.trim();
-    command((id) => S.api.step(id, /^\d+$/.test(raw) ? Number(raw) : raw));
+    runCommand('step', /^\d+$/.test(raw) ? Number(raw) : raw);
   });
-  $('btnRun').addEventListener('click', () => command(S.api.run));
-  $('btnPause').addEventListener('click', () => command(S.api.pause));
-  $('btnReset').addEventListener('click', () => command(S.api.reset));
+  $('btnRun').addEventListener('click', () => runCommand('run'));
+  $('btnPause').addEventListener('click', togglePause);
+  $('btnStop').addEventListener('click', stopRun);
+  $('btnReset').addEventListener('click', resetSession);
+  document.addEventListener('keydown', (event) => {  // space toggles pause outside form fields
+    if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(event.target.tagName)) return;
+    event.preventDefault();
+    togglePause();
+  });
   $('clock').addEventListener('change', () => {
     player.clock = $('clock').value;
     chip.clock = mini.clock = $('clock').value;

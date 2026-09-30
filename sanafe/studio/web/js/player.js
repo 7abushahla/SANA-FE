@@ -36,8 +36,31 @@
     this.index = -1;
     this.t = 0;
     this.playing = false;
+    this.paused = false;
     this.follow = true;
     this.dirty = true;
+  };
+
+  /* Pause freezes the playhead; arriving updates wait until resume. */
+  Player.prototype.pause = function () { this.paused = true; this.dirty = true; };
+  Player.prototype.resume = function () {
+    this.paused = false;
+    if (!this.playing && this.follow) this.advance();
+    this.dirty = true;
+  };
+
+  /* Stop freezes on the current frame for good: nothing resumes or follows.
+     Every computed update stays reachable through show(). */
+  Player.prototype.stop = function () {
+    this.paused = false;
+    this.playing = false;
+    this.follow = false;
+    this.dirty = true;
+  };
+
+  /* Something is still moving, or would move on resume. */
+  Player.prototype.busy = function () {
+    return this.playing || (this.follow && this.index < this.records.length - 1);
   };
 
   /* Records may arrive twice or out of order (WebSocket racing a catch-up
@@ -51,7 +74,7 @@
       this.records.sort((a, b) => a.update - b.update);
       if (shown) this.index = this.records.indexOf(shown);
     }
-    if (this.follow && !this.playing) this.advance();
+    if (this.follow && !this.playing && !this.paused) this.advance();
     this.dirty = true;
   };
 
@@ -70,6 +93,7 @@
   Player.prototype.show = function (index) {
     if (!this.records[index]) return;
     this.follow = false;
+    this.paused = false;
     this.index = index;
     this.t = this.records[index].step_time;
     this.playing = false;
@@ -79,6 +103,7 @@
   Player.prototype.replay = function () {
     if (!this.current()) return;
     this.t = 0;
+    this.paused = false;
     this.playing = true;
     this.dirty = true;
   };
@@ -86,6 +111,7 @@
   Player.prototype.latest = function () {
     if (!this.records.length) return;
     this.follow = true;
+    this.paused = false;
     this.index = this.records.length - 1;
     this.t = this.current().step_time;
     this.playing = false;
@@ -109,7 +135,7 @@
     const dt = this.last === null ? 0 : Math.min(100, now - this.last);
     this.last = now;
     const record = this.current();
-    if (this.playing && record) {
+    if (this.playing && record && !this.paused) {
       if (this.duration <= 0) {
         this.t = record.step_time;  // instant: skip straight to the end of the update
       } else {

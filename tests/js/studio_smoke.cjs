@@ -72,6 +72,15 @@ async function waitFor(check, what, timeout = 120000) {
 
     $('btnRun').click();
     await waitFor(() => text('state') === 'finished' && text('uNum') === '6', 'run to finish');
+    // Pause acts on what you watch: the server has finished, playback has not.
+    await waitFor(() => !$('btnPause').disabled, 'pause available while playback still animates', 5000);
+    $('btnPause').click();
+    await waitFor(() => /Resume/.test(text('btnPause')), 'pause becomes resume');
+    const held = text('clockText');
+    await sleep(1500);
+    if (text('clockText') !== held) throw new Error('playback moved while paused: ' + held + ' -> ' + text('clockText'));
+    $('btnPause').click();
+    await waitFor(() => text('clockText') !== held && /Pause/.test(text('btnPause')), 'resume continues playback');
     await waitFor(() => /^update 6 ·/.test(text('clockText')), 'playback of update 6', 90000);
 
     // Instant playback draws each update once instead of animating it: a replay
@@ -246,6 +255,21 @@ async function waitFor(check, what, timeout = 120000) {
     await waitFor(() => text('uHorizon') === '3000', 'rebuilt session');
     document.querySelector('#tabs button[data-tab="watch"]').click();
     await waitFor(() => document.querySelectorAll('#dock svg.watchplot').length === 1, 'watch kept across a rebuild');
+    // Reset is available mid-run: it halts the run, then rebuilds at update 0.
+    $('btnRun').click();
+    await waitFor(() => text('state') === 'running', 'running before reset');
+    if ($('btnReset').disabled) throw new Error('reset must be available while running');
+    $('btnReset').click();
+    await waitFor(() => text('uNum') === '0' && text('state') !== 'running', 'reset while running');
+    // Stop ends the run: the simulation halts, the frame freezes, nothing resumes.
+    $('btnRun').click();
+    await waitFor(() => text('state') === 'running', 'running before stop');
+    $('btnStop').click();
+    await waitFor(() => /^stopped/.test(text('state')) && !$('btnRun').disabled && !$('btnReset').disabled, 'stop halts the simulation');
+    const still = text('clockText');
+    await sleep(1500);
+    if (text('clockText') !== still) throw new Error('playback moved after stop: ' + still + ' -> ' + text('clockText'));
+    if (!$('btnPause').disabled || /Resume/.test(text('btnPause'))) throw new Error('a stopped run must not offer resume');
     $('btnRun').click();
     await waitFor(() => text('state') === 'running', 'running');
     $('btnPause').click();

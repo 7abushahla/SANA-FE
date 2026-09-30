@@ -14,7 +14,8 @@
   <button id="btnStep" disabled>▸ Step</button>
   <span><button id="btnRunN" disabled>▶ Run</button> <input id="runN" type="number" min="1" step="1" value="5" aria-label="updates to run"> updates</span>
   <button id="btnRun" class="go" disabled>⏭ Run to horizon</button>
-  <button id="btnPause" disabled>❚❚ Pause</button>
+  <button id="btnPause" disabled title="Pause or resume what you are watching (space)">❚❚ Pause</button>
+  <button id="btnStop" disabled title="End the run: halt the simulation and freeze the view">■ Stop</button>
   <span class="counter">update <b id="uNum">0</b> / <b id="uHorizon">–</b></span>
   <label class="small">clock <select id="clock"><option value="slow">slow motion around packets</option><option value="modeled">modeled time (true proportions)</option></select></label>
   <label class="small">playback <select id="speed"><option value="6000">6 s per update</option><option value="3000" selected>3 s per update</option><option value="1200">1.2 s per update</option><option value="500">0.5 s per update</option><option value="150">0.15 s per update</option><option value="0">instant (no animation)</option></select> <span id="speedHint" class="hint"></span></label>
