@@ -18,6 +18,7 @@ PROVENANCE = {
     'barrier': 'D', 'fired': 'R', 'potentials': 'R', 'core_counts': 'D',
     'core_energy.total': 'R', 'core_energy.units': 'R', 'core_energy.axon': 'D',
     'tile_network_energy': 'D', 'links': 'X', 'sample': 'R',
+    'group_fired': 'D', 'readout': 'D',
 }
 SAMPLE_PAIRS = 256  # aggregate records keep at most this many sample messages
 AGGREGATE = 'not kept (aggregate)'
@@ -79,6 +80,8 @@ class UpdateRecord:
     links: dict = field(default_factory=dict)  # 'a>b' adjacent tiles: packets (X)
     # Aggregate level: the earliest message of each core pair, for animation
     sample: list = field(default_factory=list)
+    group_fired: dict = field(default_factory=dict)  # spikes per group (D)
+    readout: Optional[dict] = None  # workload readout of this update (D)
 
     def to_dict(self):
         return asdict(self)
@@ -114,7 +117,22 @@ class RecordCache:
         for n in neurons:
             spikes[n.core] = spikes.get(n.core, True) and n.log_spikes
         self.complete = spikes  # a core's fired count is exact only if all log spikes
+        # Per-group spike counts; exact only for groups whose neurons all log spikes.
+        self.groups = list(dict.fromkeys(n.group for n in neurons))
+        position = {g: i for i, g in enumerate(self.groups)}
+        self.group_id = np.array([position[n.group] for n in neurons], dtype=np.int32)
+        logged = {}
+        for n in neurons:
+            logged[n.group] = logged.get(n.group, True) and n.log_spikes
+        self.group_complete = logged
         self._paths = {}
+
+    def group_counts(self, indices):
+        """Spikes per group for these neuron indices; None where not all log spikes."""
+        counts = np.bincount(self.group_id[np.asarray(indices, dtype=np.int64)],
+                             minlength=len(self.groups))
+        return {g: (int(counts[i]) if self.group_complete[g] else None)
+                for i, g in enumerate(self.groups)}
 
     def path(self, src, dst):
         if (src, dst) not in self._paths:
@@ -223,7 +241,8 @@ def build_update_record(update, result, layout, neurons, cache=None):
         messages=messages, core_finish=finish, last_activity=last_activity,
         barrier=step_time - last_activity, fired=fired, potentials=potentials,
         core_counts=core_counts, core_energy=core_energy,
-        tile_network_energy=tile_network_energy)
+        tile_network_energy=tile_network_energy,
+        group_fired=cache.group_counts([cache.index[a] for a in fired]))
 
 
 def build_aggregate_record(update, result, layout, cache, watched=()):
@@ -275,6 +294,7 @@ def build_aggregate_record(update, result, layout, cache, watched=()):
         potentials={key: float(values[cache.logged_pos[key]]) for key in watched},
         core_counts=core_counts, core_energy=core_energy,
         tile_network_energy=tile_network_energy, links=dict(links),
+        group_fired=cache.group_counts(np.flatnonzero(fired_mask)),
         sample=[_message(m, cache) for m in sorted(
             earliest.values(), key=lambda m: m['send_timestamp'])[:SAMPLE_PAIRS]])
     record.provenance['messages'] = AGGREGATE
