@@ -67,3 +67,11 @@ for sources, resource checks, and unsupported hardware capabilities.
 Its latencies are the fitted Loihi 1 values scaled by Intel's stated Loihi 2
 factors; its energies are inherited from Loihi 1. Neither is a calibrated
 Loihi 2 estimate (see the profile documentation's cost derivation).
+
+## TrueNorth, documented costs
+
+`truenorth_documented.yaml` is the shipped `truenorth.yaml` with the two
+published figures that exist: 26 pJ per synaptic event (Merolla et al.,
+Science 2014, a total-energy operating point) and the 1 ms tick as a fixed
+synchronization cost. Every other coefficient stays zero. The shipped file
+is unchanged and remains the functional-only profile.
