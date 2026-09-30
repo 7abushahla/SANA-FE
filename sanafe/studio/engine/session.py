@@ -107,7 +107,9 @@ class Session:
         if platform not in listed:
             raise ValueError(f'platform {platform!r} is not supported by {workload.name}; '
                              f'choose one of {", ".join(listed)}')
-        P.get(platform)  # unknown ids raise KeyError naming the catalog
+        if P.get(platform).preview:  # unknown ids raise KeyError naming the catalog
+            raise ValueError(f'platform {platform!r} is a preview with no execution engine; '
+                             'nothing can be started on it')
         return platform
 
     def _build(self):

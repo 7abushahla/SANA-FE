@@ -45,6 +45,7 @@
         S.html(card, 'div', { class: 'small nothw' }, p.not_hardware);
         S.html(card, 'h4', {}, p.title);
         S.html(card, 'div', { class: 'small muted' }, p.vendor + ' · ' + p.generation + ' · ' + p.yaml);
+        if (p.preview) S.html(card, 'div', { class: 'small previewnote' }, p.preview_note);
         if (p.architecture_matches === false) {
           S.html(card, 'div', { class: 'small modified' }, 'This session simulates a modified architecture, not the ' +
             'packaged ' + p.yaml + '. Costs come from the workload\'s own file; the costs table below describes the ' +
@@ -64,6 +65,11 @@
           ['update-boundary buffer', s.buffer_position],
           ['synchronization', s.sync_model + ' · ' + fmt('latency_sync', s.sync_table)],
           ['link buffer', s.link_buffer_size]]);
+        if (p.preview_layout && p.preview_layout.cores) {
+          S.html(card, 'h5', {}, 'Cores (published memory table)');
+          table(card, ['core', 'kernel words (8-bit)', 'neuron words (16-bit)', 'leak words (16-bit)'],
+            p.preview_layout.cores.map((c) => [c.label || ('core ' + c.id), c.kernel_words, c.neuron_words, c.leak_words]));
+        }
         S.html(card, 'h5', {}, 'Units and models (reference core)');
         table(card, ['role', 'unit', 'model', 'accepted attributes'], p.units.map((u) => [
           u.role, u.name + (u.instances > 1 ? ' × ' + u.instances : ''),
@@ -86,7 +92,13 @@
       }
       S.html(container, 'h5', {}, 'Architecture file');
       const arch = S.html(container, 'div', { id: 'archView' });
-      S.arch.render(arch, session);
+      if (session.preview) {  // no session to diff: the packaged file itself
+        S.html(arch, 'div', { class: 'small muted' }, 'The packaged file behind this preview; it is drawn, not simulated.');
+        const text = S.html(arch, 'pre', { id: 'archText', class: 'yaml' }, 'loading…');
+        S.api.platformArchitecture(p.id).then((r) => { text.textContent = r.text; }).catch((e) => { text.textContent = e.message; });
+      } else {
+        S.arch.render(arch, session);
+      }
     },
   };
 })();

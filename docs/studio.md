@@ -265,7 +265,12 @@ drive it.
   the catalog profile, not what ran. A workload that brings its own file
   gets the card and badge of the catalog platform that file matches
   exactly, if any. A platform whose card cannot be built stays in the
-  dropdown as "(unavailable)" with the reason under the form. The
+  dropdown as "(unavailable)" with the reason under the form. A **preview
+  platform** (SynSense Speck) has a card and a picture but no engine: choosing
+  it draws the chip from the catalog's block list and core table in place of
+  the chip view, disables Start and the view buttons, shows the preview note
+  under the form, and marks every cost "planned". The Platform tab shows its
+  card with the published per-core memory table and the packaged file. The
   Architecture view (the loaded YAML and its differences from a bundled
   baseline) sits under the card.
 - **Debugger rail.** Breakpoints (add by kind, enable or disable, remove;
@@ -395,6 +400,14 @@ headless Chrome for every view and tab of both QCFS workloads.
     switch to the Loihi 2 candidate: `random-snn` stays selected and the
     typed value stays. Reload the page: the platform and workload dropdowns
     come back as they were.
+32. Choose "SynSense Speck (preview)". The center shows the block diagram:
+    DVS, pre-processing, the star NoC with nine colored cores labelled with
+    their memory, and the readout; the badge reads "SynSense Speck (preview)
+    · preview: no engine, no costs · not hardware"; Start and the view
+    buttons are disabled and the note under the form says no engine exists.
+    Open Platform: the card lists the nine-core memory table, every cost
+    "planned", and the packaged `speck.yaml`. Choose another platform: the
+    chip view and Start come back.
 
 ## Coverage of the Streamlit workbench
 

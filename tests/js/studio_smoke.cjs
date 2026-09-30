@@ -49,7 +49,11 @@ async function waitFor(check, what, timeout = 120000) {
     const $ = (id) => document.getElementById(id);
     const text = (id) => $(id).textContent;
 
-    await waitFor(() => [...$('platform').options].length === 4, 'platform list');
+    await waitFor(() => [...$('platform').options].length === 5, 'platform list');
+    // The Speck preview: a picture from the catalog and no way to start anything.
+    $('platform').value = 'speck';
+    $('platform').dispatchEvent(new Event('change'));
+    await waitFor(() => document.querySelectorAll('#preview svg rect.core').length === 9 && $('btnStart').disabled, 'speck preview drawn');
     // The chain workload lists loihi2 only: choosing loihi hides it.
     $('platform').value = 'loihi';
     $('platform').dispatchEvent(new Event('change'));
@@ -404,7 +408,7 @@ async function waitFor(check, what, timeout = 120000) {
     page = await open();
     q = (id) => page.window.document.getElementById(id);
     const pdoc2 = page.window.document;
-    await waitFor(() => [...q('platform').options].length === 4, 'platform list (truenorth page)');
+    await waitFor(() => [...q('platform').options].length === 5, 'platform list (truenorth page)');
     q('platform').value = 'truenorth';
     q('platform').dispatchEvent(new page.window.Event('change'));
     await waitFor(() => [...q('workload').options].some((o) => o.value === 'random-snn'), 'random-snn on truenorth');

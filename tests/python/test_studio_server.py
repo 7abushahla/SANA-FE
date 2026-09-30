@@ -67,7 +67,8 @@ class TestServer(unittest.TestCase):
 
     def test_platforms_endpoint_and_workload_platform_lists(self):
         cards = self.client.get('/api/platforms').json()
-        self.assertEqual([c['id'] for c in cards], ['loihi', 'loihi2', 'truenorth', 'truenorth_documented'])
+        self.assertEqual([c['id'] for c in cards], ['loihi', 'loihi2', 'truenorth', 'truenorth_documented', 'speck'])
+        self.assertTrue(cards[-1]['preview'])
         self.assertTrue(all('costs' in c and 'units' in c and 'structure' in c for c in cards))
         by_name = {w['name']: w for w in self.client.get('/api/workloads').json()}
         self.assertEqual(by_name['test-chain']['platforms'], ['loihi2'])
@@ -114,6 +115,19 @@ class TestServer(unittest.TestCase):
                 'workload': 'random-snn', 'platform': 'truenorth', 'parameters': {}})
             self.assertEqual(response.status_code, 400)
             self.assertIn('no provenance entry', response.json()['error'])
+
+    def test_platform_architecture_text_endpoint(self):
+        response = self.client.get('/api/platforms/speck/architecture')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['name'], 'speck.yaml')
+        self.assertIn('speck_core_8', response.json()['text'])
+        self.assertEqual(self.client.get('/api/platforms/nope/architecture').status_code, 404)
+
+    def test_no_session_on_a_preview_platform(self):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'random-snn', 'platform': 'speck', 'parameters': {}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('speck', response.json()['error'])
 
     def test_invalid_requests(self):
         bad = self.client.post('/api/sessions',

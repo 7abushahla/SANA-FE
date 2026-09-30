@@ -40,6 +40,7 @@
     },
     architectures: () => request('GET', '/api/architectures'),
     platforms: () => request('GET', '/api/platforms'),
+    platformArchitecture: (id) => request('GET', '/api/platforms/' + encodeURIComponent(id) + '/architecture'),
     setBreakpoints: (id, specs) => request('PUT', '/api/sessions/' + id + '/breakpoints', { breakpoints: specs }),
     runs: () => request('GET', '/api/runs'),
     setWatches: (id, keys) => request('PUT', '/api/sessions/' + id + '/watches', { watches: keys }),

@@ -5,6 +5,9 @@ from sanafe.studio.engine import RandomSNN, Session, resolve_parameters
 from sanafe import platforms as P
 
 
+RUNNABLE = [p for p in P.registry() if not p.preview]  # previews cannot run
+
+
 class TestRandomSNN(unittest.TestCase):
     def build(self, platform, **overrides):
         workload = RandomSNN()
@@ -13,10 +16,11 @@ class TestRandomSNN(unittest.TestCase):
         return workload.build(params)
 
     def test_declares_every_platform(self):
-        self.assertEqual(RandomSNN.platforms, tuple(p.id for p in P.registry()))
+        self.assertEqual(RandomSNN.platforms, tuple(p.id for p in P.registry() if not p.preview))
+        self.assertNotIn('speck', RandomSNN.platforms)
 
     def test_runs_with_spikes_in_every_group_on_every_platform(self):
-        for platform in P.registry():
+        for platform in RUNNABLE:
             with self.subTest(platform=platform.id):
                 session = Session(RandomSNN(), {'groups': 3, 'neurons_per_group': 16, 'seed': 3},
                                   platform=platform.id, store_dir=None)
@@ -33,7 +37,7 @@ class TestRandomSNN(unittest.TestCase):
                     session.close()
 
     def test_same_seed_gives_the_same_edges_on_every_platform(self):
-        edges = {p.id: self.build(p.id, seed=7).metadata['edges'] for p in P.registry()}
+        edges = {p.id: self.build(p.id, seed=7).metadata['edges'] for p in RUNNABLE}
         self.assertEqual(len(set(edges.values())), 1)
         self.assertNotEqual(self.build('loihi', seed=8).metadata['edges'], edges['loihi'])
 
@@ -62,7 +66,7 @@ class TestRandomSNN(unittest.TestCase):
 
     def test_drive_neurons_fire_with_the_same_exact_period_on_every_platform(self):
         periods = {}
-        for platform in P.registry():
+        for platform in RUNNABLE:
             session = Session(RandomSNN(), {'groups': 2, 'neurons_per_group': 12, 'seed': 4,
                                             'connection_percent': 0, 'horizon': 45},
                               platform=platform.id, store_dir=None)

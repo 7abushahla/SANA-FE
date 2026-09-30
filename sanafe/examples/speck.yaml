@@ -1,0 +1,359 @@
+# SynSense Speck, PREVIEW ONLY. This file lets the Studio draw the chip and
+#  show its catalog card; it is not an execution model of Speck.
+#  Speck has no global time-step: nine spiking-convolution cores hang off one
+#  star-topology NoC and process events on arrival with QDI handshakes
+#  (Richter et al. 2024, Yao et al. 2024). SANA-FE's engine is time-stepped,
+#  so no session can be started on this file; the event engine is planned
+#  (thesis vault, "2026-09-30 02 Speck Event Engine Feasibility and Plan").
+#  Structure that is real: one router (the star), nine cores, each core's
+#  neuron-word ceiling from the published per-core memory table (cores 0-2:
+#  64 Ki, 3-4: 32 Ki, 5-8: 16 Ki neuron words; kernel words 16/32/64/16 Ki).
+#  Stand-ins: the unit models (integer current-based synapse, integer
+#  accumulator, int24 IF) and the update-boundary buffer, which the chip does
+#  not have. Every cost is zero and is marked "planned" in the catalog.
+#  Keep arch/speck.yaml and sanafe/examples/speck.yaml identical.
+architecture:
+  name: speck_preview
+  attributes:
+    topology: mesh  # one tile: the star router with its nine cores
+    width: 1
+    height: 1
+    link_buffer_size: 1
+    sync_model: fixed
+    latency_sync: 0.0
+  tile:
+    - name: speck_noc
+      attributes:
+        energy_north_hop: 0.0
+        latency_north_hop: 0.0
+        energy_east_hop: 0.0
+        latency_east_hop: 0.0
+        energy_south_hop: 0.0
+        latency_south_hop: 0.0
+        energy_west_hop: 0.0
+        latency_west_hop: 0.0
+      core:
+        - name: speck_core_0
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 65536  # 64 Ki neuron words (16-bit); 16 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_0
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_0  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_0  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_0  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_0
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_1
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 65536  # 64 Ki neuron words (16-bit); 16 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_1
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_1  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_1  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_1  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_1
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_2
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 65536  # 64 Ki neuron words (16-bit); 16 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_2
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_2  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_2  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_2  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_2
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_3
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 32768  # 32 Ki neuron words (16-bit); 32 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_3
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_3  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_3  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_3  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_3
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_4
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 32768  # 32 Ki neuron words (16-bit); 32 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_4
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_4  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_4  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_4  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_4
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_5
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 16384  # 16 Ki neuron words (16-bit); 64 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_5
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_5  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_5  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_5  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_5
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_6
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 16384  # 16 Ki neuron words (16-bit); 64 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_6
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_6  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_6  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_6  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_6
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_7
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 16384  # 16 Ki neuron words (16-bit); 16 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_7
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_7  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_7  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_7  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_7
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0
+        - name: speck_core_8
+          attributes:
+            buffer_position: soma  # placeholder: the chip has no update-boundary buffer
+            max_neurons_supported: 16384  # 16 Ki neuron words (16-bit); 16 Ki kernel words (8-bit)
+          axon_in:
+            - name: speck_in_8
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: speck_kernel_8  # stand-in for the kernel-memory sweep
+              attributes:
+                model: current_based_int
+                energy_process_spike: 0.0
+                latency_process_spike: 0.0
+          dendrite:
+            - name: speck_pool_8  # stand-in for sum pooling
+              attributes:
+                model: accumulator_int
+                energy_update: 0.0
+                latency_update: 0.0
+          soma:
+            - name: speck_neuron_8  # stand-in: the Speck neuron is not implemented
+              attributes:
+                model: integrate_fire_int24
+                energy_access_neuron: 0.0
+                latency_access_neuron: 0.0
+                energy_update_neuron: 0.0
+                latency_update_neuron: 0.0
+                energy_spike_out: 0.0
+                latency_spike_out: 0.0
+          axon_out:
+            - name: speck_out_8
+              attributes:
+                energy_message_out: 0.0
+                latency_message_out: 0.0

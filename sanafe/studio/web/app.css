@@ -247,3 +247,13 @@ a.export { color: #2368a0; }
 svg.mini rect.tile.used { fill: #2368a0; stroke: #2368a0; }
 .kv > .m { justify-self: start; }  /* marks keep their size in the widened mark column */
 .chip .chipwindow { margin: 2px 0 4px; }
+.status.planned { background: #8659a8; }
+.platformcard .previewnote { color: #8659a8; font-weight: 600; margin: 3px 0; }
+.preview svg { width: 100%; height: auto; max-height: 62vh; display: block; }
+.preview .pblock { fill: #eef3f6; stroke: #9fb3c0; stroke-width: 1.4; }
+.preview .plabel { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.preview .psub { font-size: 9.5px; fill: #7b93a2; }
+.preview .pcore { font-size: 9px; font-weight: 700; fill: #fff; }
+.preview .pcoresub { font-size: 7.5px; fill: #fff; }
+.preview .parrow { stroke: #607888; stroke-width: 1.6; fill: none; }
+.preview .pnote { margin: 4px 0 6px; color: #8659a8; }

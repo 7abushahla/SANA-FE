@@ -42,9 +42,9 @@ from sanafe import platforms as P
 class TestRegistry(unittest.TestCase):
     def test_four_platforms_in_order(self):
         self.assertEqual([p.id for p in P.registry()],
-                         ['loihi', 'loihi2', 'truenorth', 'truenorth_documented'])
+                         ['loihi', 'loihi2', 'truenorth', 'truenorth_documented', 'speck'])
         with self.assertRaises(KeyError):
-            P.get('speck')
+            P.get('nope')
 
     def test_structure_facts_come_from_the_yaml(self):
         for platform in P.registry():
@@ -130,6 +130,8 @@ class TestRegistry(unittest.TestCase):
     def test_demo_neurons_use_each_platforms_soma_model(self):
         rng = random.Random(1)
         for platform in P.registry():
+            if platform.preview:
+                continue  # previews have no demo recipe: nothing runs on them
             with self.subTest(platform=platform.id):
                 card = P.describe(platform)
                 soma = next(u for u in card['units'] if u['role'] == 'soma')
@@ -191,3 +193,33 @@ class TestCatalogMatching(unittest.TestCase):
             path = Path(scratch) / 'modified.yaml'
             path.write_text(text)
             self.assertIsNone(P.match(sanafe.load_arch(str(path))))
+
+
+class TestSpeckPreview(unittest.TestCase):
+    def test_speck_is_a_preview_with_no_costs_and_nine_cores(self):
+        speck = P.get('speck')
+        self.assertTrue(speck.preview)
+        self.assertEqual(speck.execution, 'event')
+        card = P.describe(speck)
+        self.assertTrue(card['preview'])
+        self.assertIn('no execution engine', card['preview_note'])
+        self.assertEqual((card['structure']['tiles'], card['structure']['cores'],
+                          card['structure']['cores_per_tile']), (1, 9, 9))
+        self.assertEqual({r['status'] for r in card['costs']}, {'planned'})
+        cores = card['preview_layout']['cores']
+        self.assertEqual([c['id'] for c in cores], list(range(9)))
+        self.assertEqual(sum(c['neuron_words'] for c in cores), 327680)
+        self.assertEqual(sum(c['kernel_words'] for c in cores), 272 * 1024)
+        self.assertEqual([b['id'] for b in card['preview_layout']['blocks']],
+                         ['dvs', 'preprocess', 'noc', 'readout'])
+        self.assertTrue(card['badge'].startswith('SynSense Speck (preview) ·'))
+        self.assertEqual(card['execution'], 'event')
+        self.assertEqual(P.match(sanafe.load_arch(str(speck.arch_yaml))), 'speck')
+
+    def test_speck_yaml_copies_match_and_core_ceilings_follow_the_memory_table(self):
+        repo = Path(__file__).resolve().parents[2] / 'arch' / 'speck.yaml'
+        self.assertEqual(repo.read_text(), example('speck.yaml').read_text())
+        config = sanafe.load_arch(str(repo)).configuration()
+        ceilings = [core['max_neurons_supported'] for core in config['tiles'][0]['cores']]
+        self.assertEqual(ceilings, [65536] * 3 + [32768] * 2 + [16384] * 4)
+        self.assertEqual(config['core_count'], 9)

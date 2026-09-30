@@ -19,7 +19,7 @@ import sanafe
 from sanafe.loihi2 import (INTEL_BRIEF, LOIHI1_COSTS, RUNTIME_PAPER, architecture_fingerprint,
                            candidate_cost_provenance)
 
-STATUSES = ('fitted', 'scaled', 'inherited', 'documented', 'none')
+STATUSES = ('fitted', 'scaled', 'inherited', 'documented', 'none', 'planned')
 NOT_HARDWARE = ('Nothing on this card is a hardware measurement: structure and values are '
                 'read from the architecture file SANA-FE simulates.')
 
@@ -43,6 +43,14 @@ CASSIDY_2013 = ('A. S. Cassidy et al., "Cognitive computing building block: A ve
                 'doi:10.1109/IJCNN.2013.6707077')
 AUDIT_NOTE = ('Thesis vault, "2026-09-30 03 SANA-FE Platform Basis Audit" (source audit of '
               'these profiles).')
+RICHTER_2024 = ('O. Richter et al., "Speck: A smart event-based vision sensor with a low latency '
+                '327K neuron convolutional neuronal network processing pipeline," Neuromorphic '
+                'Comput. Eng., vol. 4, 2024. doi:10.1088/2634-4386/ad2ce3')
+YAO_2024 = ('M. Yao et al., "Spike-based dynamic computing with asynchronous sensing-computing '
+            'neuromorphic chip," Nature Communications, vol. 15, 4464, 2024, and supplement. '
+            'doi:10.1038/s41467-024-47811-6')
+SPECK_PLAN = ('Thesis vault, "2026-09-30 02 Speck Event Engine Feasibility and Plan" (chip facts, '
+              'engine design, calibration protocol, staged plan).')
 
 # Cost attribute names as they appear in architecture YAML files.
 NOC_COSTS = ('link_buffer_size', 'latency_sync')
@@ -76,6 +84,9 @@ class Platform:
     references: tuple
     demo_neuron: object = field(compare=False)   # (kind, rng) -> soma attributes
     demo_weight: object = field(compare=False)   # rng -> weight value
+    preview: bool = False          # card and picture only: no engine can run it
+    preview_note: str = ''
+    preview_layout: dict = field(default=None, compare=False)  # blocks and cores to draw
 
     @property
     def arch_yaml(self):
@@ -165,6 +176,24 @@ _TIMESTEP_RULE = ('Numbered updates. Each core processes its neurons and message
                   'chip synchronizes; SANA-FE adds the synchronization cost after the '
                   'scheduled step time.')
 
+# --- Speck (preview) -----------------------------------------------------------
+_SPECK_CORES = [(0, 16, 64), (1, 16, 64), (2, 16, 64), (3, 32, 32), (4, 32, 32),
+                (5, 64, 16), (6, 64, 16), (7, 16, 16), (8, 16, 16)]  # id, kernel Ki, neuron Ki
+_SPECK_LAYOUT = {
+    'blocks': [
+        {'id': 'dvs', 'label': 'DVS 128 × 128', 'sub': 'event pixels on the die'},
+        {'id': 'preprocess', 'label': 'event pre-processing', 'sub': 'filter · decimation · pooling'},
+        {'id': 'noc', 'label': 'star NoC', 'sub': 'one router · nine sCNN cores · fan-out 2'},
+        {'id': 'readout', 'label': 'readout', 'sub': '15 classes · slow-clock average'},
+    ],
+    'cores': [{'id': i, 'kernel_words': k * 1024, 'neuron_words': n * 1024, 'leak_words': 1024,
+               'label': f'core {i}', 'memory': f'{n} Ki neur · {k} Ki kern'}
+              for i, k, n in _SPECK_CORES],
+}
+_SPECK_NOTE = ('Speck preview: no execution engine yet. The picture and the card come from the '
+               'published architecture; nothing can be started on this platform. The event '
+               'engine is planned (see the plan note).')
+
 PLATFORMS = (
     Platform(
         id='loihi', title='Intel Loihi 1', vendor='Intel', generation='first generation, 2018',
@@ -250,6 +279,44 @@ PLATFORMS = (
                      'message energy (no public figures)', 'static power as a separate term'),
         references=(MEROLLA_2014, CASSIDY_2013, TCAD_2025, AUDIT_NOTE),
         demo_neuron=_truenorth_neuron, demo_weight=_float_weight),
+    Platform(
+        id='speck', title='SynSense Speck (preview)', vendor='SynSense',
+        generation='Speck2f dev-kit generation; architecture as published for Speck1',
+        yaml_name='speck.yaml', execution='event',
+        time_rule=('No global time-step. Events move between blocks as AER packets on '
+                   'four-phase QDI handshakes and each core processes them on arrival; only '
+                   'the readout back end is clocked. SANA-FE\'s engine is time-stepped, so this '
+                   'entry is a picture and a card, not something that runs.'),
+        summary=('One 65 nm die with a 128 × 128 DVS, an event pre-processing core, a '
+                 'star-topology NoC and nine spiking-convolution cores holding 327,680 neurons '
+                 '(16-bit state) and 272 KB of 8-bit kernel memory, plus a 15-class readout. A '
+                 'core sweeps kernel positions per input event, skips zero weights at the read, '
+                 'updates one 16-bit neuron word per synaptic event (read, add, check, write), '
+                 'emits at most one spike per update with subtract-or-reset and a threshold_low '
+                 'clamp, applies bias and leak on a slow clock through the same path, and '
+                 'routes to at most two destinations. Cores differ only in memory: 64 Ki '
+                 'neuron words on cores 0 to 2, 32 Ki on 3 and 4, 16 Ki on 5 to 8.'),
+        cost_summary='preview: no engine, no costs',
+        costs=_all('planned', SPECK_PLAN, 'to be calibrated on the physical dev kit once the '
+                   'event engine exists (plan §9); nothing is modeled today'),
+        time_word='planned', energy_word='planned',
+        validation=('None. This entry simulates nothing. Published anchors for the future '
+                    'engine: 1.58 µs for one 3 × 3 layer and 3.36 µs for nine layers pad to '
+                    'pad (Richter), 120 ns to 7 µs per layer by kernel size (Yao), about 30 M '
+                    'events/s per neuron compute unit, 100 M SynOps/s on core 0 and 30 M on '
+                    'the others, 0.47 to 0.6 mW on N-MNIST (Speck1). The papers disagree on '
+                    'the 3.36 µs, the energy per SynOp and which cores are parallel; the '
+                    'calibration protocol settles them.'),
+        not_modeled=('everything: no event engine, no timing, no energy, no congestion',
+                     'the Speck neuron (int16 state, threshold_low clamp, leak sweeps on a '
+                     'slow clock); the stand-in unit is the int24 IF',
+                     'the kernel-memory sweep and sum pooling (stand-ins: integer synapse and '
+                     'accumulator)', 'the DVS, the pre-processing core and the readout',
+                     'fan-out 2, the congestion balancer, the output decimator',
+                     'the update-boundary buffer in the file does not exist on the chip'),
+        references=(RICHTER_2024, YAO_2024, SPECK_PLAN),
+        demo_neuron=None, demo_weight=None, preview=True, preview_note=_SPECK_NOTE,
+        preview_layout=_SPECK_LAYOUT),
 )
 
 
@@ -419,4 +486,6 @@ def describe(platform):
             'time_word': platform.time_word, 'energy_word': platform.energy_word,
             'not_hardware': NOT_HARDWARE, 'structure': structure, 'units': units,
             'costs': rows, 'validation': platform.validation,
-            'not_modeled': list(platform.not_modeled), 'references': list(platform.references)}
+            'not_modeled': list(platform.not_modeled), 'references': list(platform.references),
+            'preview': platform.preview, 'preview_note': platform.preview_note,
+            'preview_layout': platform.preview_layout}

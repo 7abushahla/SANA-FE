@@ -307,3 +307,11 @@ class TestSessionPlatform(unittest.TestCase):
             self.assertIsNone(session.core_budgets)
         finally:
             session.close()
+
+    def test_a_preview_platform_cannot_start_a_session(self):
+        from sanafe.studio.engine import RandomSNN
+
+        class Claims(RandomSNN):
+            platforms = ('speck',)
+        with self.assertRaisesRegex(ValueError, 'preview.*no execution engine'):
+            Session(Claims(), {}, platform='speck', store_dir=None)

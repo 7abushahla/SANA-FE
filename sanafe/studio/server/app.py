@@ -433,6 +433,14 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             return out
         return _json(await asyncio.to_thread(cards))
 
+    async def platform_architecture(request):
+        """The packaged YAML of a catalog platform, for the card of a session-less preview."""
+        try:
+            platform = P.get(request.path_params['platform_id'])
+        except KeyError as error:
+            return _json({'error': str(error)}, 404)
+        return _json({'name': platform.yaml_name, 'text': platform.arch_yaml.read_text()})
+
     async def architecture(request):
         session = lookup(request)
         if session is None:
@@ -551,6 +559,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/architecture', architecture),
         Route('/api/architectures', architectures),
         Route('/api/platforms', platforms),
+        Route('/api/platforms/{platform_id}/architecture', platform_architecture),
         Route('/api/runs', runs),
         Route('/api/compare', compare, methods=['POST']),
         Route('/api/runs/{run_id}/plots/{kind}.svg', plot),

@@ -3,7 +3,7 @@
   const S = window.Studio;
   const $ = (id) => document.getElementById(id);
   const app = {
-    workloads: [], platforms: [], session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
+    workloads: [], platforms: [], preview: false, session: null, socket: null, selection: { kind: 'chip' }, tab: 'timeline',
     renderKey: null, alive: true, view: { mode: 'chip', level: 'chip', tile: null, core: null },
     details: {}, detailVersion: 0, watches: [],
     breakpoints: [], hitId: null, runs: [], applied: {}, pending: {}, coreStates: {},
@@ -331,13 +331,16 @@
     if (app.tab === 'timeline') S.timeline.render($('dock'), record, player.t, chip.owner);
     const sel = app.selection;
     const key = [player.index, player.records.length, app.tab, sel.kind, sel.key, sel.tile, sel.name, sel.mid,
-      !!app.session, app.detailVersion, app.watches.join(','), v.mode, v.level, v.core].join('|');
+      !!app.session, app.preview, app.detailVersion, app.watches.join(','), v.mode, v.level, v.core].join('|');
     if (key === app.renderKey) return;
     app.renderKey = key;
     if (app.tab === 'perf') S.perf.render($('dock'), player.records, record ? record.update : null);
     if (app.tab === 'messages') S.messages.render($('dock'), record, sel.kind === 'message' ? sel.mid : null, pickMessage);
     if (app.tab === 'watch') S.watch.render($('dock'), app.watches, player.records, app.details, player.index >= 0 ? player.index : null, removeWatch);
-    if (app.tab === 'platform' && app.session) S.platform.render($('dock'), app.session);
+    if (app.tab === 'platform') {
+      const shown = app.preview ? previewSession() : app.session;
+      if (shown) S.platform.render($('dock'), shown);
+    }
     S.inspector.render($('insTitle'), $('inspector'), sel, record, app.session, sel.kind === 'neuron' ? app.details[sel.key] : null);
     const watch = $('btnWatch');
     if (watch) watch.addEventListener('click', () => addWatch(sel.key));
@@ -559,6 +562,7 @@
   /* Start keeps the current placement edits while the workload and the
      platform are unchanged; a core map belongs to one mesh. */
   function start() {
+    if (app.preview) return;  // nothing runs on a preview platform
     const same = app.session && app.session.workload === $('workload').value &&
       (!app.session.platform || app.session.platform.id === $('platform').value);
     return startSession(same ? app.applied : {});
@@ -635,6 +639,44 @@
     return app.workloads.find((w) => w.name === workload) || { platforms: [] };
   }
 
+  function platformCard(id) {
+    return app.platforms.find((p) => p.id === id) || null;
+  }
+
+  /* A preview platform has a card and a picture from the catalog but no
+     engine: the page draws it in place of the chip and nothing can start. */
+  function previewSession() {
+    const card = platformCard($('platform').value);
+    return card && card.preview ? { id: 'preview:' + card.id, platform: card, preview: true } : null;
+  }
+
+  function syncPreview() {
+    const card = platformCard($('platform').value);
+    const on = !!(card && card.preview);
+    if (on) $('platformHint').textContent = card.preview_note;
+    if (on === app.preview) return;
+    app.preview = on;
+    $('btnStart').disabled = on;
+    $('mChip').disabled = on;
+    $('mNet').disabled = on;
+    $('mPipe').disabled = on || !(app.session && app.session.metadata && app.session.metadata.pipeline);
+    $('preview').style.display = on ? '' : 'none';
+    $('clockText').style.display = on ? 'none' : '';  // no update clock without a session
+    if (on) {
+      for (const id of ['chip', 'zoom', 'network', 'pipeline', 'minimap', 'chipNote']) $(id).style.display = 'none';
+      S.preview.render($('preview'), card);
+      $('badge').textContent = card.badge;
+    } else {
+      $('badge').textContent = app.session ? app.session.badge : 'No session loaded.';
+      $('platformHint').textContent = '';
+      setView(app.view);  // restore whichever view was showing
+    }
+    const dock = $('dock');
+    delete dock.dataset.session;
+    dock.innerHTML = '';
+    redraw();
+  }
+
   /* Workloads that list the chosen platform, plus those that bring their own
      file. Without a catalog (a server older than this page) every workload shows. */
   function filterWorkloads() {
@@ -650,12 +692,15 @@
     $('workload').value = next;
     // Keep what the user typed when the workload survives the platform change.
     if (next !== keep || !$('params').children.length) renderParams();
+    syncPreview();
   }
 
   function renderParams() {
     const workload = app.workloads.find((w) => w.name === $('workload').value);
     S.params.render($('params'), workload ? workload.parameters : []);
-    $('platformHint').textContent = app.platforms.length && workload && !workload.platforms.length ? 'architecture from file' : '';
+    const card = platformCard($('platform').value);
+    $('platformHint').textContent = card && card.preview ? card.preview_note
+      : (app.platforms.length && workload && !workload.platforms.length ? 'architecture from file' : '');
   }
 
   async function init() {

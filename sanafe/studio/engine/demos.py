@@ -17,7 +17,7 @@ class RandomSNN:
     """
 
     name = 'random-snn'
-    platforms = tuple(p.id for p in P.registry())
+    platforms = tuple(p.id for p in P.registry() if not p.preview)  # previews cannot run
     default_trace_level = 'full'
 
     def parameters(self):

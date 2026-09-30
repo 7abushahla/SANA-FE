@@ -74,6 +74,44 @@ const options = (window, id) => [...window.document.getElementById(id).options].
   q('workload').dispatchEvent(new now.Event('change'));
   assert.strictEqual(q('platformHint').textContent, 'architecture from file');
 
+  // A preview platform: the chip picture from the catalog, no session, Start disabled.
+  const preview = page({
+    '/api/workloads': [{ name: 'random-snn', platforms: ['loihi'], parameters: [param] },
+      { name: 'sanafe-files', platforms: [], parameters: [param] }],
+    '/api/platforms': [{ id: 'loihi', title: 'Intel Loihi 1' },
+      { id: 'speck', title: 'SynSense Speck (preview)', preview: true, badge: 'SynSense Speck (preview) · no engine · not hardware',
+        preview_note: 'Speck preview: no execution engine yet.', not_hardware: 'n', vendor: 'SynSense', generation: 'g', yaml: 'speck.yaml',
+        summary: 's', execution: 'event', time_rule: 'r', time_word: 'planned', energy_word: 'planned', validation: 'v',
+        not_modeled: [], references: [], units: [], costs: [],
+        structure: { width: 1, height: 1, tiles: 1, cores: 9, cores_per_tile: 9, max_neurons_per_core: 65536, buffer_position: 'b', sync_model: 'fixed', sync_table: { 0: 0 }, link_buffer_size: 1 },
+        preview_layout: { blocks: [{ id: 'dvs', label: 'DVS 128 × 128' }, { id: 'preprocess', label: 'pre-processing' }, { id: 'noc', label: 'star NoC' }, { id: 'readout', label: 'readout' }],
+          cores: Array.from({ length: 9 }, (_, i) => ({ id: i, kernel_words: 16384, neuron_words: 65536, leak_words: 1024 })) } }],
+    '/api/runs': [] });
+  await settle();
+  const v = (id) => preview.document.getElementById(id);
+  v('platform').value = 'speck';
+  v('platform').dispatchEvent(new preview.Event('change'));
+  await settle();
+  assert.ok(v('btnStart').disabled, 'Start disabled on a preview platform');
+  assert.match(v('platformHint').textContent, /no execution engine/);
+  assert.strictEqual(v('badge').textContent, 'SynSense Speck (preview) · no engine · not hardware');
+  assert.notStrictEqual(v('preview').style.display, 'none');
+  assert.strictEqual(v('chip').style.display, 'none');
+  assert.strictEqual(preview.document.querySelectorAll('#preview svg rect.core').length, 9);
+  assert.match(v('preview').textContent, /DVS 128 × 128/);
+  assert.match(v('preview').textContent, /no execution engine/);
+  preview.document.querySelector('#tabs button[data-tab="platform"]').click();
+  await settle();
+  assert.match(v('dock').textContent, /SynSense Speck \(preview\)/);
+  assert.match(v('dock').textContent, /Cores/);
+  v('platform').value = 'loihi';
+  v('platform').dispatchEvent(new preview.Event('change'));
+  await settle();
+  assert.ok(!v('btnStart').disabled, 'Start enabled again');
+  assert.strictEqual(v('preview').style.display, 'none');
+  assert.notStrictEqual(v('chip').style.display, 'none');
+  assert.strictEqual(v('platformHint').textContent, '');
+
   // A platform whose card failed is listed but cannot be chosen, and the reason is shown.
   const broken = page({
     '/api/workloads': [{ name: 'random-snn', platforms: ['loihi', 'truenorth'], parameters: [param] }],

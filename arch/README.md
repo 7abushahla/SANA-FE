@@ -75,3 +75,12 @@ published figures that exist: 26 pJ per synaptic event (Merolla et al.,
 Science 2014, a total-energy operating point) and the 1 ms tick as a fixed
 synchronization cost. Every other coefficient stays zero. The shipped file
 is unchanged and remains the functional-only profile.
+
+## Speck, preview only
+
+`speck.yaml` exists so the Studio can draw SynSense Speck and show its catalog
+card: one star router with nine cores whose neuron ceilings follow the
+published per-core memory table (Richter et al. 2024, Yao et al. 2024). Every
+cost is zero, the unit models are stand-ins, and no session can be started on
+it: Speck has no global time-step, and the event engine that would run it is
+planned, not built.
