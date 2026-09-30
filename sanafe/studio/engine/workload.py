@@ -84,6 +84,9 @@ class Readout(Protocol):
 
 class Workload(Protocol):
     name: str
+    # Platform ids (sanafe.platforms) this workload can run on. Empty or absent:
+    # the workload brings its own architecture and the page shows "architecture from file".
+    platforms: tuple
 
     def parameters(self) -> tuple:
         ...
@@ -112,6 +115,7 @@ class SanafeFiles:
     """Any architecture YAML and mapped network file that SANA-FE can load."""
 
     name = 'sanafe-files'
+    platforms = ()
 
     def parameters(self):
         return (

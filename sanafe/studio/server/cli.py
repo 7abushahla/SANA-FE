@@ -6,6 +6,7 @@ from .worker import WorkloadRef
 
 DEFAULT_STORE = Path.home() / '.sanafe-studio' / 'runs'
 DEFAULT_WORKLOADS = {
+    'random-snn': WorkloadRef('sanafe.studio.engine.demos:RandomSNN'),
     'sanafe-files': WorkloadRef('sanafe.studio.engine.workload:SanafeFiles'),
 }
 

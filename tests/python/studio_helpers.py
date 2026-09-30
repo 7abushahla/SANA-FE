@@ -50,6 +50,7 @@ class ChainWorkload:
     """The three-layer test chain on the Loihi 2 candidate."""
 
     name = 'test-chain'
+    platforms = ('loihi2',)
 
     def parameters(self):
         return (ParameterSpec('placement', 'choice', default='far',

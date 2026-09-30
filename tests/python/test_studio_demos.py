@@ -1,0 +1,53 @@
+"""The random-network demo workload runs on every platform."""
+import unittest
+
+from sanafe.studio.engine import RandomSNN, Session, resolve_parameters
+from sanafe import platforms as P
+
+
+class TestRandomSNN(unittest.TestCase):
+    def build(self, platform, **overrides):
+        workload = RandomSNN()
+        params = resolve_parameters(workload, overrides)
+        params['platform'] = platform
+        return workload.build(params)
+
+    def test_declares_every_platform(self):
+        self.assertEqual(RandomSNN.platforms, tuple(p.id for p in P.registry()))
+
+    def test_runs_with_spikes_in_every_group_on_every_platform(self):
+        for platform in P.registry():
+            with self.subTest(platform=platform.id):
+                session = Session(RandomSNN(), {'groups': 3, 'neurons_per_group': 16, 'seed': 3},
+                                  platform=platform.id, store_dir=None)
+                try:
+                    session.run_to_horizon()
+                    fired = {group for record in session.records for group, _ in record.fired}
+                    self.assertEqual(fired, {'group_0', 'group_1', 'group_2'})
+                    self.assertEqual(session.built.metadata['platform'], platform.id)
+                    if platform.id == 'truenorth':
+                        self.assertTrue(all(r.step_time == 0 for r in session.records))
+                    if platform.id == 'truenorth_documented':
+                        self.assertTrue(all(abs(r.step_time - 1e-3) < 1e-12 for r in session.records))
+                finally:
+                    session.close()
+
+    def test_same_seed_gives_the_same_edges_on_every_platform(self):
+        edges = {p.id: self.build(p.id, seed=7).metadata['edges'] for p in P.registry()}
+        self.assertEqual(len(set(edges.values())), 1)
+        self.assertNotEqual(self.build('loihi', seed=8).metadata['edges'], edges['loihi'])
+
+    def test_spread_places_one_group_per_distant_tile(self):
+        built = self.build('loihi', placement='spread', groups=3)
+        self.assertEqual(len(built.metadata['cores']), 3)
+        tiles = [int(core.split('.')[0]) for core in built.metadata['cores']]
+        self.assertEqual(tiles, sorted(tiles))
+        self.assertGreater(tiles[-1] - tiles[0], 1)
+
+    def test_group_larger_than_a_core_is_a_clear_error(self):
+        with self.assertRaisesRegex(ValueError, 'neurons_per_group'):
+            self.build('truenorth', neurons_per_group=300)
+
+    def test_packed_shares_a_core_when_groups_fit(self):
+        built = self.build('loihi2', neurons_per_group=8, groups=4)
+        self.assertEqual(len(built.metadata['cores']), 1)
