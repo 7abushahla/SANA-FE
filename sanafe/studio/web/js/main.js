@@ -571,7 +571,7 @@
     button.disabled = true;
     button.textContent = 'Building…';
     const body = { workload: $('workload').value, parameters: S.params.read($('params')) };
-    if (platformOf(body.workload).platforms.length) body.platform = $('platform').value;
+    if (platformOf(body.workload).platforms.length && $('platform').value) body.platform = $('platform').value;
     const horizon = $('horizon').value.trim();
     if (horizon) body.horizon = /^\d+$/.test(horizon) ? Number(horizon) : horizon;
     if (coreMap && Object.keys(coreMap).length) body.core_map = coreMap;
@@ -635,13 +635,14 @@
     return app.workloads.find((w) => w.name === workload) || { platforms: [] };
   }
 
-  /* Workloads that list the chosen platform, plus those that bring their own file. */
+  /* Workloads that list the chosen platform, plus those that bring their own
+     file. Without a catalog (a server older than this page) every workload shows. */
   function filterWorkloads() {
     const platform = $('platform').value;
     const keep = $('workload').value;
     $('workload').innerHTML = '';
     for (const workload of app.workloads) {
-      if (workload.platforms.length && !workload.platforms.includes(platform)) continue;
+      if (app.platforms.length && workload.platforms.length && !workload.platforms.includes(platform)) continue;
       S.html($('workload'), 'option', { value: workload.name }, workload.name);
     }
     const names = [...$('workload').options].map((o) => o.value);
@@ -652,16 +653,28 @@
   function renderParams() {
     const workload = app.workloads.find((w) => w.name === $('workload').value);
     S.params.render($('params'), workload ? workload.parameters : []);
-    $('platformHint').textContent = workload && !workload.platforms.length ? 'architecture from file' : '';
+    $('platformHint').textContent = app.platforms.length && workload && !workload.platforms.length ? 'architecture from file' : '';
   }
 
   async function init() {
-    try {
-      [app.workloads, app.platforms] = await Promise.all([S.api.workloads(), S.api.platforms()]);
-    } catch (error) {
-      $('formError').textContent = error.message;
+    const [workloads, platforms] = await Promise.allSettled([S.api.workloads(), S.api.platforms()]);
+    if (workloads.status === 'rejected') {
+      $('formError').textContent = workloads.reason.message;
       return;
     }
+    app.workloads = workloads.value;
+    app.workloads.forEach((w) => { if (!Array.isArray(w.platforms)) w.platforms = []; });
+    if (platforms.status === 'fulfilled') {
+      app.platforms = platforms.value;
+    } else {
+      // The page files are read from disk, the server's Python is not: a server
+      // started before the platform catalog answers 404 here. Keep working.
+      app.platforms = [];
+      $('formError').textContent = platforms.reason.status === 404
+        ? 'This Studio server was started before the platform catalog existed. Restart it to choose a platform; until then every workload runs on its own architecture.'
+        : 'Platform catalog unavailable: ' + platforms.reason.message;
+    }
+    $('platform').disabled = !app.platforms.length;
     for (const platform of app.platforms) S.html($('platform'), 'option', { value: platform.id }, platform.title);
     const preferred = app.workloads.find((w) => w.name !== 'sanafe-files');
     $('platform').value = preferred && preferred.platforms.length ? preferred.platforms[0] : (app.platforms[0] ? app.platforms[0].id : '');

@@ -179,7 +179,10 @@ drive it.
   `sanafe.platforms` (Intel Loihi 1, the Intel Loihi 2 candidate, IBM
   TrueNorth functional, IBM TrueNorth with documented costs). The workload
   list shows only workloads that list the chosen platform, plus the file
-  workload, which shows "architecture from file". The form below comes from
+  workload, which shows "architecture from file". A server started before
+  the catalog existed has no platform list: the page disables the dropdown,
+  lists every workload, and says to restart the server (page files are read
+  from disk, the server's Python is not). The form below comes from
   the workload's parameter schema. `T` and the image index are typed
   numbers. Changing them and pressing Rebuild starts a fresh session.
 - **Demo workload.** `random-snn` runs on every platform: a seeded random

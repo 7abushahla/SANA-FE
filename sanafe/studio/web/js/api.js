@@ -10,8 +10,17 @@
     }
     const response = await fetch(url, options);
     const text = await response.text();
-    const data = text ? S.decodeNonFinite(JSON.parse(text)) : null;
-    if (!response.ok) throw new Error((data && data.error) || response.status + ' ' + response.statusText);
+    let data = null;
+    try {
+      data = text ? S.decodeNonFinite(JSON.parse(text)) : null;
+    } catch (error) {  // a plain-text reply, such as a 404 from a server without this route
+      if (response.ok) throw error;
+    }
+    if (!response.ok) {
+      const failure = new Error((data && data.error) || response.status + ' ' + (response.statusText || text.trim()));
+      failure.status = response.status;
+      throw failure;
+    }
     return data;
   }
 
