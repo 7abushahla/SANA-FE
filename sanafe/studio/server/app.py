@@ -21,6 +21,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+from sanafe import platforms as P
+
 from ..engine import (EXPORT_KINDS, ParameterSpec, bundled_architectures, compare_runs,
                       diff_texts, export_plot, list_runs, load_run, resolve_parameters,
                       to_strict_json)
@@ -214,6 +216,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
 
     async def list_workloads(request):
         return _json([{'name': name,
+                       'platforms': list(getattr(manager.workload(name), 'platforms', ()) or ()),
                        'parameters': [_spec(s) for s in manager.workload(name).parameters()]}
                       for name in manager.registry])
 
@@ -229,7 +232,16 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         trace_level = body.get('trace_level')
         core_map = body.get('core_map') or None
         carried = body.get('breakpoints') or None
+        platform = body.get('platform')
         try:
+            if platform is not None and not isinstance(platform, str):
+                raise ValueError('platform: expected a platform id string')
+            listed = tuple(getattr(manager.workload(name), 'platforms', ()) or ())
+            if listed and platform is not None and platform not in listed:
+                raise ValueError(f'platform {platform!r} is not supported by {name}; '
+                                 f'choose one of {", ".join(listed)}')
+            if not listed and platform is not None:
+                raise ValueError(f'{name} does not take a platform')
             if carried is not None and not isinstance(carried, list):
                 raise ValueError('breakpoints: expected a list')
             if not isinstance(parameters, dict):
@@ -247,6 +259,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
             return _json({'error': str(error)}, 400)
         session_id = uuid.uuid4().hex[:12]
         options = {'trace_level': trace_level, 'horizon': horizon, 'core_map': core_map,
+                   'platform': platform,
                    'breakpoints': carried,
                    'store_dir': str(manager.store_dir) if manager.store_dir else None}
         session = ManagedSession(manager, session_id, name, manager.registry[name],
@@ -394,6 +407,9 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
     async def architectures(request):
         return _json(sorted(bundled_architectures()))
 
+    async def platforms(request):
+        return _json([P.describe(platform) for platform in P.registry()])
+
     async def architecture(request):
         session = lookup(request)
         if session is None:
@@ -511,6 +527,7 @@ def create_app(registry, store_dir=None, build_timeout=300.0,
         Route('/api/sessions/{session_id}/neurons/{group}/{offset}', neuron),
         Route('/api/sessions/{session_id}/architecture', architecture),
         Route('/api/architectures', architectures),
+        Route('/api/platforms', platforms),
         Route('/api/runs', runs),
         Route('/api/compare', compare, methods=['POST']),
         Route('/api/runs/{run_id}/plots/{kind}.svg', plot),

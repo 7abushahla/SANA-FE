@@ -19,6 +19,7 @@ from sanafe.studio.server.worker import WorkloadRef
 TESTS = str(Path(__file__).resolve().parent)
 REGISTRY = {
     'sanafe-files': WorkloadRef('sanafe.studio.engine.workload:SanafeFiles'),
+    'random-snn': WorkloadRef('sanafe.studio.engine.demos:RandomSNN'),
     'test-chain': WorkloadRef('studio_helpers:ChainWorkload', (TESTS,)),
     'test-crash': WorkloadRef('studio_helpers:CrashOnSecondUpdate', (TESTS,)),
     'test-slow': WorkloadRef('studio_helpers:SlowFirstUpdate', (TESTS,)),
@@ -58,10 +59,41 @@ class TestServer(unittest.TestCase):
         self.assertEqual(session['network']['occupied'], ['0.0', '16.0', '31.0'])
         self.assertEqual(session['horizon'], 6)
         self.assertEqual(session['badge'],
-                         'Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · energy inherited from Loihi 1 · not hardware')
+                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                         'energy inherited from Loihi 1 · not hardware')
         self.assertEqual(session['state']['state'], 'idle')
         fetched = self.client.get(f"/api/sessions/{session['id']}").json()
         self.assertEqual(fetched['id'], session['id'])
+
+    def test_platforms_endpoint_and_workload_platform_lists(self):
+        cards = self.client.get('/api/platforms').json()
+        self.assertEqual([c['id'] for c in cards], ['loihi', 'loihi2', 'truenorth', 'truenorth_documented'])
+        self.assertTrue(all('costs' in c and 'units' in c and 'structure' in c for c in cards))
+        by_name = {w['name']: w for w in self.client.get('/api/workloads').json()}
+        self.assertEqual(by_name['test-chain']['platforms'], ['loihi2'])
+        self.assertEqual(by_name['sanafe-files']['platforms'], [])
+        self.assertEqual(by_name['random-snn']['platforms'],
+                         ['loihi', 'loihi2', 'truenorth', 'truenorth_documented'])
+
+    def test_create_on_a_chosen_platform(self):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'random-snn', 'platform': 'loihi',
+            'parameters': {'groups': 2, 'neurons_per_group': 8, 'horizon': 3}})
+        self.assertEqual(response.status_code, 201, response.text)
+        session = response.json()
+        self.assertEqual(session['platform']['id'], 'loihi')
+        self.assertEqual(session['manifest']['platform'], 'loihi')
+        self.assertTrue(session['badge'].startswith('Intel Loihi 1 ·'))
+        self.assertEqual((session['layout']['width'], session['layout']['height']), (8, 4))
+
+    def test_unlisted_platform_is_400(self):
+        response = self.client.post('/api/sessions', json={
+            'workload': 'test-chain', 'platform': 'truenorth', 'parameters': {}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('loihi2', response.json()['error'])
+        response = self.client.post('/api/sessions', json={
+            'workload': 'random-snn', 'platform': 7, 'parameters': {}})
+        self.assertEqual(response.status_code, 400)
 
     def test_invalid_requests(self):
         bad = self.client.post('/api/sessions',
