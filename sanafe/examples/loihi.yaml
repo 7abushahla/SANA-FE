@@ -1,7 +1,17 @@
-# Energy and time estimates of different events, generated from SPICE
-#  simulations of Loihi.  All numbers were taken from:
-#  "Loihi: A Neuromorphic Manycore Processor with On-Chip Learning" (2018)
-#  M. Davies et al
+# Loihi 1 cost model. Provenance (audited 2026-09-30; thesis vault note
+#  "2026-09-30 03 SANA-FE Platform Basis Audit"):
+#  - Tile hop latencies (4.1 ns E-W, 6.5 ns N-S) and the E-W hop energy (3.0 pJ)
+#    match Table 2 of M. Davies et al., "Loihi: A Neuromorphic Manycore Processor
+#    with On-Chip Learning", IEEE Micro 2018 (pre-silicon SDF/SPICE at 0.75 V).
+#  - Every other coefficient (synapse, soma, axon, message, link buffer and the
+#    barrier table) was fitted upstream against measurements on Intel's Nahuku
+#    Loihi 1 board with the micro-benchmark method of J. A. Boyle et al.,
+#    IEEE TCAD 2025, Sec. VI (upstream history 2025-02 to 2025-06). The paper
+#    does not print the fitted values; this file is their record. Board
+#    revision and supply voltage are not recorded.
+#  - Reported accuracy of this model: average absolute error within 11.7% for
+#    dynamic energy and 24.3% for time-step latency on Loihi 1 applications
+#    (TCAD 2025, Table IV). Static power is not modeled. Not a Loihi 2 model.
 architecture:
   name: loihi_chip
   attributes:

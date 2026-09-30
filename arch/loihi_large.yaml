@@ -1,7 +1,5 @@
-# Energy and time estimates of different events, generated from SPICE
-#  simulations of Loihi.  All numbers were taken from:
-#  "Loihi: A Neuromorphic Manycore Processor with On-Chip Learning" (2018)
-#  M. Davies et al
+# Derived from arch/loihi.yaml; see that file's header for the provenance of
+#  the cost coefficients (Nahuku-fitted, not the Davies et al. 2018 SPICE table).
 architecture:
   name: loihi_chip
   attributes:

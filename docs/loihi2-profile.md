@@ -62,7 +62,7 @@ A successful report means **model-feasible under the assumed layout**. It does n
 
 [2] J. Timcheck, A. Pierro, and S. B. Shrestha, “A Compute and Communication Runtime Model for Loihi 2,” arXiv:2601.10035v2, 2026. [Paper](https://arxiv.org/html/2601.10035v2). Section II-1 and Figure 1 document four-core routers and dimension-order routing. Section VI documents the 8 × 4 router grid and counts core-to-router links in its heaviest-link load. The candidate tile address mapping and physical fabric assignment remain unverified.
 
-[3] SLAM Lab, “SANA-FE,” bundled Loihi configuration. [Pinned source](https://github.com/SLAM-Lab/SANA-FE/blob/93926ec8019206c1c6e6709448ac4c67f46d57db/sanafe/examples/loihi.yaml). Source for all inherited cost coefficients, attributed there to Davies et al. (2018).
+[3] SLAM Lab, “SANA-FE,” bundled Loihi configuration. [Pinned source](https://github.com/SLAM-Lab/SANA-FE/blob/93926ec8019206c1c6e6709448ac4c67f46d57db/sanafe/examples/loihi.yaml). Source for all inherited cost coefficients. The file's original header attributed them to Davies et al. (2018); only the tile-hop latencies do. The rest were fitted upstream on Intel's Nahuku Loihi 1 board (Boyle et al., TCAD 2025, Sec. VI); see the header of `arch/loihi.yaml`.
 
 [4] A. Rao Mangalore, Intel Labs, Loihi presentation, slide “The Latest Loihi chip: Loihi 2.” [Intel-authored slides hosted by TUM](https://www.tum-venture-labs.de/media/images/Labs/Quantum/Events/HWfAI_presentations/HWfAI_Intel_Labs_Ashish_Rao_Mangalore.pdf). The slide identifies six microprocessor cores and asynchronous x86 and RISC-V. Processor ISA claims should identify the hardware revision rather than treating every Loihi 2 revision as all-x86.
 
