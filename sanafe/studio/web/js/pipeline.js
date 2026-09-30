@@ -7,16 +7,14 @@
     return 'rgba(35,104,160,' + (0.12 + 0.88 * Math.min(1, rate / 0.5)).toFixed(2) + ')';
   }
 
-  function drawImage(canvas, pixels) {
+  /* The 32x32 image as one SVG rect per pixel: sharp at any size, no canvas. */
+  function drawImage(parent, pixels) {
     const bytes = atob(pixels);
-    const context = canvas.getContext && canvas.getContext('2d');
-    if (!context) return;  // headless tests have no canvas
-    const image = context.createImageData(32, 32);
+    const svg = S.svg(parent, 'svg', { viewBox: '0 0 32 32', class: 'pimage', 'shape-rendering': 'crispEdges' });
     for (let i = 0; i < 1024; i++) {
-      for (let c = 0; c < 3; c++) image.data[4 * i + c] = bytes.charCodeAt(3 * i + c);
-      image.data[4 * i + 3] = 255;
+      const rgb = [0, 1, 2].map((c) => bytes.charCodeAt(3 * i + c)).join(',');
+      S.svg(svg, 'rect', { x: i % 32, y: Math.floor(i / 32), width: 1, height: 1, fill: 'rgb(' + rgb + ')' });
     }
-    context.putImageData(image, 0, 0);
   }
 
   /* The record for update u (1-based), if it has arrived. */
@@ -42,8 +40,7 @@
       const input = S.html(container, 'div', { class: 'ppanel' });
       S.html(input, 'div', { class: 'ptitle' }, '1 · Input (host, not simulated)');
       const row = S.html(input, 'div', { class: 'pinput' });
-      const canvas = S.html(row, 'canvas', { width: 32, height: 32 });
-      drawImage(canvas, spec.input.pixels);
+      drawImage(row, spec.input.pixels);
       const classes = spec.classes || [];
       S.html(row, 'div', {}, '');
       row.lastChild.innerHTML = 'test image ' + spec.input.index + ' · true label <b>' + S.escape(classes[spec.input.label] || spec.input.label) +
@@ -84,6 +81,7 @@
           const cls = ['pcell'];
           let title;
           if (!inside) { cls.push('gated'); title = site.group + ' at update ' + u + ': gated (outside its window)'; }
+          else if (u > horizon) { cls.push('beyond'); title = 'update ' + u + ': beyond the horizon (' + horizon + '), never computed'; }
           else if (!record) { cls.push('future'); title = 'update ' + u + ' not computed yet'; }
           else title = site.group + ' at update ' + u + ': ' + (count === null ? 'spikes not logged' : count + ' / ' + sizes[site.group] + ' spikes');
           if (u === playUpdate) cls.push('play');
@@ -105,7 +103,8 @@
           if (r) {
             const bar = S.html(cell, 'div', { class: 'pbar', title: 'update ' + u + ': ' + S.fmtTime(r.step_time) + ', barrier ' + S.fmtTime(r.barrier) });
             S.html(bar, 'i', {}).style.height = (100 * (r.step_time - r.barrier) / most).toFixed(0) + '%';
-            S.html(bar, 'b', {}).style.height = Math.max(3, 100 * r.barrier / most).toFixed(0) + '%';
+            // A barrier too short to see still shows (at 3%); none at all draws nothing.
+            S.html(bar, 'b', {}).style.height = (r.barrier > 0 ? Math.max(3, 100 * r.barrier / most) : 0).toFixed(0) + '%';
           }
           const status = r && r.reference ? r.reference.status : null;
           S.html(refs, 'td', { class: 'pref ' + (status || '') }, status === 'match' ? '✓' : status === 'mismatch' ? '✗' : '–');
@@ -120,8 +119,10 @@
       S.html(out, 'div', { class: 'ptitle' }, '3 · Output: readout on the host');
       const readout = shown && shown.readout;
       if (!readout || !readout.cumulative) {
-        S.html(out, 'div', { class: 'muted' }, 'Waiting for the output window: ' + spec.output_group + ' first fires at update ' +
-          (spec.rows.find((r) => r.group === spec.output_group).window[0] + 1) + '.');
+        const window = spec.rows.find((r) => r.group === spec.output_group).window;
+        S.html(out, 'div', { class: 'muted' }, window[0] + 1 > horizon
+          ? 'No readout: the run ends at update ' + horizon + ', before the output window (updates ' + (window[0] + 1) + '–' + window[1] + ') of ' + spec.output_group + '.'
+          : 'Waiting: the output window opens at update ' + (window[0] + 1) + ' (' + spec.output_group + ').');
         return;
       }
       const values = readout.cumulative;

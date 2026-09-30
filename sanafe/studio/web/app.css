@@ -207,7 +207,7 @@ a.export { color: #2368a0; }
 .pipeline .ptitle { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #40596a; font-weight: 700; margin-bottom: 6px; }
 .pipeline .pwarn { background: #fff4e0; border: 1px solid #e8b563; color: #7a4b00; padding: 5px 9px; border-radius: 5px; }
 .pipeline .pinput { display: flex; gap: 12px; align-items: center; }
-.pipeline canvas { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 4px; }
+.pipeline svg.pimage { width: 96px; height: 96px; flex: none; border-radius: 4px; }
 .pipeline .paxis button { font-size: 11px; padding: 2px 9px; border: 1px solid #9fb3c0; background: #fff; border-radius: 4px; margin-right: 4px; cursor: pointer; }
 .pipeline .paxis button.on { background: #1d3a50; color: #fff; }
 .pipeline .pscroll { overflow-x: auto; }
@@ -219,6 +219,7 @@ a.export { color: #2368a0; }
 .pipeline td.pcell.gated { background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e3e8ec 3px, #e3e8ec 6px); }
 .pipeline td.pcell.play { outline: 2px solid #c9473a; outline-offset: -1px; }
 .pipeline td.pcell.future { background: #fff; border: 1px dashed #d5dee5; }
+.pipeline td.pcell.beyond { background: #fff; border: 1px dotted #e3e8ec; cursor: default; }
 .pipeline .pbar { height: 34px; width: 100%; display: flex; flex-direction: column-reverse; background: #f4f6f8; border-radius: 2px; overflow: hidden; }
 .pipeline .pbar i { background: #607888; } .pipeline .pbar b { background: #c9473a; }
 .pipeline .pref { text-align: center; font-size: 10px; } .pipeline .pref.match { color: #16846f; } .pipeline .pref.mismatch { color: #c9473a; }
