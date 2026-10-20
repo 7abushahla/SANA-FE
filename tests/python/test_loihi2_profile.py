@@ -180,6 +180,18 @@ class TestGroupResources(unittest.TestCase):
             validate_group_resources([{'name': 'x', 'size': 1, 'cores': [(31, 3)], 'kernel_entries': 0}], [],
                                      kernel_sharing=True, reserved_cores=[(31, 3)])
 
+    def test_exact_axon_and_route_counts_replace_the_conservative_ones(self):
+        groups = [{'name': 'a', 'size': 4, 'cores': [(0, 0)], 'kernel_entries': 0},
+                  {'name': 'b', 'size': 6, 'cores': [(0, 1), (0, 2)], 'kernel_entries': 24}]
+        edge = {'src': 0, 'dst': 1, 'synapses': 24, 'axons_per_dst_core': [3, 2], 'routes_per_src_core': [5]}
+        rep = validate_group_resources(groups, [edge], kernel_sharing=True)
+        by = {(c['tile'], c['core']): c for c in rep['cores']}
+        self.assertEqual((by[(0, 1)]['incoming_axons'], by[(0, 2)]['incoming_axons']), (3, 2))
+        self.assertEqual(by[(0, 0)]['outgoing_routes'], 5)
+        self.assertEqual(rep['connectivity_counts'], 'exact where given, conservative elsewhere')
+        with self.assertRaisesRegex(ValueError, 'one count per'):
+            validate_group_resources(groups, [dict(edge, axons_per_dst_core=[3])], kernel_sharing=True)
+
 if __name__ == '__main__':
     unittest.main()
 

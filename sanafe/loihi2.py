@@ -268,9 +268,10 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
 
     groups: [{'name', 'size', 'cores': [(tile, core), ...], 'kernel_entries'}], each group split in
     contiguous slices of ceil(size / len(cores)). edges: [{'src', 'dst', 'synapses'}] with synapses the
-    expanded connection count. Every source neuron is assumed to reach every destination core of an edge
-    (exact for dense layers, conservative for convolution): one incoming axon per source neuron on each
-    destination core and one outgoing route per (source neuron, destination core). With kernel_sharing
+    expanded connection count. An edge may give exact 'axons_per_dst_core' (distinct source neurons reaching
+    each destination core) and 'routes_per_src_core' (distinct (source neuron, destination core) pairs per source
+    core), computed from its connectivity; otherwise every source neuron is assumed to reach every destination
+    core (exact for dense layers, conservative for convolution). With kernel_sharing
     a destination core stores the layer's kernel once (kernel_entries weights); without it, every expanded
     synapse it receives. Model-feasible under the assumed layout, never a physical fit.
     """
@@ -298,6 +299,11 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
     for edge in edges:
         src, dst = int(edge['src']), int(edge['dst'])
         total = _integer(edge['synapses'], 'synapses', 0)
+        axons, routes = edge.get('axons_per_dst_core'), edge.get('routes_per_src_core')
+        if axons is not None and len(axons) != len(shares[dst]):
+            raise ValueError('axons_per_dst_core needs one count per destination core')
+        if routes is not None and len(routes) != len(shares[src]):
+            raise ValueError('routes_per_src_core needs one count per source core')
         size = sum(c for _, c in shares[dst])
         assigned = 0
         for k, (place, count) in enumerate(shares[dst]):
@@ -307,9 +313,10 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
             core['synapses'] += part
             core['stored_synapse_entries'] += (
                 _integer(groups[dst]['kernel_entries'], 'kernel_entries', 0) if kernel_sharing else part)
-            core['incoming_axons'] += sum(c for _, c in shares[src])
-        for place, count in shares[src]:
-            cores[place]['outgoing_routes'] += count * len(shares[dst])
+            core['incoming_axons'] += (int(axons[k]) if axons is not None else sum(c for _, c in shares[src]))
+        for k, (place, count) in enumerate(shares[src]):
+            cores[place]['outgoing_routes'] += (int(routes[k]) if routes is not None
+                                                else count * len(shares[dst]))
     for place, core in cores.items():
         core.update(state_bytes=core['neurons'] * allocation.state_bytes_per_neuron,
                     synapse_bytes=core['stored_synapse_entries'] * allocation.synapse_bytes,
@@ -326,6 +333,7 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
             raise ValueError(f'Core {place} exceeds total memory limit under assumed layout')
     return {'profile': 'loihi2_candidate', 'feasibility': 'model-feasible under assumed layout',
             'physical_fit_verified': False, 'kernel_sharing': bool(kernel_sharing),
+            'connectivity_counts': 'exact where given, conservative elsewhere',
             'kernel_storage': ('one copy of the layer kernel per destination core (documented shared '
                                'convolutional connectivity; byte layout assumed)' if kernel_sharing
                                else 'every expanded synapse stored (conservative bound)'),
