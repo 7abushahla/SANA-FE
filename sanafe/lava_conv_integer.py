@@ -107,7 +107,10 @@ def qcfs_fixed_conv_to_sanafe(first, conv, second, currents, arch, placements,
                             ('implements_dendrite', 'accumulator_int'),
                             ('implements_synapse', 'current_based_int')]:
             units = [u for u in core.pipeline_hw if getattr(u, flag)]
-            if len(units) != 1 or units[0].model_info.name != model:
+            # Unnamed neurons map to the first (default) unit; the candidate may list a
+            # second, gated soma after it, which this exporter does not select.
+            if not units or units[0].model_info.name != model or (
+                    flag != 'implements_soma' and len(units) != 1):
                 raise ValueError(f'Expected one {model} unit per selected core')
         if core.buffer_position != sanafe.BufferPosition.buffer_before_soma_unit:
             raise ValueError('Expected external pre-soma buffer')

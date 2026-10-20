@@ -41,7 +41,7 @@ class TestInstrumentArchYaml(unittest.TestCase):
         summary, _, after = self.instrument('loihi2')
         self.assertTrue(summary['units'])
         flags = [unit['log_energy'] for unit in after['tiles'][0]['cores'][0]['pipeline']]
-        self.assertEqual(flags, [True, True, True])
+        self.assertEqual(flags, [True, True, True, True])  # synapse, dendrite, LIF soma, gated soma
 
     def test_loihi1_units_not_logged(self):
         summary, _, after = self.instrument('loihi')

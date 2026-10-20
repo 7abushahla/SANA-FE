@@ -42,7 +42,7 @@ class TestChipLayout(unittest.TestCase):
         self.assertEqual((core.tile_id, core.offset, core.key), (9, 1, '9.1'))
         # describe() lists units in pipeline order: synapse, dendrite, soma.
         self.assertEqual(core.units, ('loihi_dense_synapse', 'loihi_dendrites',
-                                      'loihi_lif'))
+                                      'loihi_lif', 'loihi_if_gated'))
 
     def test_xy_path_moves_x_first(self):
         layout = layout_for('loihi2')
@@ -68,7 +68,7 @@ class TestChipLayout(unittest.TestCase):
         core = ChipLayout.from_chip(sanafe.SpikingChip(arch), arch).tiles[0].cores[0]
         self.assertEqual(core.pipeline, (('loihi_dense_synapse', 'synapse'),
                                          ('loihi_dendrites', 'dendrite'),
-                                         ('loihi_lif', 'soma')))
+                                         ('loihi_lif', 'soma'), ('loihi_if_gated', 'soma')))
         self.assertEqual((core.axon_in, core.axon_out), (('loihi_in',), ('loihi_out',)))
         self.assertEqual(core.buffer, 'soma')
         self.assertIsNone(layout_for('loihi2').tiles[0].cores[0].buffer)

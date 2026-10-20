@@ -18,6 +18,8 @@
 #  These are scaled estimates, NOT calibrated Loihi 2 measurements.
 # One effective mesh is modeled; two physical fabrics are not explicit.
 # Integer IF semantics are implemented directly, not via Intel microcode.
+# loihi_if_gated is a second soma unit with the same costs: the gated IF program of
+#  the mixed-horizon route (integrates every step, checks in a strided window), modeled.
 # Learning engines and embedded management CPUs are not modeled.
 # Keep arch/loihi2.yaml and sanafe/examples/loihi2.yaml identical; the test
 # test_loihi2_profile checks this file against arch/loihi.yaml and the factors.
@@ -61,6 +63,15 @@ architecture:
             - name: loihi_lif
               attributes:
                 model: integrate_fire_int24
+                energy_access_neuron: 51.2e-12  # inherited Loihi 1
+                latency_access_neuron: 3.0e-9  # Loihi 1 6.0 ns / 2 (neuron update 2x)
+                energy_update_neuron: 21.6e-12  # inherited Loihi 1
+                latency_update_neuron: 1.85e-9  # Loihi 1 3.7 ns / 2 (neuron update 2x)
+                energy_spike_out: 69.3e-12  # inherited Loihi 1
+                latency_spike_out: 3.0e-9  # Loihi 1 30 ns / 10 (spike generation 10x)
+            - name: loihi_if_gated
+              attributes:
+                model: integrate_fire_int24_gated  # Loihi 2 route: gated program, modeled
                 energy_access_neuron: 51.2e-12  # inherited Loihi 1
                 latency_access_neuron: 3.0e-9  # Loihi 1 6.0 ns / 2 (neuron update 2x)
                 energy_update_neuron: 21.6e-12  # inherited Loihi 1

@@ -224,8 +224,8 @@ PLATFORMS = (
         summary=('128 neurocores as 8 x 4 routers with four cores each, dimension-order '
                  'routing, up to 8,192 neurons and 192 KB per core. SANA-FE runs a '
                  'signed 24-bit integer integrate-and-fire soma with integer synapses and '
-                 'accumulators as a candidate neuron program; graded spikes and microcode '
-                 'are not modeled.'),
+                 'accumulators as a candidate neuron program, and a gated variant for '
+                 'per-layer windows (modeled); graded spikes and microcode are not modeled.'),
         cost_summary=('latencies scaled from Loihi 1 by Intel-stated factors · energy '
                       'inherited from Loihi 1'),
         costs=_loihi2_costs(), time_word='scaled', energy_word='inherited',

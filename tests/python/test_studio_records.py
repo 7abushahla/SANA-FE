@@ -67,7 +67,7 @@ class TestUpdateRecords(unittest.TestCase):
                                    places=9)
             for entry in record.core_energy.values():
                 self.assertEqual(set(entry['units']),
-                                 {'loihi_lif', 'loihi_dendrites', 'loihi_dense_synapse'})
+                                 {'loihi_lif', 'loihi_if_gated', 'loihi_dendrites', 'loihi_dense_synapse'})
                 self.assertGreaterEqual(entry['axon'], -1e-18)
 
     def test_paths_and_potentials(self):
