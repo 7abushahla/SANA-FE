@@ -192,6 +192,16 @@ class TestGroupResources(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'one count per'):
             validate_group_resources(groups, [dict(edge, axons_per_dst_core=[3])], kernel_sharing=True)
 
+    def test_shared_kernel_storage_per_core_counts_only_the_channels_of_its_slice(self):
+        groups = [{'name': 'a', 'size': 4, 'cores': [(0, 0)], 'kernel_entries': 0},
+                  {'name': 'b', 'size': 6, 'cores': [(0, 1), (0, 2)], 'kernel_entries': 40,
+                   'kernel_entries_per_core': [30, 10]}]
+        rep = validate_group_resources(groups, [{'src': 0, 'dst': 1, 'synapses': 24}], kernel_sharing=True)
+        by = {(c['tile'], c['core']): c for c in rep['cores']}
+        self.assertEqual((by[(0, 1)]['stored_synapse_entries'], by[(0, 2)]['stored_synapse_entries']), (30, 10))
+        dense = validate_group_resources(groups, [{'src': 0, 'dst': 1, 'synapses': 24}], kernel_sharing=False)
+        self.assertEqual(sum(c['stored_synapse_entries'] for c in dense['cores']), 24)
+
 if __name__ == '__main__':
     unittest.main()
 

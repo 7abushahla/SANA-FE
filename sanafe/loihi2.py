@@ -273,7 +273,8 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
     core), computed from its connectivity; otherwise every source neuron is assumed to reach every destination
     core (exact for dense layers, conservative for convolution). With kernel_sharing
     a destination core stores the layer's kernel once (kernel_entries weights); without it, every expanded
-    synapse it receives. Model-feasible under the assumed layout, never a physical fit.
+    synapse it receives; a group may give 'kernel_entries_per_core', the kernel entries of the output channels
+    each core's slice covers, in place of the whole kernel. Model-feasible under the assumed layout, never a physical fit.
     """
     allocation = Allocation() if allocation is None else allocation
     if not isinstance(allocation, Allocation):
@@ -311,8 +312,12 @@ def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=()
             assigned += part
             core = cores[place]
             core['synapses'] += part
-            core['stored_synapse_entries'] += (
-                _integer(groups[dst]['kernel_entries'], 'kernel_entries', 0) if kernel_sharing else part)
+            per_core = groups[dst].get('kernel_entries_per_core')
+            if per_core is not None and len(per_core) != len(shares[dst]):
+                raise ValueError('kernel_entries_per_core needs one count per destination core')
+            shared = (_integer(per_core[k], 'kernel_entries_per_core', 0) if per_core is not None
+                      else _integer(groups[dst]['kernel_entries'], 'kernel_entries', 0))
+            core['stored_synapse_entries'] += shared if kernel_sharing else part
             core['incoming_axons'] += (int(axons[k]) if axons is not None else sum(c for _, c in shares[src]))
         for k, (place, count) in enumerate(shares[src]):
             cores[place]['outgoing_routes'] += (int(routes[k]) if routes is not None
