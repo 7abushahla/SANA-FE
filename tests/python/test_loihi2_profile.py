@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from sanafe.loihi2 import (Allocation, audit_unit_scale_signed8_weights,
                           candidate_profile, load_loihi2_candidate,
-                          validate_chain_resources)
+                          validate_chain_resources, validate_group_resources)
 
 
 class TestLoihi2Profile(unittest.TestCase):
@@ -147,6 +147,38 @@ class TestLoihi2Profile(unittest.TestCase):
         gated = text.split('- name: loihi_if_gated')[1].split('dendrite:')[0]
         cost = lambda block: sorted(l.strip() for l in block.splitlines() if 'energy_' in l or 'latency_' in l)
         self.assertEqual(cost(lif), cost(gated))
+
+
+class TestGroupResources(unittest.TestCase):
+    def test_shared_kernel_fits_where_dense_does_not(self):
+        # sized so only synapse memory separates the scenarios: 2,048 conv neurons x 135 synapses expanded
+        groups = [{'name': 'in', 'size': 1024, 'cores': [(0, 0)], 'kernel_entries': 0},
+                  {'name': 'conv1', 'size': 2048, 'cores': [(0, 1)], 'kernel_entries': 16 * 15 * 9}]
+        edges = [{'src': 0, 'dst': 1, 'synapses': 2048 * 15 * 9}]
+        shared = validate_group_resources(groups, edges, kernel_sharing=True)
+        self.assertIs(shared['kernel_sharing'], True)
+        self.assertTrue(all(c['synapse_bytes'] <= 128 * 1024 for c in shared['cores']))
+        self.assertFalse(shared['physical_fit_verified'])
+        with self.assertRaisesRegex(ValueError, 'synapse memory'):
+            validate_group_resources(groups, edges, kernel_sharing=False)
+
+    def test_routes_are_per_destination_core_and_axons_per_source_neuron(self):
+        groups = [{'name': 'a', 'size': 4, 'cores': [(0, 0)], 'kernel_entries': 0},
+                  {'name': 'b', 'size': 6, 'cores': [(0, 1), (0, 2)], 'kernel_entries': 24}]
+        rep = validate_group_resources(groups, [{'src': 0, 'dst': 1, 'synapses': 24}], kernel_sharing=True)
+        by = {(c['tile'], c['core']): c for c in rep['cores']}
+        self.assertEqual(by[(0, 0)]['outgoing_routes'], 4 * 2)
+        self.assertEqual(by[(0, 1)]['incoming_axons'], 4)
+        self.assertEqual((by[(0, 1)]['neurons'], by[(0, 2)]['neurons']), (3, 3))
+        self.assertEqual(by[(0, 1)]['synapses'] + by[(0, 2)]['synapses'], 24)
+
+    def test_neuron_limit_and_reserved_core(self):
+        with self.assertRaisesRegex(ValueError, 'neuron limit'):
+            validate_group_resources([{'name': 'x', 'size': 8193, 'cores': [(0, 0)], 'kernel_entries': 0}], [],
+                                     kernel_sharing=True)
+        with self.assertRaisesRegex(ValueError, 'reserved'):
+            validate_group_resources([{'name': 'x', 'size': 1, 'cores': [(31, 3)], 'kernel_entries': 0}], [],
+                                     kernel_sharing=True, reserved_cores=[(31, 3)])
 
 if __name__ == '__main__':
     unittest.main()

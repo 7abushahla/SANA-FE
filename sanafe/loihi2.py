@@ -253,6 +253,84 @@ def validate_chain_resources(layer_sizes, weights, placements, *, reserved_cores
             'cores': [cores[p] for p in sorted(cores)]}
 
 
+
+def _slices(size, n_cores):
+    """Neurons per core when a group of `size` is split in contiguous slices over n_cores."""
+    per = -(-size // n_cores)
+    counts = [max(0, min(per, size - i * per)) for i in range(n_cores)]
+    if any(c == 0 for c in counts):
+        raise ValueError('A group is split over more cores than it fills')
+    return counts
+
+
+def validate_group_resources(groups, edges, *, kernel_sharing, reserved_cores=(), allocation=None):
+    """Validate neuron groups split over cores under an assumed layout; raise ValueError.
+
+    groups: [{'name', 'size', 'cores': [(tile, core), ...], 'kernel_entries'}], each group split in
+    contiguous slices of ceil(size / len(cores)). edges: [{'src', 'dst', 'synapses'}] with synapses the
+    expanded connection count. Every source neuron is assumed to reach every destination core of an edge
+    (exact for dense layers, conservative for convolution): one incoming axon per source neuron on each
+    destination core and one outgoing route per (source neuron, destination core). With kernel_sharing
+    a destination core stores the layer's kernel once (kernel_entries weights); without it, every expanded
+    synapse it receives. Model-feasible under the assumed layout, never a physical fit.
+    """
+    allocation = Allocation() if allocation is None else allocation
+    if not isinstance(allocation, Allocation):
+        raise ValueError('allocation must be an Allocation')
+    reserved = {_placement(p) for p in reserved_cores}
+    cores = {}
+    shares = []
+    for index, group in enumerate(groups):
+        size = _integer(group['size'], 'group size', 1)
+        places = [_placement(p) for p in group['cores']]
+        if not places:
+            raise ValueError(f"Group {group.get('name', index)} has no cores")
+        counts = _slices(size, len(places))
+        shares.append(list(zip(places, counts)))
+        for place, count in zip(places, counts):
+            if place in reserved:
+                raise ValueError(f'Core {place} is reserved')
+            core = cores.setdefault(place, {'tile': place[0], 'core': place[1], 'groups': [], 'neurons': 0,
+                                            'synapses': 0, 'stored_synapse_entries': 0,
+                                            'incoming_axons': 0, 'outgoing_routes': 0})
+            core['groups'].append(index)
+            core['neurons'] += count
+    for edge in edges:
+        src, dst = int(edge['src']), int(edge['dst'])
+        total = _integer(edge['synapses'], 'synapses', 0)
+        size = sum(c for _, c in shares[dst])
+        assigned = 0
+        for k, (place, count) in enumerate(shares[dst]):
+            part = total - assigned if k == len(shares[dst]) - 1 else total * count // size
+            assigned += part
+            core = cores[place]
+            core['synapses'] += part
+            core['stored_synapse_entries'] += (
+                _integer(groups[dst]['kernel_entries'], 'kernel_entries', 0) if kernel_sharing else part)
+            core['incoming_axons'] += sum(c for _, c in shares[src])
+        for place, count in shares[src]:
+            cores[place]['outgoing_routes'] += count * len(shares[dst])
+    for place, core in cores.items():
+        core.update(state_bytes=core['neurons'] * allocation.state_bytes_per_neuron,
+                    synapse_bytes=core['stored_synapse_entries'] * allocation.synapse_bytes,
+                    incoming_axon_bytes=core['incoming_axons'] * allocation.incoming_axon_bytes,
+                    outgoing_route_bytes=core['outgoing_routes'] * allocation.outgoing_route_bytes,
+                    program_bytes=allocation.program_bytes_per_core)
+        core['total_bytes'] = sum(core[k] for k in ('state_bytes', 'synapse_bytes', 'incoming_axon_bytes',
+                                                    'outgoing_route_bytes', 'program_bytes'))
+        if core['neurons'] > 8192:
+            raise ValueError(f'Core {place} exceeds neuron limit')
+        if core['synapse_bytes'] > 128 * 1024:
+            raise ValueError(f'Core {place} exceeds synapse memory limit under assumed layout')
+        if core['total_bytes'] > 192 * 1024:
+            raise ValueError(f'Core {place} exceeds total memory limit under assumed layout')
+    return {'profile': 'loihi2_candidate', 'feasibility': 'model-feasible under assumed layout',
+            'physical_fit_verified': False, 'kernel_sharing': bool(kernel_sharing),
+            'kernel_storage': ('one copy of the layer kernel per destination core (documented shared '
+                               'convolutional connectivity; byte layout assumed)' if kernel_sharing
+                               else 'every expanded synapse stored (conservative bound)'),
+            'allocation': asdict(allocation), 'cores': [cores[p] for p in sorted(cores)]}
+
 def validate_core_budgets(core_stats, *, allocation=None):
     """Check per-core counts of a chunked mapping; raise ValueError.
 
