@@ -403,6 +403,48 @@ private:
     std::vector<State> states;
 };
 
+// Loihi 2 route candidate program: integrates every update, adds its window bias once and its
+// per-check bias at each check, and compares the threshold only on strided steps of its window.
+// A modeled neuron program with the semantics of an integer block rule, not Intel microcode.
+class GatedInt24IfModel : public SomaUnit
+{
+public:
+    GatedInt24IfModel() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override { return states.at(address).voltage; }
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"threshold", "(int) Positive even signed 24-bit threshold; comparison uses >=."},
+        {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
+        {"bias_at_start", "(int) Signed 24-bit drive added once, at the first update of the window."},
+        {"bias_per_check", "(int) Signed 16-bit drive added at every threshold check."},
+        {"window_start", "(int) Zero-based update index of the first threshold check."},
+        {"window_stop", "(int) Exclusive zero-based update index ending the window."},
+        {"stride", "(int) Check every stride-th update of the window, from its start."},
+        {"currents", "(list[int]) Signed 24-bit external current per update, then zero."},
+    };
+private:
+    struct State
+    {
+        int32_t threshold{2};
+        int32_t initial{0};
+        int32_t voltage{0};
+        int32_t bias_at_start{0};
+        int16_t bias_per_check{0};
+        int32_t window_start{0};
+        int32_t window_stop{std::numeric_limits<int32_t>::max()};
+        int32_t stride{1};
+        std::vector<int32_t> currents;
+        size_t cursor{0};
+        size_t updates_seen{0};
+    };
+    std::vector<State> states;
+};
+
 // A numerical reference model, not a hardware-specific neuron ISA.
 class Float32IfModel : public SomaUnit
 {

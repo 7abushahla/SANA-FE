@@ -211,3 +211,63 @@ class TestDynamicAccumulators(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+GATED = 'integrate_fire_int24_gated'
+
+
+class TestGatedIF(unittest.TestCase):
+    """Integrates every update; bias and threshold check only in a strided window (Loihi 2 route)."""
+
+    def test_input_before_window_is_integrated_and_checked_at_the_first_window_step(self):
+        chip = chip_for([{'threshold': 4, 'initial_voltage': 2, 'bias_at_start': 0, 'bias_per_check': 0,
+                          'window_start': 2, 'window_stop': 4, 'stride': 1,
+                          'currents': [3, 0, 0, 0]}], soma=GATED)
+        out = chip.sim(4, potential_trace=True, spike_trace=True)
+        self.assertEqual(out['potential_trace'], [[5], [5], [1], [1]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 0, 1, 0])
+
+    def test_bias_at_start_is_added_once_and_bias_per_check_every_check(self):
+        chip = chip_for([{'threshold': 10, 'initial_voltage': 5, 'bias_at_start': 6, 'bias_per_check': 2,
+                          'window_start': 1, 'window_stop': 3, 'stride': 1, 'currents': [0, 0, 0]}],
+                        soma=GATED)
+        out = chip.sim(3, potential_trace=True, spike_trace=True)
+        self.assertEqual(out['potential_trace'], [[5], [3], [5]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 1, 0])
+
+    def test_stride_checks_every_k_steps_and_input_on_the_stop_step_is_kept(self):
+        chip = chip_for([{'threshold': 4, 'initial_voltage': 0, 'bias_at_start': 0, 'bias_per_check': 0,
+                          'window_start': 1, 'window_stop': 4, 'stride': 2,
+                          'currents': [3, 3, 0, 0, 3]}], soma=GATED)
+        out = chip.sim(5, potential_trace=True, spike_trace=True)
+        self.assertEqual(out['potential_trace'], [[3], [2], [2], [2], [5]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 1, 0, 0, 0])
+
+    def test_accepts_signed_24_bit_current_and_rejects_beyond(self):
+        chip_for([{'threshold': 2, 'currents': [(1 << 23) - 1]}], soma=GATED).sim(1)
+        with self.assertRaisesRegex((ValueError, RuntimeError), 'signed 24'):
+            chip_for([{'threshold': 2, 'currents': [1 << 23]}], soma=GATED).sim(1)
+
+    def test_synaptic_input_reaches_a_gated_neuron_outside_its_window(self):
+        arch = architecture(soma=GATED)
+        net = sanafe.Network()
+        src = net.create_neuron_group('src', 1, model_attributes={'threshold': 2, 'currents': [2, 0, 0]})
+        dst = net.create_neuron_group('dst', 1, model_attributes={
+            'threshold': 100, 'initial_voltage': 0, 'window_start': 2, 'window_stop': 3},
+            log_potential=True, log_spikes=True)
+        src[0].map_to_core(arch.tiles[0].cores[0])
+        dst[0].map_to_core(arch.tiles[0].cores[0])
+        src[0].connect_to_neuron(dst[0], {'weight': 7})
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        out = chip.sim(3, potential_trace=True)
+        self.assertEqual(out["potential_trace"], [[0], [7], [7]])
+
+    def test_reset_restores_initial_voltage_and_window_phase(self):
+        chip = chip_for([{'threshold': 4, 'initial_voltage': 2, 'window_start': 1, 'window_stop': 2,
+                          'currents': [3, 0]}], soma=GATED)
+        a = chip.sim(2, potential_trace=True)
+        chip.reset()
+        b = chip.sim(2, potential_trace=True)
+        self.assertEqual(a['potential_trace'], b['potential_trace'])
+        self.assertEqual(a['potential_trace'], [[5], [1]])

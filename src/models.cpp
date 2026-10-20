@@ -1057,6 +1057,10 @@ std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
     {
         return std::make_shared<Int24IfModel>();
     }
+    if (model_name == "integrate_fire_int24_gated")
+    {
+        return std::make_shared<GatedInt24IfModel>();
+    }
     if (model_name == "current_based")
     {
         return std::shared_ptr<PipelineUnit>(new CurrentBasedSynapseModel());
@@ -1107,6 +1111,7 @@ const sanafe::ModelMap &sanafe::get_builtin_models()
                     {"current_based_int", &IntegerCurrentBasedSynapseModel::attributes},
                     {"accumulator_int", nullptr},
                     {"integrate_fire_int24", &Int24IfModel::attributes},
+                    {"integrate_fire_int24_gated", &GatedInt24IfModel::attributes},
                     {"accumulator", nullptr},
                     {"accumulator_with_delay", nullptr},
                     {"taps", &MultiTapModel1D::multitap_attributes},
