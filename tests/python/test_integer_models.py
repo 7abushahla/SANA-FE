@@ -271,3 +271,29 @@ class TestGatedIF(unittest.TestCase):
         b = chip.sim(2, potential_trace=True)
         self.assertEqual(a['potential_trace'], b['potential_trace'])
         self.assertEqual(a['potential_trace'], [[5], [1]])
+
+
+class TestGatedIFSynapticRange(unittest.TestCase):
+    """A fan-in above signed 16 bits reaches the gated soma intact; one beyond signed 24 bits is refused."""
+
+    def _fanin(self, n_src, weight):
+        arch = architecture(soma=GATED, capacity=n_src + 1)
+        net = sanafe.Network()
+        src = net.create_neuron_group('src', n_src, model_attributes={'threshold': 2, 'currents': [2]})
+        dst = net.create_neuron_group('dst', 1, model_attributes={'threshold': 1 << 22, 'window_start': 5},
+                                      log_potential=True)
+        for n in src:
+            n.map_to_core(arch.tiles[0].cores[0])
+            n.connect_to_neuron(dst[0], {'weight': weight})
+        dst[0].map_to_core(arch.tiles[0].cores[0])
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        return chip.sim(2, potential_trace=True)
+
+    def test_a_fan_in_above_16_bits_is_integrated_exactly(self):
+        out = self._fanin(300, 127)                                  # 38,100 in one step
+        self.assertEqual(out['potential_trace'][1][-1], 300 * 127)
+
+    def test_a_fan_in_beyond_24_bits_is_refused(self):
+        with self.assertRaisesRegex((ValueError, RuntimeError), 'signed 24'):
+            self._fanin(257, 32767)                                  # 8,421,119 > 2^23 - 1
