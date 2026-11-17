@@ -42,6 +42,7 @@ class TestCubaLifAgainstLava(unittest.TestCase):
     def test_current_wraps_as_in_lava(self):
         a = np.full((300, 4), 32767)
         lava, ours = self.both(a, du=0, dv=4095, vth=131071)
+        self.assertTrue(np.array_equal(lava['s'], ours['s']))
         self.assertTrue(np.array_equal(lava['v'], ours['v']))
 
     def test_bias_grid(self):
@@ -49,6 +50,7 @@ class TestCubaLifAgainstLava(unittest.TestCase):
         for mant in (-4096, 37, 4095):
             for exp in (0, 3, 7):
                 lava, ours = self.both(a, du=4095, dv=64, vth=500, bias_mant=mant, bias_exp=exp)
+                self.assertTrue(np.array_equal(lava['s'], ours['s']), (mant, exp))
                 self.assertTrue(np.array_equal(lava['v'], ours['v']), (mant, exp))
 
     def test_periodic_reset_matches_lifreset(self):
@@ -67,7 +69,13 @@ class TestCubaLifAgainstLava(unittest.TestCase):
     def test_three_layer_chain_with_odd_weights(self):
         # LIF layers of 8, 6 and 4 neurons, Dense weights uniform in [-127, 127] with odd values,
         # num_weight_bits 8, 100 steps. Every layer's spikes equal Lava's, and the manifest's
-        # effective weights equal what Lava's Dense applies.
+        # effective weights equal what Lava's Dense applies. Two further cells run a positive
+        # weight exponent, which Lava applies as a left shift of the summed activation.
+        for bits, exponent in ((8, 0), (8, 1), (6, 2)):
+            with self.subTest(num_weight_bits=bits, weight_exp=exponent):
+                self.chain(bits, exponent)
+
+    def chain(self, bits, exponent):
         rng = np.random.default_rng(3)
         steps = 100
         layers = [LIF(shape=(8,), du=1024, dv=256, vth=40,
@@ -77,13 +85,17 @@ class TestCubaLifAgainstLava(unittest.TestCase):
                   LIF(shape=(4,), du=4095, dv=0, vth=20, bias_mant=rng.integers(-3, 4, size=4))]
         raw = [rng.integers(-127, 128, size=(6, 8)), rng.integers(-127, 128, size=(4, 6))]
         self.assertTrue(all(np.any(w % 2) for w in raw), 'an odd weight exercises truncation')
-        dense = [Dense(weights=w, num_weight_bits=8) for w in raw]
+        dense = [Dense(weights=w, num_weight_bits=bits, weight_exp=exponent) for w in raw]
         for pre, conn, post in zip(layers, dense, layers[1:]):
             pre.s_out.connect(conn.s_in)
             conn.a_out.connect(post.a_in)
         a_in = rng.integers(-40, 120, size=(steps, 8))
         arch = load_loihi2_candidate()
         net, manifest = lif_chain_to_sanafe(layers, dense, a_in, arch, [(0, 0), (1, 0), (2, 0)])
+        semantics = manifest['architecture_profile']['semantics']
+        self.assertEqual((semantics['input_min'], semantics['input_max']),
+                         (-ACTIVATION_BOUND, ACTIVATION_BOUND))
+        self.assertNotIn('input_bits', semantics)       # the IF units' 16-bit input is not stated
 
         source = RingBuffer(data=a_in.T.astype(np.int32))
         source.s_out.connect(layers[0].a_in)

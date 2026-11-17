@@ -37,9 +37,9 @@ is a 24-bit register and the neuron reproduces it exactly. Beyond it, Lava's
 current leaves 24 bits and can later overflow 32-bit arithmetic, and the neuron
 refuses the input. ``docs/loihi2-profile.md`` records the probe.
 """
-import numbers
 import numpy as np
 import sanafe
+from sanafe.lava_integer import _integers, _scalar_integer as _shared_scalar_integer
 
 #: The soma unit of the candidate that runs ``cuba_lif_int24``.
 LIF_SOMA_UNIT = 'loihi_cuba_lif'
@@ -48,30 +48,12 @@ ACTIVATION_BOUND = (1 << 18) + 32
 _INT32 = (-(1 << 31), (1 << 31) - 1)
 
 
-def _integers(value, name, low, high, shape=None):
-    data = np.asarray(value)
-    if data.dtype == bool or not np.issubdtype(data.dtype, np.integer):
-        raise ValueError(f'{name} must contain integers')
-    if np.any(data < low) or np.any(data > high):
-        raise ValueError(f'{name} outside declared range [{low}, {high}]')
-    if shape is not None:
-        try:
-            data = np.broadcast_to(data, shape)
-        except ValueError as exc:
-            raise ValueError(f'{name} has incompatible shape') from exc
-    return data.astype(np.int64, copy=True)
-
-
 def _scalar_integer(value, name, low, high):
+    """The shared scalar check, after unwrapping a size-1 array (Lava Vars hold scalars as such)."""
     data = np.asarray(value)
-    if data.size != 1:
-        raise ValueError(f'{name} must be a scalar')
-    value = data.reshape(()).item()
-    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        raise ValueError(f'{name} must be an integer')
-    if not low <= value <= high:
-        raise ValueError(f'{name} outside supported range [{low}, {high}]')
-    return int(value)
+    if isinstance(value, np.ndarray) and data.size == 1:
+        value = data.reshape(()).item()
+    return _shared_scalar_integer(value, name, low, high)
 
 
 def _activations(a_in, low, high):
@@ -320,6 +302,19 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
                                                     {'weight': int(weight)})
     profile = candidate_profile()
     profile['allocation'] = resources['allocation'].copy()
+    # The profile's default semantics describe the IF units. This chain runs the LIF unit.
+    profile['numerical_profile'] = 'qcfs-lif-int24-v1'
+    profile['semantics'] = {
+        'input_min': -ACTIVATION_BOUND, 'input_max': ACTIVATION_BOUND, 'input_shift_bits': 6,
+        'current_bits': 24, 'current_overflow': 'single wrap by 2**24 into (-2**23, 2**23]',
+        'decay_bits': 12, 'current_decay_offset': 1, 'voltage_decay_offset': 0,
+        'voltage_bits': 24, 'voltage_clip': 'symmetric, [-(2**23 - 1), 2**23 - 1]',
+        'threshold_bits': 17, 'threshold_shift_bits': 6, 'threshold_comparison': '>',
+        'reset': 'voltage to zero', 'periodic_reset': 'u and v to zero, before the update',
+        'bias': 'bias_mant * 2**bias_exp', 'weight_signed': True,
+        'effective_weight_transport_bits': 16, 'accumulation_bits': 32,
+        'accumulation_signed': True, 'accumulation_overflow': 'reject', 'events': 'binary',
+        'edge_delay_steps': 1}
     manifest = {
         'schema_version': 1,
         'execution_profile': 'qcfs-lif-int24-v1',
@@ -331,7 +326,7 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
                        + ['lava.proc.dense.models.PyDenseModelBitAcc'],
         'architecture_instance': repr(arch),
         'input': 'external activation per update (a_in[t] at update t)',
-        'updates': a.shape[0], 'activation_bound': ACTIVATION_BOUND,
+        'updates': a.shape[0],
         'dense_delay_updates': 1, 'layer_sizes': sizes,
         'placements': [[int(t), int(c)] for t, c in placements],
         'layers': [{name: (value.tolist() if isinstance(value, np.ndarray) else value)
