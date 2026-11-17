@@ -141,8 +141,8 @@ def _read(path):
 
 
 def _input_bias(network, seed=2, low=-10, high=61):
-    shape = network.layers[0].shape
-    return np.random.default_rng(seed).integers(low, high, size=int(np.prod(shape)))
+    """A bias of the input layer's (channels, height, width) shape."""
+    return np.random.default_rng(seed).integers(low, high, size=network.layers[0].shape)
 
 
 def _cores(network, per_layer):
@@ -189,8 +189,8 @@ def test_a_two_convolutions_and_dense(tmp_path):
     assert [layer.resets_at for layer in network.layers if layer.neuron] == [4, 5, 6, 7]
     bias = _input_bias(network)
     lava = lava_run(network, bias, STEPS, builder="netx", path=path)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(lava, ours, _sizes(network))
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(lava, sim, _sizes(network))
     _assert_nonvacuous(lava, spiking=range(4))
 
 
@@ -202,8 +202,8 @@ def test_b_dense_with_negative_exponent(tmp_path):
     assert not np.array_equal(dense[0].weights, dense[0].effective_weights())
     bias = _input_bias(network)
     lava = lava_run(network, bias, STEPS, builder="netx", path=path)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(lava, ours, _sizes(network))
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(lava, sim, _sizes(network))
     _assert_nonvacuous(lava, spiking=range(5))
 
 
@@ -214,8 +214,8 @@ def test_c_readout_compared_on_voltage(tmp_path):
     assert (readout.neuron["dv"], readout.neuron["vth"]) == (0, 131071)
     bias = _input_bias(network)
     lava = lava_run(network, bias, STEPS, builder="netx", path=path)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(lava, ours, _sizes(network))
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(lava, sim, _sizes(network))
     _assert_nonvacuous(lava, spiking=range(4))
     v = lava["voltages"][-1]
     assert not np.any(lava["spikes"][-1]), "the readout never reaches its threshold"
@@ -253,9 +253,9 @@ def test_e_netx_and_direct_builders_agree(tmp_path):
     by_netx = lava_run(network, bias, STEPS, builder="netx", path=path)
     direct = lava_run(network, bias, STEPS, builder="direct")
     _assert_equal_runs(by_netx, direct, sizes)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(by_netx, ours, sizes)
-    _assert_equal_runs(direct, ours, sizes)
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(by_netx, sim, sizes)
+    _assert_equal_runs(direct, sim, sizes)
     _assert_nonvacuous(by_netx, spiking=range(4))
 
 
@@ -263,10 +263,10 @@ def test_f_zero_input_bias_and_stored_biases(tmp_path):
     # Conv biases of 30 and 40 exceed the threshold of 25 on their own.
     path = net_a(tmp_path / "f.net", conv_bias=(30, -6, 40))
     network = _read(path)
-    bias = np.zeros(_sizes(network)[0], dtype=np.int64)
+    bias = np.zeros(network.layers[0].shape, dtype=np.int64)
     lava = lava_run(network, bias, STEPS, builder="netx", path=path)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(lava, ours, _sizes(network))
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(lava, sim, _sizes(network))
     assert not np.any(lava["spikes"][0]) and not np.any(lava["voltages"][0])
     _assert_nonvacuous(lava, spiking=range(1, 4))
 
@@ -279,8 +279,8 @@ def test_g_asymmetric_stride_and_padding(tmp_path):
     assert len({*network.layers[0].shape}) == 3 and len({*conv.shape}) == 3
     bias = _input_bias(network)
     lava = lava_run(network, bias, STEPS, builder="netx", path=path)
-    ours, _ = _sanafe(network, bias, _cores(network, 1))
-    _assert_equal_runs(lava, ours, _sizes(network))
+    sim, _ = _sanafe(network, bias, _cores(network, 1))
+    _assert_equal_runs(lava, sim, _sizes(network))
     _assert_nonvacuous(lava, spiking=range(3))
     direct = lava_run(network, bias, STEPS, builder="direct")
     _assert_equal_runs(lava, direct, _sizes(network))
@@ -301,7 +301,7 @@ def test_reading_equals_lava_monitors(tmp_path):
     path = net_g(tmp_path / "m.net")
     network = _read(path)
     bias = _input_bias(network)
-    ours = lava_run(network, bias, steps, builder="netx", path=path)
+    read = lava_run(network, bias, steps, builder="netx", path=path)
     net = netx.hdf5.Network(net_config=str(path), reset_interval=16, reset_offset=3)
     c, h, w = network.layers[0].shape
     net.layers[0].neuron.bias_mant.init = bias.reshape(c, h, w).transpose(2, 1, 0).astype(np.int32)
@@ -321,16 +321,16 @@ def test_reading_equals_lava_monitors(tmp_path):
         v, s = np.asarray(v), np.asarray(s)
         if v.ndim == 4:  # Monitor rows are (x, y, c), lava_run's are flattened (c, y, x)
             v, s = (a.transpose(0, 3, 2, 1).reshape(steps, -1) for a in (v, s))
-        assert v.shape == s.shape == ours["voltages"][k].shape
-        assert np.array_equal(v.astype(np.int64), ours["voltages"][k]), k
-        assert np.array_equal(s.astype(np.int64), ours["spikes"][k]), k
-    assert np.any(ours["spikes"][1])
+        assert v.shape == s.shape == read["voltages"][k].shape
+        assert np.array_equal(v.astype(np.int64), read["voltages"][k]), k
+        assert np.array_equal(s.astype(np.int64), read["spikes"][k]), k
+    assert np.any(read["spikes"][1])
 
 
 def test_input_bias_reaches_the_netx_input_layer(tmp_path):
     path = net_g(tmp_path / "i.net", conv_bias=(0, 0, 0, 0, 0))
     network = _read(path)
-    zero = np.zeros(_sizes(network)[0], dtype=np.int64)
+    zero = np.zeros(network.layers[0].shape, dtype=np.int64)
     bias = _input_bias(network)
     silent = lava_run(network, zero, 8, builder="netx", path=path)
     driven = lava_run(network, bias, 8, builder="netx", path=path)
@@ -338,9 +338,74 @@ def test_input_bias_reaches_the_netx_input_layer(tmp_path):
     assert np.any(driven["spikes"][0])
     # After the first update the input layer holds exactly its bias, 64 times the
     # mantissa, or zero where that exceeds the threshold of 25 * 64 and it spiked.
+    bias = bias.reshape(-1)  # lava_run's columns are in flattened (c, h, w) order
     first = np.where(bias * 64 > 25 * 64, 0, bias * 64)
     assert np.array_equal(driven["voltages"][0][0], first)
     assert np.array_equal(driven["spikes"][0][0], (bias * 64 > 25 * 64).astype(np.int64))
+
+
+def test_input_bias_must_have_the_layer_shape(tmp_path):
+    """A frame in Lava's (width, height, channels, 1) order has the right size and is refused.
+
+    The input is nonsquare with three channels, (3, 8, 11), so every wrong layout
+    has the same 264 entries and only the shape tells them apart.
+    """
+    path = net_g(tmp_path / "shape.net")
+    network = _read(path)
+    good = _input_bias(network)
+    assert good.shape == (3, 8, 11)
+    arch = load_loihi2_candidate()
+    wrong = {"lava (x, y, c, 1)": good.transpose(2, 1, 0)[..., None],
+             "lava (x, y, c)": good.transpose(2, 1, 0),
+             "flat": good.reshape(-1),
+             "(c, h, w, 1)": good[..., None]}
+    message = (r"input_bias has shape .*, expected the input layer's \(channels, height, "
+               r"width\) = \(3, 8, 11\)\. Lava's own order is \(width, height, channels\)")
+    for name, bias in wrong.items():
+        assert bias.size == good.size, name
+        with pytest.raises(ValueError, match=message):
+            netx_to_sanafe(network, bias, arch, _cores(network, 1))
+        for builder in ("netx", "direct"):
+            with pytest.raises(ValueError, match=message):
+                lava_run(network, bias, 2, builder=builder, path=path)
+    netx_to_sanafe(network, good, arch, _cores(network, 1))
+
+
+def test_netx_reset_parameters_checked_against_the_reader(tmp_path):
+    path = net_a(tmp_path / "reset.net")
+    network = _read(path)
+    network.layers[2].neuron = {**network.layers[2].neuron,
+                                "reset_offset": network.layers[2].neuron["reset_offset"] + 1}
+    with pytest.raises(ValueError, match=r"layer 2: netx built reset interval and offset "
+                                         r"\(16, 6\), the network has \(16, 7\)"):
+        lava_run(network, _input_bias(network), 2, builder="netx", path=path)
+
+
+def test_packed_reversed_places_the_last_layer_first(tmp_path):
+    path = net_a(tmp_path / "rev.net")
+    network = _read(path)
+    bias = _input_bias(network)
+    packed, m_packed = _sanafe(network, bias, [2, 2, 2, 1])
+    reversed_run, m_rev = _sanafe(network, bias, [2, 2, 2, 1], order="packed_reversed")
+    _assert_equal_runs(packed, reversed_run, _sizes(network))
+    _assert_nonvacuous(packed, spiking=range(4))
+    sequence = core_order("packed")
+    assert core_order("packed_reversed") == sequence
+    cores = [[(s["tile"], s["core"]) for s in layer["slices"]] for layer in m_rev["placement"]]
+    assert cores == [sequence[5:7], sequence[3:5], sequence[1:3], sequence[0:1]]
+    assert cores[-1][0] == sequence[0] == (0, 0)
+    assert [[(s["start"], s["stop"]) for s in layer["slices"]] for layer in m_rev["placement"]] \
+        == [[(s["start"], s["stop"]) for s in layer["slices"]] for layer in m_packed["placement"]]
+    assert m_rev["order"] == "packed_reversed"
+
+
+def test_capacity_refusal_names_the_slice():
+    arch = load_loihi2_candidate()
+    with pytest.raises(ValueError, match=r"Placement exceeds configured neuron capacity \(layer 0 "
+                                         r"slice 0 on core \(0, 0\), 9000 neurons on a core of "
+                                         r"capacity 8192\)"):
+        netx_to_sanafe(_tiny(np.ones((1, 9000), dtype=int)), np.zeros((9000, 1, 1), dtype=np.int64),
+                       arch, [1, 1])
 
 
 def test_a_stalled_tap_ends_the_run():
@@ -392,9 +457,9 @@ def test_conv_synapses_equal_lava_conv_to_sparse():
 
     theirs = sorted(zip(chw(lava_src, h, w, c).tolist(), chw(lava_dst, ho, wo, co).tolist(),
                         np.asarray(lava_w).astype(int).tolist()))
-    ours = sorted(zip(src.tolist(), dst.tolist(), weight.tolist()))
-    assert [t for t in ours if t[2]] == [t for t in theirs if t[2]]
-    assert sum(1 for t in ours if t[2]) > 100
+    expanded = sorted(zip(src.tolist(), dst.tolist(), weight.tolist()))
+    assert [t for t in expanded if t[2]] == [t for t in theirs if t[2]]
+    assert sum(1 for t in expanded if t[2]) > 100
 
 
 def test_slices_and_core_order():
@@ -437,7 +502,10 @@ def test_manifest(tmp_path):
         for y in range(4) for x in range(7) if 0 <= x - 1 + b < 7 and w[o, i, a, b] == 0)
     for c in conns:
         assert sum(c["synapses_per_dst_core"]) == c["synapses_emitted"]
-    assert manifest["layers"][0]["reset_offset"] == 4
+    assert manifest["layers"][0]["resets_at"] == 4
+    assert "reset_offset" not in manifest["layers"][0]
+    assert manifest["resources_validated"] is False
+    assert "not derived from this placement" in manifest["allocation_status"]
 
 
 def _tiny(weights, exp=0, bits=8):
@@ -453,7 +521,7 @@ def _tiny(weights, exp=0, bits=8):
 
 def test_refusals_use_the_messages_of_lava_lif():
     arch = load_loihi2_candidate()
-    zero = np.zeros(48, dtype=np.int64)
+    zero = np.zeros((48, 1, 1), dtype=np.int64)
     with pytest.raises(ValueError, match="binary fan-in can exceed the accepted LIF activation range"):
         netx_to_sanafe(_tiny(np.full((1, 48), 6000)), zero, arch, [1, 1])
     with pytest.raises(ValueError, match=r"effective weights outside declared range \[-32768, 32767\]"):
@@ -465,5 +533,5 @@ def test_refusals_use_the_messages_of_lava_lif():
     with pytest.raises(ValueError, match="more cores"):
         netx_to_sanafe(_tiny(np.ones((1, 48), dtype=int)), zero, arch, [1, 2])
     with pytest.raises(ValueError, match="needs 128 cores"):
-        netx_to_sanafe(_tiny(np.ones((1, 200), dtype=int)), np.zeros(200, dtype=np.int64),
+        netx_to_sanafe(_tiny(np.ones((1, 200), dtype=int)), np.zeros((200, 1, 1), dtype=np.int64),
                        arch, [127, 1])

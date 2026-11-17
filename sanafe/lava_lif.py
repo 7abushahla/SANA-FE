@@ -321,8 +321,11 @@ def check_lif_architecture(arch):
     return validate_candidate_architecture(arch)
 
 
-def check_lif_core(core, required):
-    """Refuse a core without the LIF pipeline or with fewer than ``required`` neuron slots."""
+def check_lif_core(core, required, what=None):
+    """Refuse a core without the LIF pipeline or with fewer than ``required`` neuron slots.
+
+    ``what`` names the placed neurons (a layer and slice) in the capacity message.
+    """
     somas = [u for u in core.pipeline_hw if u.implements_soma and u.name == LIF_SOMA_UNIT]
     if len(somas) != 1 or somas[0].model_info.name != 'cuba_lif_int24':
         raise ValueError(f'Expected one {LIF_SOMA_UNIT} unit per selected core')
@@ -334,7 +337,9 @@ def check_lif_core(core, required):
     if core.buffer_position != sanafe.BufferPosition.buffer_before_soma_unit:
         raise ValueError('Expected external pre-soma buffer')
     if required > core.max_neurons_supported:
-        raise ValueError('Placement exceeds configured neuron capacity')
+        placed = f'{what}, ' if what else ''
+        raise ValueError(f'Placement exceeds configured neuron capacity ({placed}{required} '
+                         f'neurons on a core of capacity {core.max_neurons_supported})')
 
 
 def lif_architecture_profile(allocation):

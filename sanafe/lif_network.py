@@ -21,7 +21,10 @@ Conventions
   that column order. Row ``t`` is the state after update ``t``.
 * The input layer is a LIF layer like the others, driven only by its bias, as
   netx builds it (its input port is not connected). ``input_bias`` is written
-  into its bias mantissa, with the layer's bias exponent, on both sides.
+  into its bias mantissa, with the layer's bias exponent, on both sides. It must
+  have exactly the input layer's (channels, height, width) shape. Lava's own
+  order is (width, height, channels), and a flat array states no order, so
+  both are refused.
 * A spike of layer ``k - 1`` at update ``t`` reaches layer ``k`` at update
   ``t + 1``. Lava's Conv and Dense send the activation of the previous step
   (``proc/conv/models.py`` line 38, ``proc/dense/models.py`` line 96). SANA-FE
@@ -44,7 +47,9 @@ step by Lava's ``VarWire`` (a RefPort read in the management phase) and each
 layer's spikes by Lava's ``Extractor`` (an InPort on ``s_out``). Both hand whole
 arrays to this process through a channel. The run proceeds in chunks of at most
 16 steps. A step that delivers nothing for ``stall_seconds`` ends the run with
-``TimeoutError``.
+``TimeoutError``. A chunk that fails for any reason is not stopped through
+Lava's ``stop()``, which has no time limit. Lava's child processes are
+terminated instead.
 """
 import threading
 import time
@@ -137,9 +142,17 @@ def _biases(entry, input_bias):
     """Bias mantissa of every neuron of a layer, in flattened (c, h, w) order."""
     layer, size = entry["layer"], entry["size"]
     if entry["kind"] == "input":
+        # The shape must be exactly (channels, height, width). A flat array, or any
+        # other array of the right size, would be taken in an order the caller never
+        # stated. Lava's own arrays are (width, height, channels), the tutorial's frame
+        # (width, height, channels, 1), and both have the same number of entries.
         bias = np.asarray(input_bias)
-        if bias.size != size:
-            raise ValueError(f"input_bias has {bias.size} entries, the input layer {size}")
+        if bias.shape != entry["shape"]:
+            raise ValueError(
+                f"input_bias has shape {bias.shape}, expected the input layer's "
+                f"(channels, height, width) = {entry['shape']}. Lava's own order is "
+                "(width, height, channels), so a Lava or netx array must be transposed "
+                "to (channels, height, width) first")
         return _integers(bias.reshape(-1), "bias_mant", *_BIAS_RANGE)
     if layer.bias is None:
         return np.zeros(size, dtype=np.int64)
@@ -253,15 +266,19 @@ def core_order(order):
     takes core 0 of every tile, then core 1 of every tile, and so on, which
     distributes the layers' cores over the mesh. The two definitions are those
     of ``_core_order`` in mixed-horizon-snn/mhsnn/loihi2/export.py, reimplemented
-    here so that the fork does not import that repository.
+    here so that the fork does not import that repository. ``packed_reversed``
+    has the sequence of ``packed``. It differs only in that the layers take their
+    cores in reverse layer order (see ``_placement``), as in the published run of
+    PilotNet, which put the readout on the first cores and the input layer on the
+    last.
     """
     tiles, per_tile = 32, 4
-    if order == "packed":
+    if order in ("packed", "packed_reversed"):
         cores = [(t, c) for t in range(tiles) for c in range(per_tile)]
     elif order == "spread":
         cores = [(t, c) for c in range(per_tile) for t in range(tiles)]
     else:
-        raise ValueError(f"order {order!r} is not 'packed' or 'spread'")
+        raise ValueError(f"order {order!r} is not 'packed', 'packed_reversed' or 'spread'")
     return [place for place in cores if place not in RESERVED_CORES]
 
 
@@ -287,16 +304,21 @@ def _placement(entries, layer_cores, order):
     if sum(counts) > len(available):
         raise ValueError(f"the placement needs {sum(counts)} cores, the candidate has "
                          f"{len(available)} free")
-    placement, cursor = [], 0
-    for entry, count in zip(entries, counts):
-        sizes = slice_sizes(entry["size"], count)
+    # Layers take consecutive runs of the sequence, the last layer first under
+    # packed_reversed. Within a layer the slices keep their order.
+    turn = range(len(entries))
+    if order == "packed_reversed":
+        turn = reversed(turn)
+    placement, cursor = [None] * len(entries), 0
+    for k in turn:
+        sizes = slice_sizes(entries[k]["size"], counts[k])
         start, slices = 0, []
-        for place, n in zip(available[cursor:cursor + count], sizes):
+        for place, n in zip(available[cursor:cursor + counts[k]], sizes):
             slices.append({"tile": int(place[0]), "core": int(place[1]),
                            "start": start, "stop": start + n})
             start += n
-        cursor += count
-        placement.append(slices)
+        cursor += counts[k]
+        placement[k] = slices
     return placement
 
 
@@ -331,11 +353,13 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
     """Return ``(Network, manifest)`` for a netx network on the candidate architecture.
 
     ``input_bias`` is the integer bias mantissa of the input layer for one frame,
-    in flattened (c, h, w) order (or shaped (c, h, w)). ``layer_cores`` is the
-    number of cores of each layer with a neuron, in order. The neurons of a layer
-    are split into contiguous slices of near-equal size over its cores (sizes
-    differ by at most one, larger slices first), and the cores are taken in the
-    order of ``core_order(order)``. ``log`` records spikes and voltages of every
+    an array of exactly the layer's (channels, height, width) shape. Any other
+    shape is refused, a flat array included. ``layer_cores`` is the number of
+    cores of each layer with a neuron, in order. The neurons of a layer are split
+    into contiguous slices of near-equal size over its cores (sizes differ by at
+    most one, larger slices first). The cores are taken from the sequence of
+    ``core_order(order)``, layer by layer in layer order, or in reverse layer
+    order for ``packed_reversed``. ``log`` records spikes and voltages of every
     neuron. Weights, fan-in, biases and registers outside what the soma and
     ``sanafe.lava_lif`` accept are refused with the messages of ``lava_lif``.
     All checks precede network construction.
@@ -351,10 +375,11 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
     placement = _placement(entries, layer_cores, order)
     fingerprint = check_lif_architecture(arch)
     cores = []
-    for slices in placement:
+    for k, slices in enumerate(placement):
         cores.append([arch.tiles[s["tile"]].cores[s["core"]] for s in slices])
-        for s, core in zip(slices, cores[-1]):
-            check_lif_core(core, s["stop"] - s["start"])
+        for j, (s, core) in enumerate(zip(slices, cores[-1])):
+            check_lif_core(core, s["stop"] - s["start"],
+                           what=f"layer {k} slice {j} on core ({s['tile']}, {s['core']})")
     slice_of = [_slice_index(slices, entry["size"]) for slices, entry in zip(placement, entries)]
     for src, dst, _, record in connections:
         k = record["dst"]
@@ -394,11 +419,17 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
         lava_models.append("lava.proc.conv.models.PyConvModelFixed")
     if "dense" in kinds:
         lava_models.append("lava.proc.dense.models.PyDenseModelBitAcc")
+    profile = lif_architecture_profile(asdict(Allocation()))
     manifest = {
         "schema_version": 1,
         "execution_profile": LIF_EXECUTION_PROFILE,
         "soma_unit": LIF_SOMA_UNIT,
-        "architecture_profile": lif_architecture_profile(asdict(Allocation())),
+        "architecture_profile": profile,
+        # The allocation in the profile is the candidate's default byte layout. No
+        # resource check was run on this placement.
+        "allocation_status": ("default Allocation() of the candidate profile, not derived "
+                              "from this placement"),
+        "resources_validated": False,
         "architecture_sha256": fingerprint,
         "hardware_validated": False,
         "input_transfer_cost_included": False,
@@ -412,7 +443,11 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
         "layer_kinds": kinds,
         "layer_shapes": [list(entry["shape"]) for entry in entries],
         "layer_sizes": [entry["size"] for entry in entries],
-        "layers": [{**regs, "bias_mant_min": int(b.min()), "bias_mant_max": int(b.max()),
+        # resets_at is the reduced phase (offset mod interval) that the soma receives as
+        # its reset_offset. netx's unreduced offset is the reader's neuron["reset_offset"].
+        "layers": [{**{key: value for key, value in regs.items() if key != "reset_offset"},
+                    "resets_at": regs["reset_offset"],
+                    "bias_mant_min": int(b.min()), "bias_mant_max": int(b.max()),
                     "bias_mant_nonzero": int(np.count_nonzero(b))}
                    for regs, b in zip(registers, biases)],
         "order": order,
@@ -466,7 +501,11 @@ def sanafe_run(net, manifest, arch, steps, *, extra_traces=True):
 
 
 def _lava_bias(entry, bias):
-    """A bias in flattened (c, h, w) order, as Lava's (x, y, c) array or a 1-D array."""
+    """A bias in flattened (c, h, w) order, as Lava's (x, y, c) array or a 1-D array.
+
+    The flat bias comes from ``_biases``, which has already required the input
+    bias to have exactly the layer's (c, h, w) shape.
+    """
     if len(entry["shape"]) == 3:
         return bias.reshape(entry["shape"]).transpose(2, 1, 0).astype(np.int32)
     return bias.astype(np.int32)
@@ -530,10 +569,21 @@ def _netx_processes(path, entries, biases):
     net = netx.hdf5.Network(net_config=str(path), reset_interval=interval, reset_offset=offset)
     if len(net.layers) != len(entries):
         raise ValueError(f"netx built {len(net.layers)} layers, the network has {len(entries)}")
-    for block, entry in zip(net.layers, entries):
+    for k, (block, entry) in enumerate(zip(net.layers, entries)):
         if tuple(block.shape) != _lava_shape(entry):
             raise ValueError(f"netx built a layer of shape {tuple(block.shape)}, the network "
                              f"has {_lava_shape(entry)}")
+        # The reset arguments above are rebuilt from the reader. netx's own derivation
+        # must give every layer the reader's interval and unreduced offset.
+        neuron = entry["layer"].neuron
+        built = block.neuron.proc_params
+        expected = (neuron.get("reset_interval"), neuron.get("reset_offset"))
+        found = (built.get("reset_interval"), built.get("reset_offset"))
+        if expected[0] is None:
+            expected = (None, None)  # a plain LIF, which carries neither parameter
+        if found != expected:
+            raise ValueError(f"layer {k}: netx built reset interval and offset {found}, the "
+                             f"network has {expected}")
     # netx leaves the input layer's bias mantissa at 0 and its input port open. The
     # Var's init is what the compiler hands the process model.
     net.layers[0].neuron.bias_mant.init = _lava_bias(entries[0], biases[0])
@@ -622,19 +672,26 @@ def lava_run(network, input_bias, steps, *, builder, path=None, chunk=16, stall_
     config = Loihi2SimCfg(select_tag="fixed_pt", exception_proc_model_map={
         Extractor: PyLoihiExtractorModel, VarWire: PyLoihiVarWireModel})
     rows = []
-    stalled = False
+    in_flight = False
     try:
         while len(rows) < steps:
             n = min(chunk, steps - len(rows))
+            in_flight = True
             top.run(condition=RunSteps(num_steps=n, blocking=False), run_cfg=config)
             rows.extend(_receive(wires, extractors, n, stall_seconds))
             top.wait()
-    except TimeoutError:
-        stalled = True
-        _terminate_lava_children()
-        raise
+            in_flight = False
     finally:
-        if not stalled:
+        if in_flight:
+            # A chunk failed between run and wait (a stall, an error in a tap, or an
+            # error of the run itself). stop() would send commands to a runtime that may
+            # still be stepping or may be stuck, and it waits for replies without a time
+            # limit, so it is not attempted. Lava's child processes are terminated
+            # instead, which cannot block. The exception propagates.
+            _terminate_lava_children()
+        else:
+            # Every chunk completed with wait(), so the runtime is idle and stop() is
+            # the shutdown Lava intends.
             top.stop()
     voltages = [_flatten_rows([row[0][k] for row in rows], entry)
                 for k, entry in enumerate(entries)]
