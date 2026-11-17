@@ -322,3 +322,129 @@ void sanafe::GatedInt24IfModel::reset()
         state.updates_seen = 0;
     }
 }
+
+namespace
+{
+// Lava's fixed-point LIF registers: 24-bit u and v, 12-bit decays, 6-bit alignment.
+constexpr int64_t lif_uv_bound = 1LL << 23;
+constexpr int64_t lif_decay_unity = 1LL << 12;
+constexpr int64_t lif_alignment = 1LL << 6;
+
+// sign(p) * (|p| >> 12) on a 64-bit product, as in AbstractPyLifModelFixed.subthr_dynamics.
+int64_t lif_decay(const int64_t value, const int64_t keep)
+{
+    const int64_t product = value * keep;
+    return product >= 0 ? product / lif_decay_unity : -((-product) / lif_decay_unity);
+}
+}
+
+void sanafe::CubaLifInt24Model::set_attribute_neuron(const size_t address,
+        const std::string &name, const ModelAttribute &param)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    const auto int32_attr = [&](const int64_t lo, const int64_t hi, const char *what) {
+        return static_cast<int32_t>(checked_integer(static_cast<double>(param), lo, hi, what));
+    };
+    if (name == "currents")
+    {
+        std::vector<int16_t> values;
+        for (const auto &value : std::get<std::vector<ModelAttribute>>(param.value))
+        {
+            values.push_back(static_cast<int16_t>(checked_integer(
+                    static_cast<double>(value), current_min, current_max,
+                    "LIF signed 16-bit external activation")));
+        }
+        state.currents = std::move(values);
+        state.cursor = 0;
+    }
+    else if (name == "du")
+    {
+        state.du = int32_attr(0, lif_decay_unity - 1, "LIF unsigned 12-bit du");
+    }
+    else if (name == "dv")
+    {
+        state.dv = int32_attr(0, lif_decay_unity - 1, "LIF unsigned 12-bit dv");
+    }
+    else if (name == "vth")
+    {
+        state.vth = int32_attr(0, (1LL << 17) - 1, "LIF unsigned 17-bit vth");
+    }
+    else if (name == "bias_mant")
+    {
+        state.bias_mant = int32_attr(-(1LL << 12), (1LL << 12) - 1, "LIF signed 13-bit bias_mant");
+    }
+    else if (name == "bias_exp")
+    {
+        state.bias_exp = int32_attr(0, 7, "LIF unsigned 3-bit bias_exp");
+    }
+    else if (name == "reset_interval")
+    {
+        state.reset_interval = int32_attr(0, std::numeric_limits<int32_t>::max(), "LIF reset_interval");
+    }
+    else if (name == "reset_offset")
+    {
+        state.reset_offset = int32_attr(0, std::numeric_limits<int32_t>::max(), "LIF reset_offset");
+    }
+    else if (name == "initial_v")
+    {
+        state.initial_v = int32_attr(voltage_min, voltage_max, "LIF signed 24-bit initial_v");
+        state.v = state.initial_v;
+    }
+}
+
+sanafe::PipelineResult sanafe::CubaLifInt24Model::update(const size_t address,
+        const std::optional<double> current, const long int /*timestep*/)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    const int64_t external = state.cursor < state.currents.size()
+            ? state.currents.at(state.cursor) : 0;
+    if (state.cursor < state.currents.size())
+    {
+        ++state.cursor;
+    }
+    // Synaptic input and external activation together form Lava's signed 16-bit a_in.
+    const int64_t activation = checked_integer(current.value_or(0.0) + static_cast<double>(external),
+            current_min, current_max, "LIF signed 16-bit input activation");
+    // Lava's time_step is one-based and persists across chunked runs until reset().
+    const auto t = static_cast<int64_t>(++state.updates_seen);
+    if (state.reset_interval > 0 &&
+            t % state.reset_interval == state.reset_offset % state.reset_interval)
+    {
+        state.u = 0;
+        state.v = 0;
+    }
+    // Current: decay by (du + 1) / 4096, add the aligned input, wrap into 24 bits.
+    const int64_t x = lif_decay(state.u, lif_decay_unity - (state.du + 1)) +
+            activation * lif_alignment;
+    const int64_t w = x > lif_uv_bound ? x - 2 * lif_uv_bound : x;
+    state.u = static_cast<int32_t>(w <= -lif_uv_bound ? x + 2 * lif_uv_bound : w);
+    // Voltage: decay by dv / 4096, add current and bias, clip to the symmetric 24-bit range.
+    const int64_t bias = static_cast<int64_t>(state.bias_mant) * (1LL << state.bias_exp);
+    const int64_t v = lif_decay(state.v, lif_decay_unity - state.dv) + state.u + bias;
+    state.v = static_cast<int32_t>(std::clamp(v, -lif_uv_bound + 1, lif_uv_bound - 1));
+    const bool spike = state.v > static_cast<int64_t>(state.vth) * lif_alignment;
+    if (spike)
+    {
+        state.v = 0;
+    }
+    return {std::nullopt, spike ? fired : updated, std::nullopt, std::nullopt};
+}
+
+void sanafe::CubaLifInt24Model::reset()
+{
+    for (State &state : states)
+    {
+        state.u = 0;
+        state.v = state.initial_v;
+        state.cursor = 0;
+        state.updates_seen = 0;
+    }
+}

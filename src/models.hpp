@@ -445,6 +445,53 @@ private:
     std::vector<State> states;
 };
 
+// Current-based LIF with the update rule of Lava's bit-accurate fixed-point LIF
+// (lava/proc/lif/models.py: AbstractPyLifModelFixed.subthr_dynamics, PyLifModelBitAcc,
+// PyLifResetModelBitAcc): 12-bit decays, 6-bit MSB alignment of input and threshold,
+// 24-bit wrapped current, clipped voltage, strict threshold, reset to zero, periodic reset.
+// Published LIF networks only; it is not the IF neuron of the integer models above.
+class CubaLifInt24Model : public SomaUnit
+{
+public:
+    CubaLifInt24Model() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override { return states.at(address).v; }
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"du", "(int) Unsigned 12-bit current decay register; u keeps (4096 - (du + 1)) / 4096."},
+        {"dv", "(int) Unsigned 12-bit voltage decay register; v keeps (4096 - dv) / 4096."},
+        {"vth", "(int) Unsigned 17-bit threshold, shifted left by 6; comparison uses >."},
+        {"bias_mant", "(int) Signed 13-bit bias mantissa."},
+        {"bias_exp", "(int) Unsigned 3-bit bias exponent; the bias is bias_mant << bias_exp."},
+        {"reset_interval", "(int) Period in updates of the u and v reset; 0 disables it."},
+        {"reset_offset", "(int) Phase of the reset: one-based update t resets when t % interval == offset % interval."},
+        {"initial_v", "(int) Signed 24-bit initial voltage in Lava's shifted scale, restored on reset."},
+        {"currents", "(list[int]) Signed 16-bit external activation per update, then zero."},
+    };
+private:
+    struct State
+    {
+        int32_t du{0};
+        int32_t dv{0};
+        int32_t vth{10};
+        int32_t bias_mant{0};
+        int32_t bias_exp{0};
+        int32_t reset_interval{0};
+        int32_t reset_offset{0};
+        int32_t initial_v{0};
+        int32_t u{0};
+        int32_t v{0};
+        std::vector<int16_t> currents;
+        size_t cursor{0};
+        size_t updates_seen{0};
+    };
+    std::vector<State> states;
+};
+
 // A numerical reference model, not a hardware-specific neuron ISA.
 class Float32IfModel : public SomaUnit
 {

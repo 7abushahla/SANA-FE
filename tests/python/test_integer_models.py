@@ -297,3 +297,66 @@ class TestGatedIFSynapticRange(unittest.TestCase):
     def test_a_fan_in_beyond_24_bits_is_refused(self):
         with self.assertRaisesRegex((ValueError, RuntimeError), 'signed 24'):
             self._fanin(257, 32767)                                  # 8,421,119 > 2^23 - 1
+
+
+LIF = 'cuba_lif_int24'
+
+
+def lif_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None) -> tuple[list[int], list[int]]:
+    """Spike (0 or 1) and Lava-scaled voltage after each update of one cuba_lif_int24 neuron."""
+    chip = chip_for([attributes], soma=LIF)
+    spikes, potentials = [], []
+    for n in (chunks if chunks is not None else (steps,)):
+        out = chip.sim(n, potential_trace=True, spike_trace=True)
+        spikes += [len(s) for s in out['spike_trace']]
+        potentials += [p[0] for p in out['potential_trace']]
+    return spikes, potentials
+
+
+class TestCubaLif(unittest.TestCase):
+    """Lava's bit-accurate fixed-point LIF (PyLifModelBitAcc, PyLifResetModelBitAcc), step for step."""
+
+    def test_a_leak_free_accumulation_and_strict_threshold(self):
+        s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'currents': [5] * 6}, 6)
+        self.assertEqual(s, [0, 0, 1, 0, 0, 1])
+        self.assertEqual(v, [320, 640, 0, 320, 640, 0])
+
+    def test_b_negative_voltage_decays_toward_zero(self):
+        s, v = lif_trace({'du': 4095, 'dv': 2048, 'vth': 100, 'currents': [-3]}, 9)
+        self.assertEqual(v, [-192, -96, -48, -24, -12, -6, -3, -1, 0])
+
+    def test_c_current_decay(self):
+        s, v = lif_trace({'du': 2047, 'dv': 4095, 'vth': 100, 'currents': [4]}, 4)
+        self.assertEqual(v, [256, 128, 64, 32])
+
+    def test_d_bias_mantissa_and_exponent(self):
+        s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 5, 'bias_mant': 3, 'bias_exp': 6}, 4)
+        self.assertEqual(s, [0, 1, 0, 1])
+
+    def test_e_voltage_clips_at_the_24_bit_bound(self):
+        s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 131071,
+                          'bias_mant': -4096, 'bias_exp': 7}, 16)
+        self.assertEqual(v[14], -7864320)
+        self.assertEqual(v[15], -8388607)
+
+    def test_f_periodic_reset(self):
+        s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 1000, 'reset_interval': 4,
+                          'reset_offset': 0, 'currents': [1] * 8}, 8)
+        self.assertEqual(v, [64, 128, 192, 64, 128, 192, 256, 64])
+
+    def test_g_reset_phase_survives_chunked_simulation(self):
+        attrs = {'du': 4095, 'dv': 0, 'vth': 1000, 'reset_interval': 4,
+                 'reset_offset': 0, 'currents': [1] * 8}
+        self.assertEqual(lif_trace(attrs, 8, chunks=(3, 5)), lif_trace(attrs, 8))
+
+    def test_i_initial_voltage(self):
+        s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'initial_v': 640, 'currents': [1]}, 1)
+        self.assertEqual((s, v), ([1], [0]))        # 640 + 64 > 640
+
+    def test_h_rejects_out_of_range_input_and_attributes(self):
+        with self.assertRaises(Exception):
+            lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'currents': [32768]}, 1)
+        for bad in ({'du': 4096}, {'dv': -1}, {'vth': 131072},
+                    {'bias_exp': 8}, {'bias_mant': 4096}):
+            with self.assertRaises(Exception):
+                lif_trace({'du': 0, 'dv': 0, 'vth': 1, **bad}, 1)
