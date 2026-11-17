@@ -45,6 +45,8 @@ from sanafe.lava_integer import _integers, _scalar_integer as _shared_scalar_int
 LIF_SOMA_UNIT = 'loihi_cuba_lif'
 #: Largest accepted activation magnitude, 2**18 + 32 (see the module docstring).
 ACTIVATION_BOUND = (1 << 18) + 32
+#: Execution profile of the networks this unit runs, recorded in their manifests.
+LIF_EXECUTION_PROFILE = 'lava-lif-int24-v1'
 _INT32 = (-(1 << 31), (1 << 31) - 1)
 
 
@@ -170,8 +172,7 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
     from lava.proc.dense.process import Dense
     from lava.utils.weightutils import (SignMode, determine_sign_mode,
                                        clip_weights, truncate_weights)
-    from sanafe.loihi2 import (candidate_profile, validate_chain_resources,
-                               validate_candidate_architecture)
+    from sanafe.loihi2 import validate_chain_resources
 
     if not layers or len(connections) != len(layers) - 1:
         raise ValueError('Expected one Dense connection between each pair of layers')
@@ -260,26 +261,13 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
                              'fanin_min': lower.tolist(), 'fanin_max': upper.tolist()})
 
     resources = validate_chain_resources(sizes, effective, placements)
-    if len(arch.tiles) != 32 or any(len(t.cores) != 4 for t in arch.tiles):
-        raise ValueError('Expected candidate 32-router/four-core topology')
-    fingerprint = validate_candidate_architecture(arch)
+    fingerprint = check_lif_architecture(arch)
     cores = []
     for tile_id, core_id in placements:
         core = arch.tiles[int(tile_id)].cores[int(core_id)]
-        somas = [u for u in core.pipeline_hw if u.implements_soma and u.name == LIF_SOMA_UNIT]
-        if len(somas) != 1 or somas[0].model_info.name != 'cuba_lif_int24':
-            raise ValueError(f'Expected one {LIF_SOMA_UNIT} unit per selected core')
-        for flag, model in [('implements_dendrite', 'accumulator_int'),
-                            ('implements_synapse', 'current_based_int')]:
-            units = [u for u in core.pipeline_hw if getattr(u, flag)]
-            if len(units) != 1 or units[0].model_info.name != model:
-                raise ValueError(f'Expected one {model} unit per selected core')
-        if core.buffer_position != sanafe.BufferPosition.buffer_before_soma_unit:
-            raise ValueError('Expected external pre-soma buffer')
         required = sum(size for size, place in zip(sizes, placements)
                        if tuple(place) == (tile_id, core_id))
-        if required > core.max_neurons_supported:
-            raise ValueError('Placement exceeds configured neuron capacity')
+        check_lif_core(core, required)
         cores.append(core)
 
     network = sanafe.Network()
@@ -300,25 +288,10 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
             for pre, weight in enumerate(row):
                 groups[index][pre].connect_to_neuron(groups[index + 1][post],
                                                     {'weight': int(weight)})
-    profile = candidate_profile()
-    profile['allocation'] = resources['allocation'].copy()
-    # The profile's default semantics describe the IF units. This chain runs the LIF unit.
-    profile['numerical_profile'] = 'lava-lif-int24-v1'
-    profile['semantics'] = {
-        'describes_unit': LIF_SOMA_UNIT,
-        'input_min': -ACTIVATION_BOUND, 'input_max': ACTIVATION_BOUND, 'input_shift_bits': 6,
-        'current_bits': 24, 'current_overflow': 'single wrap by 2**24 into (-2**23, 2**23]',
-        'decay_bits': 12, 'current_decay_offset': 1, 'voltage_decay_offset': 0,
-        'voltage_bits': 24, 'voltage_clip': 'symmetric, [-(2**23 - 1), 2**23 - 1]',
-        'threshold_bits': 17, 'threshold_shift_bits': 6, 'threshold_comparison': '>',
-        'reset': 'voltage to zero', 'periodic_reset': 'u and v to zero, before the update',
-        'bias': 'bias_mant * 2**bias_exp', 'weight_signed': True,
-        'effective_weight_transport_bits': 16, 'accumulation_bits': 32,
-        'accumulation_signed': True, 'accumulation_overflow': 'reject', 'events': 'binary',
-        'edge_delay_steps': 1}
+    profile = lif_architecture_profile(resources['allocation'])
     manifest = {
         'schema_version': 1,
-        'execution_profile': 'lava-lif-int24-v1',
+        'execution_profile': LIF_EXECUTION_PROFILE,
         'soma_unit': LIF_SOMA_UNIT,
         'architecture_profile': profile, 'architecture_sha256': fingerprint,
         'hardware_validated': False, 'input_transfer_cost_included': False,
@@ -337,3 +310,51 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
         'resource_report': resources,
     }
     return network, manifest
+
+
+def check_lif_architecture(arch):
+    """Refuse an architecture other than the candidate. Returns its fingerprint."""
+    from sanafe.loihi2 import validate_candidate_architecture
+
+    if len(arch.tiles) != 32 or any(len(t.cores) != 4 for t in arch.tiles):
+        raise ValueError('Expected candidate 32-router/four-core topology')
+    return validate_candidate_architecture(arch)
+
+
+def check_lif_core(core, required):
+    """Refuse a core without the LIF pipeline or with fewer than ``required`` neuron slots."""
+    somas = [u for u in core.pipeline_hw if u.implements_soma and u.name == LIF_SOMA_UNIT]
+    if len(somas) != 1 or somas[0].model_info.name != 'cuba_lif_int24':
+        raise ValueError(f'Expected one {LIF_SOMA_UNIT} unit per selected core')
+    for flag, model in [('implements_dendrite', 'accumulator_int'),
+                        ('implements_synapse', 'current_based_int')]:
+        units = [u for u in core.pipeline_hw if getattr(u, flag)]
+        if len(units) != 1 or units[0].model_info.name != model:
+            raise ValueError(f'Expected one {model} unit per selected core')
+    if core.buffer_position != sanafe.BufferPosition.buffer_before_soma_unit:
+        raise ValueError('Expected external pre-soma buffer')
+    if required > core.max_neurons_supported:
+        raise ValueError('Placement exceeds configured neuron capacity')
+
+
+def lif_architecture_profile(allocation):
+    """The candidate profile with the numerical profile and semantics of the LIF unit."""
+    from sanafe.loihi2 import candidate_profile
+
+    profile = candidate_profile()
+    profile['allocation'] = dict(allocation)
+    # The profile's default semantics describe the IF units. These networks run the LIF unit.
+    profile['numerical_profile'] = LIF_EXECUTION_PROFILE
+    profile['semantics'] = {
+        'describes_unit': LIF_SOMA_UNIT,
+        'input_min': -ACTIVATION_BOUND, 'input_max': ACTIVATION_BOUND, 'input_shift_bits': 6,
+        'current_bits': 24, 'current_overflow': 'single wrap by 2**24 into (-2**23, 2**23]',
+        'decay_bits': 12, 'current_decay_offset': 1, 'voltage_decay_offset': 0,
+        'voltage_bits': 24, 'voltage_clip': 'symmetric, [-(2**23 - 1), 2**23 - 1]',
+        'threshold_bits': 17, 'threshold_shift_bits': 6, 'threshold_comparison': '>',
+        'reset': 'voltage to zero', 'periodic_reset': 'u and v to zero, before the update',
+        'bias': 'bias_mant * 2**bias_exp', 'weight_signed': True,
+        'effective_weight_transport_bits': 16, 'accumulation_bits': 32,
+        'accumulation_signed': True, 'accumulation_overflow': 'reject', 'events': 'binary',
+        'edge_delay_steps': 1}
+    return profile
