@@ -328,15 +328,21 @@ class TestGatedIFSynapticRange(unittest.TestCase):
 LIF = 'cuba_lif_int24'
 
 
-def lif_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None) -> tuple[list[int], list[int]]:
-    """Spike (0 or 1) and Lava-scaled voltage after each update of one cuba_lif_int24 neuron."""
-    chip = chip_for([attributes], soma=LIF)
+def neuron_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None,
+                 **chip_kwargs) -> tuple[list[int], list[int]]:
+    """Spike (0 or 1) and voltage after each update of one neuron, run in the given chunks of updates."""
+    chip = chip_for([attributes], **chip_kwargs)
     spikes, potentials = [], []
     for n in (chunks if chunks is not None else (steps,)):
         out = chip.sim(n, potential_trace=True, spike_trace=True)
         spikes += [len(s) for s in out['spike_trace']]
         potentials += [p[0] for p in out['potential_trace']]
     return spikes, potentials
+
+
+def lif_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None) -> tuple[list[int], list[int]]:
+    """Spike (0 or 1) and Lava-scaled voltage after each update of one cuba_lif_int24 neuron."""
+    return neuron_trace(attributes, steps, chunks, soma=LIF)
 
 
 class TestCubaLif(unittest.TestCase):
@@ -426,19 +432,13 @@ class TestCubaLif(unittest.TestCase):
                                             'currents': [a]}, 1), ([s], [v]))
 
 
-def if_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None) -> tuple[list[int], list[int]]:
+def if_trace(attributes: dict, steps: int) -> tuple[list[int], list[int]]:
     """Spike (0 or 1) and voltage after each update of one integrate_fire_int24 neuron."""
-    chip = chip_for([attributes])
-    spikes, potentials = [], []
-    for n in (chunks if chunks is not None else (steps,)):
-        out = chip.sim(n, potential_trace=True, spike_trace=True)
-        spikes += [len(s) for s in out['spike_trace']]
-        potentials += [p[0] for p in out['potential_trace']]
-    return spikes, potentials
+    return neuron_trace(attributes, steps)
 
 
 class TestIfAgainstLeakFreeLif(unittest.TestCase):
-    """The thesis IF and the leak-free standard LIF agree up to the first spike and differ only in the reset."""
+    """The soft-reset IF and Loihi's built-in leak-free LIF agree up to the first spike and differ only in the reset."""
 
     def pair(self, theta, bias, a, steps):
         s_if, v_if = if_trace({'threshold': theta, 'initial_voltage': theta // 2,
@@ -447,15 +447,48 @@ class TestIfAgainstLeakFreeLif(unittest.TestCase):
                                   'bias_mant': bias, 'bias_exp': 6, 'currents': a}, steps)
         return s_if, v_if, s_lif, v_lif
 
+    @staticmethod
+    def drift_positive(rng, theta):
+        return rng.integers((-theta) // 4, theta // 2 + 1, size=200)
+
+    @staticmethod
+    def drift_zero(rng, theta):
+        return rng.integers(-(theta // 4), theta // 4 + 1, size=200)
+
+    @staticmethod
+    def drift_negative_with_jumps(rng, theta):
+        jumps = rng.random(200) < 0.05
+        return np.where(jumps, rng.integers(theta // 3, 3 * theta // 2 + 1, size=200),
+                        rng.integers(-(theta // 16) - 1, 1, size=200))
+
     def test_voltages_and_first_spike_agree(self):
         rng = np.random.default_rng(2)
-        for theta, bias in ((40, 0), (40, 3), (2, 0), (1000, -2)):
+        cases = ((40, 0, self.drift_positive), (40, 3, self.drift_positive),
+                 (2, 0, self.drift_positive), (1000, -2, self.drift_positive),
+                 (1000, 0, self.drift_zero), (1000, 1, self.drift_zero),
+                 (1000, 0, self.drift_negative_with_jumps),
+                 (40, -1, self.drift_negative_with_jumps),
+                 (2, 1, self.drift_positive), (2, -1, self.drift_positive),
+                 (4, 1, self.drift_zero), (4, -1, self.drift_zero))
+        negative_before_spike = late_first_spike = exact_landing = 0
+        for theta, bias, draw in cases:
             for _ in range(50):
-                a = rng.integers(-theta // 4, theta // 2 + 1, size=200).tolist()
+                a = draw(rng, theta).tolist()
                 s_if, v_if, s_lif, v_lif = self.pair(theta, bias, a, 200)
                 k = s_if.index(1) if 1 in s_if else 200
                 self.assertEqual(s_lif[:k + 1], s_if[:k + 1])
                 self.assertEqual(v_lif[:k], [64 * v for v in v_if[:k]])
+                negative_before_spike += any(v < 0 for v in v_if[:k])
+                if k < 200:
+                    late_first_spike += k > 20
+                    before = v_if[k - 1] if k > 0 else theta // 2
+                    # the membrane at the firing step, where >= on the IF and > on vth = theta - 1 must agree
+                    exact_landing += before + a[k] + bias == theta
+        self.assertGreater(negative_before_spike, 0)
+        self.assertGreater(late_first_spike, 0)
+        self.assertGreater(exact_landing, 0)
+        print(f'\nsoft-reset IF vs leak-free LIF counters: negative pre-spike {negative_before_spike}, '
+              f'first spike after step 20 {late_first_spike}, exact landing {exact_landing}, of {50 * len(cases)} runs')
 
     def test_membrane_exactly_at_the_threshold_fires_in_both(self):
         # theta 40, initial 20, one input of 20: membrane 40
@@ -472,5 +505,5 @@ class TestIfAgainstLeakFreeLif(unittest.TestCase):
         # theta 40, initial 20, one input of 30: membrane 50
         s_if, v_if, s_lif, v_lif = self.pair(40, 0, [30], 1)
         self.assertEqual((s_if, s_lif), ([1], [1]))
-        self.assertEqual(v_if, [10])        # subtraction, the thesis rule
-        self.assertEqual(v_lif, [0])        # reset to zero, the standard LIF
+        self.assertEqual(v_if, [10])        # subtraction, the soft reset of conversion
+        self.assertEqual(v_lif, [0])        # reset to zero, Loihi's built-in LIF
