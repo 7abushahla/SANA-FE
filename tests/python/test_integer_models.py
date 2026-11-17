@@ -353,10 +353,48 @@ class TestCubaLif(unittest.TestCase):
         s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'initial_v': 640, 'currents': [1]}, 1)
         self.assertEqual((s, v), ([1], [0]))        # 640 + 64 > 640
 
+    def _summed_input(self, external):
+        """A spike at update 1 reaches the target through eight synapses of 32767 at update 2."""
+        arch = architecture(soma=LIF)
+        net = sanafe.Network()
+        src = net.create_neuron_group('src', 1, model_attributes={
+            'du': 4095, 'dv': 0, 'vth': 0, 'currents': [1]})
+        dst = net.create_neuron_group('dst', 1, log_potential=True, model_attributes={
+            'du': 4095, 'dv': 4095, 'vth': 131071, 'currents': [0, external]})
+        src[0].map_to_core(arch.tiles[0].cores[0])
+        dst[0].map_to_core(arch.tiles[0].cores[0])
+        for _ in range(8):
+            src[0].connect_to_neuron(dst[0], {'weight': 32767})
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        return chip.sim(2, potential_trace=True)['potential_trace'][1][-1]
+
     def test_h_rejects_out_of_range_input_and_attributes(self):
-        with self.assertRaises(Exception):
-            lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'currents': [32768]}, 1)
-        for bad in ({'du': 4096}, {'dv': -1}, {'vth': 131072},
-                    {'bias_exp': 8}, {'bias_mant': 4096}):
-            with self.assertRaises(Exception):
-                lif_trace({'du': 0, 'dv': 0, 'vth': 1, **bad}, 1)
+        # Positive controls: the base configuration, both ends of the accepted activation
+        # range (2^18 + 32) and a synaptic plus external sum at the bound all run.
+        base = {'du': 0, 'dv': 0, 'vth': 1}
+        self.assertEqual(lif_trace(base, 1), ([0], [0]))
+        for edge, v in ((262176, 2048), (-262176, -2048)):
+            self.assertEqual(lif_trace({'du': 4095, 'dv': 0, 'vth': 131071, 'currents': [edge]}, 1),
+                             ([0], [v]))
+        self.assertEqual(self._summed_input(40), 2048)              # 8 * 32767 + 40 = 262176
+        for value in (262177, -262177):
+            with self.assertRaisesRegex(ValueError, 'LIF external activation must be'):
+                lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'currents': [value]}, 1)
+        with self.assertRaisesRegex(ValueError, 'LIF input activation must be'):
+            self._summed_input(41)
+        for bad, fragment in (({'du': 4096}, 'LIF unsigned 12-bit du must be'),
+                              ({'dv': -1}, 'LIF unsigned 12-bit dv must be'),
+                              ({'vth': 131072}, 'LIF unsigned 17-bit vth must be'),
+                              ({'bias_exp': 8}, 'LIF unsigned 3-bit bias_exp must be'),
+                              ({'bias_mant': 4096}, 'LIF signed 13-bit bias_mant must be')):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, fragment):
+                lif_trace({**base, **bad}, 1)
+
+    def test_j_current_wraps_once_at_the_24_bit_boundary(self):
+        # Values observed from Lava's PyLifModelBitAcc (du = 4095, dv = 0, one update from rest).
+        for a, s, v in ((131071, 0, 8388544), (131072, 1, 0), (131073, 0, -8388544),
+                        (-131072, 1, 0), (-131073, 0, 8388544), (262144, 0, 0)):
+            with self.subTest(a=a):
+                self.assertEqual(lif_trace({'du': 4095, 'dv': 0, 'vth': 131071,
+                                            'currents': [a]}, 1), ([s], [v]))

@@ -329,6 +329,11 @@ namespace
 constexpr int64_t lif_uv_bound = 1LL << 23;
 constexpr int64_t lif_decay_unity = 1LL << 12;
 constexpr int64_t lif_alignment = 1LL << 6;
+// Largest activation magnitude, 2^18 + 32, for which Lava's single wrap by 2^24 keeps the
+// current in (-2^23, 2^23] from every reachable current and decay (the decay keeps at most
+// 4095/4096 of the current). Lava shifts any signed 32-bit activation without a check. Beyond
+// this bound its current leaves 24 bits and can later overflow its 32-bit arithmetic.
+constexpr int64_t lif_activation_bound = (1LL << 18) + 32;
 
 // sign(p) * (|p| >> 12) on a 64-bit product, as in AbstractPyLifModelFixed.subthr_dynamics.
 int64_t lif_decay(const int64_t value, const int64_t keep)
@@ -351,12 +356,12 @@ void sanafe::CubaLifInt24Model::set_attribute_neuron(const size_t address,
     };
     if (name == "currents")
     {
-        std::vector<int16_t> values;
+        std::vector<int32_t> values;
         for (const auto &value : std::get<std::vector<ModelAttribute>>(param.value))
         {
-            values.push_back(static_cast<int16_t>(checked_integer(
-                    static_cast<double>(value), current_min, current_max,
-                    "LIF signed 16-bit external activation")));
+            values.push_back(static_cast<int32_t>(checked_integer(
+                    static_cast<double>(value), -lif_activation_bound, lif_activation_bound,
+                    "LIF external activation")));
         }
         state.currents = std::move(values);
         state.cursor = 0;
@@ -410,9 +415,9 @@ sanafe::PipelineResult sanafe::CubaLifInt24Model::update(const size_t address,
     {
         ++state.cursor;
     }
-    // Synaptic input and external activation together form Lava's signed 16-bit a_in.
+    // Synaptic input and external activation together form Lava's a_in.
     const int64_t activation = checked_integer(current.value_or(0.0) + static_cast<double>(external),
-            current_min, current_max, "LIF signed 16-bit input activation");
+            -lif_activation_bound, lif_activation_bound, "LIF input activation");
     // Lava's time_step is one-based and persists across chunked runs until reset().
     const auto t = static_cast<int64_t>(++state.updates_seen);
     if (state.reset_interval > 0 &&

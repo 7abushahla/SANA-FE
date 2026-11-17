@@ -470,7 +470,7 @@ public:
         {"reset_interval", "(int) Period in updates of the u and v reset; 0 disables it."},
         {"reset_offset", "(int) Phase of the reset: one-based update t resets when t % interval == offset % interval."},
         {"initial_v", "(int) Signed 24-bit initial voltage in Lava's shifted scale, restored on reset."},
-        {"currents", "(list[int]) Signed 16-bit external activation per update, then zero."},
+        {"currents", "(list[int]) External activation per update, then zero, each in [-(2^18 + 32), 2^18 + 32]."},
     };
 private:
     struct State
@@ -485,7 +485,7 @@ private:
         int32_t initial_v{0};
         int32_t u{0};
         int32_t v{0};
-        std::vector<int16_t> currents;
+        std::vector<int32_t> currents;
         size_t cursor{0};
         size_t updates_seen{0};
     };
