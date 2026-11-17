@@ -2,10 +2,22 @@
 
 The numerical program is a CPU reference candidate. It is not a verified
 Loihi 2 instruction program. Model allocation assumptions are reported.
+
+Two chain exporters share the checks below. ``qcfs_fixed_chain_to_sanafe``
+exports ``QCFSIFFixed`` layers to the ``integrate_fire_int24`` soma.
+``qcfs_gated_chain_to_sanafe`` exports ``QCFSIFGated`` layers, the Lava
+process that is a second implementation of the gated IF program, to the
+``integrate_fire_int24_gated`` soma.
 """
 import numbers
 import numpy as np
 import sanafe
+
+#: The soma unit of the candidate that runs ``integrate_fire_int24_gated``.
+GATED_SOMA_UNIT = 'loihi_if_gated'
+_V_RANGE = (-(1 << 23), (1 << 23) - 1)
+_I_RANGE = (-(1 << 15), (1 << 15) - 1)
+_INDEX_MAX = (1 << 31) - 1
 
 
 def _integers(value, name, low, high, shape=None):
@@ -30,26 +42,9 @@ def _scalar_integer(value, name, low, high):
     return int(value)
 
 
-def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
-                              *, reserved_cores=(), allocation=None):
-    """Return ``(Network, manifest)`` for a fresh QCFSIFFixed/Dense chain.
-
-    Binary Dense, zero weight exponent, 1..8 weight bits are supported. Lava's
-    clipping and truncation are applied before mapping. Every possible binary
-    fan-in sum must fit the IF input's signed16 range. The target must use the
-    candidate integer pipeline and an external pre-soma buffer. No I/O costs
-    are attributed to the direct numerical current injection.
-
-    All checks precede network construction. The manifest is required when
-    interpreting results and records the numerical and resource assumptions.
-    """
-    from lava.proc.qcfs import QCFSIFFixed
+def _check_chain(layers, connections, placements, layer_type):
+    """Refuse anything but a fresh, direct, unbranched chain of ``layer_type`` and Dense."""
     from lava.proc.dense.process import Dense
-    from lava.utils.weightutils import (SignMode, determine_sign_mode,
-                                       clip_weights, truncate_weights)
-    from sanafe.loihi2 import (audit_unit_scale_signed8_weights, candidate_profile,
-                               validate_chain_resources,
-                               validate_candidate_architecture)
 
     if not layers or len(connections) != len(layers) - 1:
         raise ValueError('Expected one Dense connection between each pair of layers')
@@ -59,8 +54,8 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
     if len({id(p) for p in processes}) != len(processes):
         raise ValueError('Each Process must appear once')
     for layer in layers:
-        if type(layer) is not QCFSIFFixed or len(layer.v.shape) != 1:
-            raise ValueError('Only one-dimensional QCFSIFFixed layers are supported')
+        if type(layer) is not layer_type or len(layer.v.shape) != 1:
+            raise ValueError(f'Only one-dimensional {layer_type.__name__} layers are supported')
     for process in processes:
         if process.runtime is not None or process._is_compiled:
             raise ValueError('Export fresh, uncompiled Processes only')
@@ -77,29 +72,16 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
     if layers[-1].s_out.out_connections:
         raise ValueError('Attach observers after export')
 
-    sizes = [layer.v.shape[0] for layer in layers]
-    currents = _integers(currents, 'currents', -(1 << 15), (1 << 15) - 1)
-    if currents.ndim != 2 or currents.shape[0] != sizes[0] or currents.shape[1] < 1:
-        raise ValueError('currents must be a nonempty [neurons, updates] array')
-    states = []
-    for layer in layers:
-        theta = _integers(layer.threshold.init, 'threshold', 2, (1 << 23)-1, layer.v.shape)
-        if np.any(theta % 2):
-            raise ValueError('threshold must be even')
-        start = _integers(layer.valid_start.init, 'valid_start', 0,
-                          (1 << 31)-2)
-        stop = _integers(layer.valid_stop.init, 'valid_stop', 1,
-                         (1 << 31)-1)
-        if start.size != 1 or stop.size != 1 or start.item() >= stop.item():
-            raise ValueError('valid update window must be scalar [start, stop)')
-        states.append({
-            'threshold': theta,
-            'bias': _integers(layer.bias.init, 'bias', -(1 << 15), (1 << 15)-1, layer.v.shape),
-            'initial_voltage': _integers(layer.v.init, 'initial voltage', -(1 << 23),
-                                         (1 << 23)-1, layer.v.shape),
-            'valid_start': np.full(layer.v.shape, int(start.item()), dtype=np.int64),
-            'valid_stop': np.full(layer.v.shape, int(stop.item()), dtype=np.int64),
-        })
+
+def _dense_weights(connections, sizes, fanin_low, fanin_high, fanin_error):
+    """Effective weights of binary fixed-point Dense, and their specification.
+
+    ``fanin_error`` is raised when some binary fan-in sum can leave
+    ``[fanin_low, fanin_high]``, the input range of the receiving soma.
+    """
+    from lava.utils.weightutils import (SignMode, determine_sign_mode,
+                                       clip_weights, truncate_weights)
+
     effective, weight_specs = [], []
     for index, dense in enumerate(connections):
         buffer = _integers(dense.a_buff.init, 'initial Dense buffer',
@@ -125,27 +107,41 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
         transformed = _integers(transformed, 'effective weights', -(1 << 15), (1 << 15)-1)
         lower = np.minimum(transformed, 0).sum(axis=1, dtype=np.int64)
         upper = np.maximum(transformed, 0).sum(axis=1, dtype=np.int64)
-        if np.any(lower < -(1 << 15)) or np.any(upper > (1 << 15)-1):
-            raise ValueError('binary fan-in can exceed the declared signed16 current range')
+        if np.any(lower < fanin_low) or np.any(upper > fanin_high):
+            raise ValueError(fanin_error)
         effective.append(transformed)
         weight_specs.append({'num_weight_bits': bits, 'sign_mode': mode.name,
                              'weight_exp': 0, 'num_message_bits': 0,
                              'fanin_min': lower.tolist(), 'fanin_max': upper.tolist()})
+    return effective, weight_specs
 
-    resources = validate_chain_resources(sizes, effective, placements,
-                                         reserved_cores=reserved_cores, allocation=allocation)
+
+def _select_cores(arch, placements, sizes, soma_model, soma_unit=None):
+    """Return the placed cores after checking topology, pipeline, buffer and capacity.
+
+    With ``soma_unit`` None, the first soma unit of each core must run
+    ``soma_model``. Otherwise the core must hold one soma unit of that name
+    running ``soma_model``.
+    """
+    from sanafe.loihi2 import validate_candidate_architecture
+
     if len(arch.tiles) != 32 or any(len(t.cores) != 4 for t in arch.tiles):
         raise ValueError('Expected candidate 32-router/four-core topology')
     fingerprint = validate_candidate_architecture(arch)
     cores = []
     for tile_id, core_id in placements:
         core = arch.tiles[int(tile_id)].cores[int(core_id)]
-        for flag, model in [('implements_soma', 'integrate_fire_int24'),
+        for flag, model in [('implements_soma', soma_model),
                             ('implements_dendrite', 'accumulator_int'),
                             ('implements_synapse', 'current_based_int')]:
             units = [u for u in core.pipeline_hw if getattr(u, flag)]
-            # Unnamed neurons map to the first (default) unit; the candidate may list a
-            # second, gated soma after it, which this exporter does not select.
+            if flag == 'implements_soma' and soma_unit is not None:
+                named = [u for u in units if u.name == soma_unit]
+                if len(named) != 1 or named[0].model_info.name != model:
+                    raise ValueError(f'Expected one {soma_unit} unit running {model} per selected core')
+                continue
+            # Unnamed neurons map to the first (default) unit. The candidate lists further
+            # soma units after it, which an exporter selects only by name.
             if not units or units[0].model_info.name != model or (
                     flag != 'implements_soma' and len(units) != 1):
                 raise ValueError(f'Expected one {model} unit per selected core')
@@ -158,9 +154,14 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
         if required > core.max_neurons_supported:
             raise ValueError('Placement exceeds configured neuron capacity')
         cores.append(core)
+    return cores, fingerprint
 
+
+def _build_network(sizes, states, cores, effective, currents, soma_unit=None):
+    """Create one logged group per layer, its attributes, mapping and dense edges."""
     network = sanafe.Network()
     groups = []
+    unit = {} if soma_unit is None else {'soma_hw_name': soma_unit}
     for index, (size, state, core) in enumerate(zip(sizes, states, cores)):
         group = network.create_neuron_group(f'layer_{index}', size,
                                             log_spikes=True, log_potential=True)
@@ -168,7 +169,7 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
             attrs = {name: int(values[offset]) for name, values in state.items()}
             if index == 0:
                 attrs['currents'] = currents[offset].tolist()
-            neuron.set_attributes(model_attributes=attrs)
+            neuron.set_attributes(model_attributes=attrs, **unit)
             neuron.map_to_core(core)
         groups.append(group)
     for index, weights in enumerate(effective):
@@ -176,6 +177,58 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
             for pre, weight in enumerate(row):
                 groups[index][pre].connect_to_neuron(groups[index + 1][post],
                                                     {'weight': int(weight)})
+    return network
+
+
+def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
+                              *, reserved_cores=(), allocation=None):
+    """Return ``(Network, manifest)`` for a fresh QCFSIFFixed/Dense chain.
+
+    Binary Dense, zero weight exponent, 1..8 weight bits are supported. Lava's
+    clipping and truncation are applied before mapping. Every possible binary
+    fan-in sum must fit the IF input's signed16 range. The target must use the
+    candidate integer pipeline and an external pre-soma buffer. No I/O costs
+    are attributed to the direct numerical current injection.
+
+    All checks precede network construction. The manifest is required when
+    interpreting results and records the numerical and resource assumptions.
+    """
+    from lava.proc.qcfs import QCFSIFFixed
+    from sanafe.loihi2 import (audit_unit_scale_signed8_weights, candidate_profile,
+                               validate_chain_resources)
+
+    _check_chain(layers, connections, placements, QCFSIFFixed)
+    sizes = [layer.v.shape[0] for layer in layers]
+    currents = _integers(currents, 'currents', -(1 << 15), (1 << 15) - 1)
+    if currents.ndim != 2 or currents.shape[0] != sizes[0] or currents.shape[1] < 1:
+        raise ValueError('currents must be a nonempty [neurons, updates] array')
+    states = []
+    for layer in layers:
+        theta = _integers(layer.threshold.init, 'threshold', 2, (1 << 23)-1, layer.v.shape)
+        if np.any(theta % 2):
+            raise ValueError('threshold must be even')
+        start = _integers(layer.valid_start.init, 'valid_start', 0,
+                          (1 << 31)-2)
+        stop = _integers(layer.valid_stop.init, 'valid_stop', 1,
+                         (1 << 31)-1)
+        if start.size != 1 or stop.size != 1 or start.item() >= stop.item():
+            raise ValueError('valid update window must be scalar [start, stop)')
+        states.append({
+            'threshold': theta,
+            'bias': _integers(layer.bias.init, 'bias', -(1 << 15), (1 << 15)-1, layer.v.shape),
+            'initial_voltage': _integers(layer.v.init, 'initial voltage', -(1 << 23),
+                                         (1 << 23)-1, layer.v.shape),
+            'valid_start': np.full(layer.v.shape, int(start.item()), dtype=np.int64),
+            'valid_stop': np.full(layer.v.shape, int(stop.item()), dtype=np.int64),
+        })
+    effective, weight_specs = _dense_weights(
+        connections, sizes, -(1 << 15), (1 << 15)-1,
+        'binary fan-in can exceed the declared signed16 current range')
+
+    resources = validate_chain_resources(sizes, effective, placements,
+                                         reserved_cores=reserved_cores, allocation=allocation)
+    cores, fingerprint = _select_cores(arch, placements, sizes, 'integrate_fire_int24')
+    network = _build_network(sizes, states, cores, effective, currents)
     profile = candidate_profile()
     profile['allocation'] = resources['allocation'].copy()
     windows = [[int(s['valid_start'].flat[0]), int(s['valid_stop'].flat[0])]
@@ -198,6 +251,130 @@ def qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch, placements,
         'initial_voltage': [s['initial_voltage'].tolist() for s in states],
         'thresholds': [s['threshold'].tolist() for s in states],
         'biases': [s['bias'].tolist() for s in states],
+        'currents': currents.tolist(), 'weights': weight_specs,
+        'effective_weights': [w.tolist() for w in effective],
+        'unit_scale_signed8_report': audit_unit_scale_signed8_weights(effective),
+        'resource_report': resources,
+    }
+    return network, manifest
+
+
+def qcfs_gated_chain_to_sanafe(layers, connections, currents, arch, placements,
+                               *, reserved_cores=(), allocation=None):
+    """Return ``(Network, manifest)`` for a fresh QCFSIFGated/Dense chain.
+
+    ``layers`` are one-dimensional ``QCFSIFGated`` Processes and
+    ``connections`` the plain ``Dense`` between each adjacent pair, binary,
+    with zero weight exponent and 1..8 weight bits. Each layer runs on the
+    candidate's ``loihi_if_gated`` soma unit, whose model
+    ``integrate_fire_int24_gated`` carries the same rule as the Lava process.
+    Every parameter of the process, the window included, may differ per
+    neuron. The input of the soma is signed 24 bits, so the first-layer
+    currents and every possible binary fan-in sum must fit that range.
+
+    Alignment of a Lava run with a SANA-FE run
+    ------------------------------------------
+    ``currents[n, t]`` is the external input of first-layer neuron ``n`` at
+    its update ``t`` (zero-based). In Lava that update has the one-based
+    ``time_step`` ``t + 1``, and a fixed-point ``RingBuffer`` holding
+    ``currents`` sends column ``time_step - 1``, which is column ``t``. In
+    SANA-FE the row is the ``currents`` attribute, whose element ``t`` is
+    consumed at update ``t``. A run compares at most ``currents.shape[1]``
+    updates, because beyond it the ``RingBuffer`` repeats its data while
+    SANA-FE supplies zero. The update index that opens and strides the
+    window counts from zero in both. The Lava process keeps it in its Var
+    ``update_index``, which equals ``time_step - 1`` in a fresh run, and the
+    soma keeps it per neuron until ``reset``. Row ``t`` of every trace is the
+    state after update ``t``, which a Lava ``Monitor`` reads after the time
+    step and SANA-FE's traces record for timestep ``t + 1``.
+
+    In a chain, Lava's ``Dense`` sends at each time step the activation it
+    accumulated from the spikes of the previous time step (its ``a_buff``),
+    so a spike emitted by layer ``k`` at update ``t`` reaches layer ``k + 1``
+    at update ``t + 1``. SANA-FE reproduces this delay of one update with the
+    candidate's buffer before the soma unit. A spike delivered at timestep
+    ``t`` is stored and consumed by the soma at timestep ``t + 1``. The first
+    layer receives ``currents`` directly, with no delay, in both.
+
+    Export before attaching a source or observers. All checks precede
+    network construction. The manifest records the numerical and resource
+    assumptions.
+    """
+    from lava.proc.qcfs import QCFSIFGated
+    from sanafe.loihi2 import (audit_unit_scale_signed8_weights, candidate_profile,
+                               validate_chain_resources)
+
+    _check_chain(layers, connections, placements, QCFSIFGated)
+    sizes = [layer.v.shape[0] for layer in layers]
+    currents = _integers(currents, 'currents', *_V_RANGE)
+    if currents.ndim != 2 or currents.shape[0] != sizes[0] or currents.shape[1] < 1:
+        raise ValueError('currents must be a nonempty [neurons, updates] array')
+    states = []
+    for layer in layers:
+        shape = layer.v.shape
+        theta = _integers(layer.threshold.init, 'threshold', 2, _V_RANGE[1], shape)
+        if np.any(theta % 2):
+            raise ValueError('threshold must be even')
+        initial = _integers(layer.v.init, 'initial voltage', *_V_RANGE, shape)
+        if not np.array_equal(initial, _integers(layer.initial_voltage.init,
+                                                 'initial_voltage', *_V_RANGE, shape)):
+            raise ValueError('v and initial_voltage must start equal')
+        if np.any(_integers(layer.update_index.init, 'update index', 0, _INDEX_MAX)):
+            raise ValueError('update index must start at zero')
+        start = _integers(layer.window_start.init, 'window_start', 0, _INDEX_MAX - 1, shape)
+        stop = _integers(layer.window_stop.init, 'window_stop', 1, _INDEX_MAX, shape)
+        if np.any(start >= stop):
+            raise ValueError('window requires window_start < window_stop')
+        states.append({
+            'threshold': theta,
+            'initial_voltage': initial,
+            'bias_at_start': _integers(layer.bias_at_start.init, 'bias_at_start',
+                                       *_V_RANGE, shape),
+            'bias_per_check': _integers(layer.bias_per_check.init, 'bias_per_check',
+                                        *_I_RANGE, shape),
+            'window_start': start,
+            'window_stop': stop,
+            'stride': _integers(layer.stride.init, 'stride', 1, _INDEX_MAX, shape),
+        })
+    effective, weight_specs = _dense_weights(
+        connections, sizes, *_V_RANGE,
+        'binary fan-in can exceed the declared signed 24-bit input range')
+
+    resources = validate_chain_resources(sizes, effective, placements,
+                                         reserved_cores=reserved_cores, allocation=allocation)
+    cores, fingerprint = _select_cores(arch, placements, sizes, 'integrate_fire_int24_gated',
+                                       GATED_SOMA_UNIT)
+    network = _build_network(sizes, states, cores, effective, currents, GATED_SOMA_UNIT)
+    profile = candidate_profile()
+    profile['allocation'] = resources['allocation'].copy()
+    # The profile's default semantics describe the ungated IF unit. This chain runs the gated unit.
+    profile['numerical_profile'] = 'qcfs-if-int24-gated-v1'
+    profile['semantics'] = {
+        'input_bits': 24, 'input_signed': True, 'integration': 'every update',
+        'bias_at_start_bits': 24, 'bias_at_start': 'added once, on update window_start',
+        'bias_per_check_bits': 16, 'bias_per_check': 'added on every check',
+        'check': 'window_start <= u < window_stop and (u - window_start) % stride == 0',
+        'voltage_bits': 24, 'voltage_signed': True, 'clip_before_threshold': True,
+        'threshold_comparison': '>=', 'spike': 'at a check only',
+        'reset': 'single threshold subtraction',
+        'effective_weight_transport_bits': 16, 'weight_signed': True,
+        'accumulation_bits': 32, 'accumulation_signed': True,
+        'accumulation_overflow': 'reject', 'events': 'binary', 'edge_delay_steps': 1}
+    manifest = {
+        'schema_version': 1,
+        'execution_profile': 'qcfs-if-int24-gated-v1',
+        'soma_unit': GATED_SOMA_UNIT,
+        'architecture_profile': profile, 'architecture_sha256': fingerprint,
+        'hardware_validated': False, 'input_transfer_cost_included': False,
+        'lava_models': ['lava.proc.qcfs.models.PyQCFSIFGatedFixed']
+                       + (['lava.proc.dense.models.PyDenseModelBitAcc'] if connections else []),
+        'architecture_instance': repr(arch),
+        'input': 'external signed 24-bit current per update (currents[n, t] at update t)',
+        'updates': currents.shape[1],
+        'scheduling_status': 'modeled gated neuron program, not verified Loihi 2 hardware',
+        'dense_delay_updates': 1, 'layer_sizes': sizes,
+        'placements': [[int(t), int(c)] for t, c in placements],
+        'layers': [{name: values.tolist() for name, values in state.items()} for state in states],
         'currents': currents.tolist(), 'weights': weight_specs,
         'effective_weights': [w.tolist() for w in effective],
         'unit_scale_signed8_report': audit_unit_scale_signed8_weights(effective),
