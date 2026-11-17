@@ -6,6 +6,8 @@ import unittest
 from importlib.resources import files
 from pathlib import Path
 
+import numpy as np
+
 import sanafe
 
 
@@ -398,3 +400,53 @@ class TestCubaLif(unittest.TestCase):
             with self.subTest(a=a):
                 self.assertEqual(lif_trace({'du': 4095, 'dv': 0, 'vth': 131071,
                                             'currents': [a]}, 1), ([s], [v]))
+
+
+def if_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = None) -> tuple[list[int], list[int]]:
+    """Spike (0 or 1) and voltage after each update of one integrate_fire_int24 neuron."""
+    chip = chip_for([attributes])
+    spikes, potentials = [], []
+    for n in (chunks if chunks is not None else (steps,)):
+        out = chip.sim(n, potential_trace=True, spike_trace=True)
+        spikes += [len(s) for s in out['spike_trace']]
+        potentials += [p[0] for p in out['potential_trace']]
+    return spikes, potentials
+
+
+class TestIfAgainstLeakFreeLif(unittest.TestCase):
+    """The thesis IF and the leak-free standard LIF agree up to the first spike and differ only in the reset."""
+
+    def pair(self, theta, bias, a, steps):
+        s_if, v_if = if_trace({'threshold': theta, 'initial_voltage': theta // 2,
+                               'bias': bias, 'currents': a}, steps)
+        s_lif, v_lif = lif_trace({'du': 4095, 'dv': 0, 'vth': theta - 1, 'initial_v': 32 * theta,
+                                  'bias_mant': bias, 'bias_exp': 6, 'currents': a}, steps)
+        return s_if, v_if, s_lif, v_lif
+
+    def test_voltages_and_first_spike_agree(self):
+        rng = np.random.default_rng(2)
+        for theta, bias in ((40, 0), (40, 3), (2, 0), (1000, -2)):
+            for _ in range(50):
+                a = rng.integers(-theta // 4, theta // 2 + 1, size=200).tolist()
+                s_if, v_if, s_lif, v_lif = self.pair(theta, bias, a, 200)
+                k = s_if.index(1) if 1 in s_if else 200
+                self.assertEqual(s_lif[:k + 1], s_if[:k + 1])
+                self.assertEqual(v_lif[:k], [64 * v for v in v_if[:k]])
+
+    def test_membrane_exactly_at_the_threshold_fires_in_both(self):
+        # theta 40, initial 20, one input of 20: membrane 40
+        s_if, v_if, s_lif, v_lif = self.pair(40, 0, [20], 1)
+        self.assertEqual((s_if, s_lif), ([1], [1]))
+        self.assertEqual((v_if, v_lif), ([0], [0]))
+
+    def test_membrane_one_below_the_threshold_fires_in_neither(self):
+        s_if, v_if, s_lif, v_lif = self.pair(40, 0, [19], 1)
+        self.assertEqual((s_if, s_lif), ([0], [0]))
+        self.assertEqual(v_lif, [64 * 39])
+
+    def test_the_two_differ_only_in_the_reset(self):
+        # theta 40, initial 20, one input of 30: membrane 50
+        s_if, v_if, s_lif, v_lif = self.pair(40, 0, [30], 1)
+        self.assertEqual((s_if, s_lif), ([1], [1]))
+        self.assertEqual(v_if, [10])        # subtraction, the thesis rule
+        self.assertEqual(v_lif, [0])        # reset to zero, the standard LIF
