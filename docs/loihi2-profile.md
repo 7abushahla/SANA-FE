@@ -12,6 +12,38 @@ Each core lists a second soma unit, `loihi_if_gated` (model `integrate_fire_int2
 
 Each core lists a third soma unit, `loihi_cuba_lif` (model `cuba_lif_int24`, numerical profile `qcfs-lif-int24-v1`), with the same inherited and scaled costs as `loihi_lif`. A neuron selects it with `soma_hw_name`. It follows the rule of the bit-accurate LIF of Lava, with integer current and voltage decay, a bias mantissa and exponent, and an optional periodic reset. It exists for published LIF networks. The thesis networks run on the two IF units and never on this one. No cost of this unit is tuned.
 
+`tests/python/test_cuba_lif_lava.py` runs this unit and Lava's `LIF` or `LIFReset` (`Loihi1SimCfg(select_tag='fixed_pt')`, Lava fork at `e6329c27`) on the same inputs and requires every spike and every voltage to be equal at every update, with no tolerance. It covers a grid of decays and thresholds, current wrapping, a grid of bias mantissas and exponents, the periodic reset at three phases, an initial voltage and a three-layer LIF/Dense chain with odd weights. `sanafe.lava_lif` holds the helpers (`lava_lif_trace`, `sanafe_lif_trace`, `lif_chain_to_sanafe`), and its module docstring states the alignment of a Lava run with a SANA-FE run.
+
+### Input range
+
+Lava's fixed-point LIF declares a signed 16-bit input port, but its fixed-point `Dense` and `RingBuffer` send signed 32-bit activations, and `subthr_dynamics` shifts whatever arrives by 6 bits without a range check. The shifted activation is added to the decayed current, and the sum is wrapped once by 2^24 into (-2^23, 2^23]. A probe of `PyLifModelBitAcc` with `dv = 0` and `vth = 131071` recorded the values below. The current `u` was read with a `Monitor`.
+
+| Input per update | `du` | Current `u` after each update | Voltage `v` after each update |
+| --- | --- | --- | --- |
+| 40,000 three times | 4095 | 2,560,000, 2,560,000, 2,560,000 | 2,560,000, 5,120,000, 7,680,000 |
+| -40,000 three times | 4095 | -2,560,000 (each update) | -2,560,000, -5,120,000, -7,680,000 |
+| 40,000 three times | 0 | 2,560,000, 5,119,375, 7,678,125 | 2,560,000, 7,679,375, 0 (spike) |
+| -40,000 three times | 0 | -2,560,000, -5,119,375, -7,678,125 | -2,560,000, -7,679,375, -8,388,607 (clipped) |
+
+Lava therefore integrates an activation of 40,000 exactly, with no 16-bit limit. One update from rest (`du = 4095`) locates the 24-bit boundary of the current after the shift, at |a| = 2^17.
+
+| Activation `a` | 64 a | Current `u` | Reading |
+| --- | --- | --- | --- |
+| 131,071 | 8,388,544 | 8,388,544 | exact |
+| 131,072 | 8,388,608 | 8,388,608 | exact, `v` clips to 8,388,607 and spikes |
+| 131,073 | 8,388,672 | -8,388,544 | wrapped by 2^24 |
+| -131,071 | -8,388,544 | -8,388,544 | exact |
+| -131,072 | -8,388,608 | 8,388,608 | wrapped by 2^24 |
+| -131,073 | -8,388,672 | 8,388,544 | wrapped by 2^24 |
+| 262,144 | 16,777,216 | 0 | wrapped by 2^24 |
+| 262,176 | 16,779,264 | 2,048 | wrapped by 2^24 |
+| 262,177 | 16,779,328 | 2,112 | wrapped by 2^24 |
+| 33,554,432 (2^25) | 2^31 | -2,130,706,432 | 32-bit shift overflow, current outside 24 bits |
+
+The single wrap keeps the current in (-2^23, 2^23] only while the sum stays in (-3 * 2^23, 3 * 2^23]. The decay keeps at most 4095/4096 of the current, because Lava adds a fixed offset of 1 to `du`, so the decayed current lies in [-8,386,559, 8,386,560]. The wrap is therefore a 24-bit wrap from every reachable current and every decay exactly when |a| is at most 2^18 + 32 = 262,176. The bound is tight on both sides. From a current of 8,388,608 with `du = 0`, an input of 262,176 holds the current at 8,388,608, while 262,177 moves it to 8,388,672 and then 8,388,735, outside 24 bits. From -8,388,544, an input of -262,176 holds it at -8,388,544, while -262,177 moves it to -8,388,608 and then -8,388,672. Past the bound, a sustained input drives Lava's current away from 24 bits, and from 2^25 the 32-bit shift itself overflows.
+
+The neuron accepts every activation in [-262,176, 262,176], whether external (`currents`), synaptic, or their sum in one update, and reproduces Lava's wrap over that whole range. It refuses anything beyond it with a `ValueError`. The comparison with Lava covers the range with random activations drawn over all of it, together with its two ends, ±2^17 and ±40,000. A source that sent 16-bit data to Lava's LIF would overflow in its 6-bit shift for |a| of 512 or more. Lava's own fixed-point `Dense` and `RingBuffer` send 32-bit data, so this does not arise in a Lava network.
+
 ## Cost derivation
 
 Decided 2026-09-30. The candidate's costs are the fitted Loihi 1 coefficients of `arch/loihi.yaml` (see that file's header for their Nahuku provenance), with the following changes and nothing else. `sanafe.loihi2.candidate_cost_provenance()` returns the same table programmatically and `test_loihi2_profile` checks the YAML against it.
