@@ -478,17 +478,15 @@ class TestIfAgainstLeakFreeLif(unittest.TestCase):
                 k = s_if.index(1) if 1 in s_if else 200
                 self.assertEqual(s_lif[:k + 1], s_if[:k + 1])
                 self.assertEqual(v_lif[:k], [64 * v for v in v_if[:k]])
-                negative_before_spike += any(v < 0 for v in v_if[:k])
                 if k < 200:
+                    negative_before_spike += any(v < 0 for v in v_if[:k])
                     late_first_spike += k > 20
                     before = v_if[k - 1] if k > 0 else theta // 2
                     # the membrane at the firing step, where >= on the IF and > on vth = theta - 1 must agree
                     exact_landing += before + a[k] + bias == theta
-        self.assertGreater(negative_before_spike, 0)
-        self.assertGreater(late_first_spike, 0)
-        self.assertGreater(exact_landing, 0)
-        print(f'\nsoft-reset IF vs leak-free LIF counters: negative pre-spike {negative_before_spike}, '
-              f'first spike after step 20 {late_first_spike}, exact landing {exact_landing}, of {50 * len(cases)} runs')
+        self.assertGreater(negative_before_spike, 0, 'a run that goes negative and then fires')
+        self.assertGreater(late_first_spike, 0, 'a first spike after step 20')
+        self.assertGreater(exact_landing, 0, 'a membrane exactly at the threshold at the firing step')
 
     def test_membrane_exactly_at_the_threshold_fires_in_both(self):
         # theta 40, initial 20, one input of 20: membrane 40
