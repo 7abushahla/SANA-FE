@@ -93,6 +93,10 @@ class TestGatedAgainstLava(unittest.TestCase):
                             # Some neuron sits at or above threshold after an unchecked update,
                             # so the gate, not the input, decides when it fires.
                             self.assertTrue(np.any(lava_v[0][~checks] >= theta), cell)
+                        if stride > 1:
+                            # The same holds on the updates inside the window that the stride skips.
+                            skipped = (u >= start) & (u < stop) & ((u - start) % stride != 0)
+                            self.assertTrue(np.any(lava_v[0][skipped] >= theta), cell)
                         compared += lava_v[0].size
         self.assertEqual(compared, 16 * 16 * 60)
 
@@ -129,6 +133,57 @@ class TestGatedAgainstLava(unittest.TestCase):
             self.assertTrue(np.any(lava_s[index]), f'layer {index} never spiked')
             self.assertTrue(np.array_equal(ours_s[index], lava_s[index]), index)
             self.assertTrue(np.array_equal(ours_v[index], lava_v[index]), index)
+
+    def test_voltage_saturates_at_both_rails_and_fires_from_the_upper_rail(self):
+        # Inputs at the signed 24-bit limits drive the voltage onto the upper rail 2**23 - 1 and the
+        # lower rail -2**23 before a late window [6, 10). Neuron 0 fires from the upper rail, neuron 1
+        # stays on the lower rail through a negative bias_per_check, neuron 2 crosses from the lower
+        # rail to the upper one and fires, neuron 3 is clamped by bias_at_start inside the window.
+        v_max, v_min = (1 << 23) - 1, -(1 << 23)
+        steps = 10
+        currents = np.zeros((4, steps), dtype=np.int64)
+        currents[0, :4] = v_max
+        currents[1, :4] = v_min
+        currents[2, :3], currents[2, 3:6] = v_min, v_max
+        currents[3, 5:7] = v_max
+        layer = QCFSIFGated(shape=(4,), threshold=np.array([1000, 1000, v_max - 1, 2]),
+                            initial_voltage=np.array([v_max - 1, v_min + 1, 0, 0]),
+                            bias_at_start=np.array([0, 0, 0, v_max]),
+                            bias_per_check=np.array([0, -(1 << 15), 0, 0]),
+                            window_start=6, window_stop=10)
+        (ours_s, ours_v), (lava_s, lava_v), _ = run_both([layer], [], currents, steps)
+        self.assertTrue(np.array_equal(ours_s[0], lava_s[0]))
+        self.assertTrue(np.array_equal(ours_v[0], lava_v[0]))
+        for name, s, v in (('SANA-FE', ours_s[0], ours_v[0]), ('Lava', lava_s[0], lava_v[0])):
+            self.assertTrue(np.any(v == v_max), f'{name} never reached the upper rail')
+            self.assertTrue(np.any(v == v_min), f'{name} never reached the lower rail')
+            railed = (v == v_max) | (v == v_min)
+            fired_after_clamp = [n for n in range(4) if railed[:, n].any() and
+                                 s[int(np.argmax(railed[:, n])) + 1:, n].any()]
+            self.assertTrue(fired_after_clamp, f'{name}: no neuron fired after being clamped')
+
+    def test_a_neuron_without_input_keeps_the_window_phase(self):
+        # The Lava process counts updates once for the whole layer, the soma once per neuron. They agree
+        # only if SANA-FE updates every gated neuron on every timestep, input or not. Layer 0 never fires,
+        # so layer 1 receives no input at all. Each of its neurons fires once, through bias_at_start alone,
+        # exactly on its own window_start.
+        steps = 12
+        first = QCFSIFGated(shape=(2,), threshold=(1 << 23) - 2, initial_voltage=0)
+        starts = np.array([0, 5, 7, 11])
+        second = QCFSIFGated(shape=(4,), threshold=4, initial_voltage=2, bias_at_start=2,
+                             window_start=starts, window_stop=starts + 1)
+        dense = Dense(weights=np.ones((4, 2), dtype=int))
+        first.s_out.connect(dense.s_in)
+        dense.a_out.connect(second.a_in)
+        (ours_s, ours_v), (lava_s, lava_v), _ = run_both([first, second], [dense],
+                                                         np.zeros((2, steps), dtype=int), steps)
+        for index in range(2):
+            self.assertTrue(np.array_equal(ours_s[index], lava_s[index]), index)
+            self.assertTrue(np.array_equal(ours_v[index], lava_v[index]), index)
+        self.assertFalse(np.any(ours_s[0]))
+        expected = np.zeros((steps, 4), dtype=np.int64)
+        expected[starts, np.arange(4)] = 1
+        self.assertTrue(np.array_equal(ours_s[1], expected))
 
     def test_export_refuses_what_the_gated_soma_cannot_run(self):
         from lava.proc.qcfs import QCFSIFFixed

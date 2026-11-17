@@ -1,6 +1,6 @@
 """Restricted integer Lava export with an explicit execution specification.
 
-The numerical program is a CPU reference candidate. It is not a verified
+The numerical program is a CPU candidate program. It is not a verified
 Loihi 2 instruction program. Model allocation assumptions are reported.
 
 Two chain exporters share the checks below. ``qcfs_fixed_chain_to_sanafe``

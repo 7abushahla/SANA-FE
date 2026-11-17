@@ -240,10 +240,34 @@ class TestGatedIF(unittest.TestCase):
     def test_stride_checks_every_k_steps_and_input_on_the_stop_step_is_kept(self):
         chip = chip_for([{'threshold': 4, 'initial_voltage': 0, 'bias_at_start': 0, 'bias_per_check': 0,
                           'window_start': 1, 'window_stop': 4, 'stride': 2,
-                          'currents': [3, 3, 0, 0, 3]}], soma=GATED)
+                          'currents': [3, 0, 3, 0, 3]}], soma=GATED)
         out = chip.sim(5, potential_trace=True, spike_trace=True)
-        self.assertEqual(out['potential_trace'], [[3], [2], [2], [2], [5]])
-        self.assertEqual([len(s) for s in out['spike_trace']], [0, 1, 0, 0, 0])
+        # Update 2 is in the window but skipped by the stride, so 6 waits for the check at update 3.
+        # With stride 1 the neuron would fire at update 2 and end at [3, 3, 2, 2, 5].
+        self.assertEqual(out['potential_trace'], [[3], [3], [6], [2], [5]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 0, 0, 1, 0])
+
+    def test_voltage_is_clamped_to_signed_24_bits_before_the_check(self):
+        top, bottom = (1 << 23) - 1, -(1 << 23)
+        chip = chip_for([{'threshold': 4, 'initial_voltage': top - 1,
+                          'window_start': 2, 'window_stop': 3, 'currents': [top, 5, 0]},
+                         {'threshold': 4, 'initial_voltage': bottom + 1, 'bias_per_check': -1,
+                          'window_start': 2, 'window_stop': 3, 'currents': [bottom, -5, 0]}],
+                        soma=GATED)
+        out = chip.sim(3, potential_trace=True, spike_trace=True)
+        # Both voltages are held at their rail, then the check at update 2 fires from the upper rail
+        # and subtracts the threshold once, while bias_per_check cannot push below the lower rail.
+        self.assertEqual(out['potential_trace'], [[top, bottom], [top, bottom], [top - 4, bottom]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 0, 1])
+
+    def test_a_neuron_without_input_is_updated_every_timestep(self):
+        chip = chip_for([{'threshold': 4, 'initial_voltage': 2, 'bias_at_start': 2,
+                          'window_start': 5, 'window_stop': 6}], soma=GATED)
+        out = chip.sim(7, potential_trace=True, spike_trace=True)
+        # No currents and no synapses. The update index still advances on every timestep, so the
+        # window opens at update 5, where bias_at_start alone reaches the threshold.
+        self.assertEqual(out['potential_trace'], [[2]] * 5 + [[0], [0]])
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 0, 0, 0, 0, 1, 0])
 
     def test_accepts_signed_24_bit_current_and_rejects_beyond(self):
         chip_for([{'threshold': 2, 'currents': [(1 << 23) - 1]}], soma=GATED).sim(1)
