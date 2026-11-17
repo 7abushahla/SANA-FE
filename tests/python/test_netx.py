@@ -312,3 +312,257 @@ def test_weight_rule_agrees_with_lava_netx(tmp_path):
         assert mine.neuron["bias_exp"] == int(np.asarray(lif.bias_exp.init).reshape(-1)[0])
         if mine.bias is not None:
             assert np.array_equal(mine.bias, np.asarray(block.neuron.bias_mant.init))
+
+
+# ---------------------------------------------------------------------------
+# Convolution convention against lava-dl's netx and Lava's conv utility.
+
+
+def _scalar(x):
+    return int(np.asarray(x).reshape(-1)[0])
+
+
+def _reader_conv(layer, x):
+    """The cross-correlation of the module docstring, in plain loops.
+
+    x has shape (in channels, height, width). Returns (out channels, out height,
+    out width) as integers.
+    """
+    w = layer.weights
+    n_out, n_in, kh, kw = w.shape
+    sh, sw = layer.stride
+    ph, pw = layer.padding
+    _, height, width = x.shape
+    out_h = (height + 2 * ph - kh) // sh + 1
+    out_w = (width + 2 * pw - kw) // sw + 1
+    out = np.zeros((n_out, out_h, out_w), dtype=np.int64)
+    for o in range(n_out):
+        for h in range(out_h):
+            for v in range(out_w):
+                total = 0
+                for i in range(n_in):
+                    for a in range(kh):
+                        for b in range(kw):
+                            r = h * sh + a - ph
+                            c = v * sw + b - pw
+                            if 0 <= r < height and 0 <= c < width:
+                                total += w[o, i, a, b] * x[i, r, c]
+                out[o, h, v] = total
+    return out
+
+
+def _lava_conv(block, x):
+    """Lava's conv utility on netx's weights, input in Lava's (x, y, c) order.
+
+    Returns the output mapped back to (out channels, height, width).
+    """
+    from lava.proc.conv import utils as conv_utils
+    syn = block.synapse
+    weight = np.asarray(syn.weight.init)
+    x_lava = x.transpose(2, 1, 0).astype(np.float64)
+    out = conv_utils.conv(
+        x_lava, weight, tuple(weight.shape[1:3]),
+        tuple(int(v) for v in syn.proc_params["stride"]),
+        tuple(int(v) for v in syn.proc_params["padding"]),
+        (1, 1), 1)
+    return np.rint(out).astype(np.int64).transpose(2, 1, 0)
+
+
+def test_conv_convention_agrees_with_lava_netx(tmp_path):
+    """Axis order, kernel orientation, stride and padding against Lava.
+
+    Every size differs (in channels 2, out channels 3, height 8, width 9, kernel
+    height 2, kernel width 3), the kernel is asymmetric, the stride is (2, 1) and
+    the padding is (0, 1), so no transposition or flip can pass by accident.
+    """
+    rng = np.random.default_rng(11)
+    w = rng.integers(-5, 6, size=(3, 2, 2, 3))
+    path = _write(tmp_path / "conv.net", [
+        _input((2, 8, 9)),
+        ("conv", (3, 4, 9), True, {
+            "weight": w.astype(np.float32),
+            "bias": np.array([1, -2, 3], dtype=np.float32),
+            "stride": np.array([2, 1]), "padding": np.array([0, 1]),
+            "dilation": np.array([1, 1]), "groups": 1,
+            "kernelSize": np.array([2, 3]), "inChannels": 2, "outChannels": 3}),
+    ])
+    netx = _lava_netx()
+    ours = read_netx(path).layers[1]
+    block = netx.hdf5.Network(net_config=str(path)).layers[1]
+    assert (ours.stride, ours.padding) == ((2, 1), (0, 1))
+    # netx hands Lava (x, y) pairs, the reverse of the file's (height, width).
+    assert tuple(int(v) for v in block.synapse.proc_params["stride"]) == (1, 2)
+    assert tuple(int(v) for v in block.synapse.proc_params["padding"]) == (1, 0)
+    for seed in range(3):
+        x = np.random.default_rng(seed).integers(0, 2, size=(2, 8, 9))
+        mine = _reader_conv(ours, x)
+        theirs = _lava_conv(block, x)
+        assert mine.shape == theirs.shape == (3, 4, 9)
+        assert np.array_equal(mine, theirs)
+        assert np.abs(mine).sum() > 0
+
+
+def test_real_file_agrees_with_lava_netx_on_every_layer():
+    """Every layer of the PilotNet file, reader against netx, after axis mapping."""
+    assert PILOTNET.is_file(), (
+        f"{PILOTNET} is missing. Run "
+        "SANA-FE-thesis/calibration/deployments/pilotnet_lif/fetch.py to fetch it."
+    )
+    netx = _lava_netx()
+    ours = read_netx(PILOTNET, reset_interval=16, reset_offset=3)
+    theirs = netx.hdf5.Network(net_config=str(PILOTNET), reset_interval=16,
+                               reset_offset=3)
+    mine = [layer for layer in ours.layers if layer.kind != "flatten"]
+    assert len(mine) == len(theirs.layers) == 10
+    previous_shape = None
+    for k, (m, block) in enumerate(zip(mine, theirs.layers)):
+        lif = block.neuron
+        for key, var in (("du", lif.du), ("dv", lif.dv), ("vth", lif.vth),
+                         ("bias_exp", lif.bias_exp)):
+            assert m.neuron[key] == _scalar(var.init), (k, key)
+        assert m.neuron["reset_interval"] == lif.proc_params["reset_interval"]
+        assert m.neuron["reset_offset"] == lif.proc_params["reset_offset"]
+        if m.kind == "input":
+            assert m.shape == tuple(block.shape[::-1])
+            previous_shape = m.shape
+            continue
+        syn = block.synapse
+        bias_mant = np.asarray(lif.bias_mant.init)
+        if m.kind == "conv":
+            assert m.shape == tuple(block.shape[::-1])
+            w_lava = np.asarray(syn.weight.init)  # (out, x, y, in), kernel flipped
+            assert np.array_equal(m.weights, w_lava[:, ::-1, ::-1, :].transpose(0, 3, 2, 1))
+            assert m.weight_exp == _scalar(syn.weight_exp.init)
+            assert m.weight_bits == _scalar(syn.num_weight_bits.init)
+            assert tuple(m.stride) == tuple(int(v) for v in syn.proc_params["stride"])[::-1]
+            assert tuple(m.padding) == tuple(int(v) for v in syn.proc_params["padding"])[::-1]
+            assert np.array_equal(np.broadcast_to(m.bias, bias_mant.shape), bias_mant)
+            # The same random input through both conventions on this layer.
+            x = np.random.default_rng(k).integers(0, 2, size=previous_shape)
+            assert np.array_equal(_reader_conv(m, x), _lava_conv(block, x)), k
+            previous_shape = m.shape
+        else:
+            assert m.shape == (block.shape[0],)
+            assert np.array_equal(m.weights, np.asarray(syn.weights.init))
+            assert m.weight_exp == syn.proc_params["weight_exp"]
+            assert m.weight_bits == syn.proc_params["num_weight_bits"]
+            assert np.array_equal(m.bias, bias_mant)
+
+
+# ---------------------------------------------------------------------------
+# Refusals and consistency checks.
+
+
+def _one_dense(tmp_path, weights, name="one.net", neuron=True, **extra):
+    weights = np.asarray(weights, dtype=np.float32)
+    out, inp = weights.shape
+    return _write(tmp_path / name, [
+        _input((inp, 1, 1)),
+        ("flatten", (1, 1, inp), False, {}),
+        ("dense", (out, 1, 1), neuron, {"weight": weights, **extra}),
+    ])
+
+
+def test_more_than_eight_weight_bits_refused(tmp_path):
+    # Odd weights with scale_bits 0 give n = -1 and 9 bits under netx's rule.
+    with pytest.raises(ValueError, match="9 weight bits"):
+        read_netx(_one_dense(tmp_path, [[149, -101, 1]]))
+
+
+def test_lava_clip_refused_when_sign_mode_differs(tmp_path):
+    # netx sees a mixed layer (max 0 is not below 0). Lava sees an inhibitory
+    # layer (max <= 0), negates it, and clips the weight -256 to 255.
+    with pytest.raises(ValueError, match="clip or truncate"):
+        read_netx(_one_dense(tmp_path, [[-4, 0, -2]]))
+
+
+def test_lava_clip_and_truncate_keep_ordinary_layers(tmp_path):
+    inhibitory = read_netx(_one_dense(tmp_path, [[-4, -2, -6]], "inh.net")).layers[2]
+    assert np.array_equal(inhibitory.weights, np.array([[-128, -64, -192]]))
+    excitatory = read_netx(_one_dense(tmp_path, [[4, 0, 6]], "exc.net")).layers[2]
+    assert excitatory.weight_exp < 0
+    assert np.array_equal(excitatory.effective_weights(), np.array([[4, 0, 6]]))
+
+
+def test_all_zero_dense_weights_refused(tmp_path):
+    with pytest.raises(ValueError, match="all zero"):
+        read_netx(_one_dense(tmp_path, [[0, 0], [0, 0]]))
+
+
+def test_nonzero_message_bits_refused(tmp_path):
+    path = tmp_path / "m.net"
+    with h5py.File(path, "w") as f:
+        g = _layer(f, 0, "input", (1, 2, 2), neuron=False)
+        _neuron(g.create_group("neuron"), messageBits=8)
+    with pytest.raises(ValueError, match="messageBits"):
+        read_netx(path)
+    ok = tmp_path / "m0.net"
+    with h5py.File(ok, "w") as f:
+        g = _layer(f, 0, "input", (1, 2, 2), neuron=False)
+        _neuron(g.create_group("neuron"), messageBits=0)
+    assert read_netx(ok).layers[0].neuron["vth"] == 25
+
+
+def test_missing_neuron_group_refused(tmp_path):
+    with pytest.raises(ValueError, match="no neuron group"):
+        read_netx(_one_dense(tmp_path, [[1, 2]], neuron=False))
+
+
+def _conv_file(tmp_path, name="cv.net", weight=None, **override):
+    weight = np.ones((2, 3, 2, 2), dtype=np.float32) if weight is None else weight
+    datasets = {
+        "weight": weight, "stride": np.array([1, 1]), "padding": np.array([0, 0]),
+        "dilation": np.array([1, 1]), "groups": 1, "kernelSize": np.array([2, 2]),
+        "inChannels": 3, "outChannels": 2,
+    }
+    datasets.update(override)
+    datasets = {k: v for k, v in datasets.items() if v is not None}
+    return _write(tmp_path / name, [_input((3, 4, 4)),
+                                    ("conv", (2, 3, 3), True, datasets)])
+
+
+def test_size_attributes_checked_against_weights(tmp_path):
+    assert read_netx(_conv_file(tmp_path)).layers[1].weights.shape == (2, 3, 2, 2)
+    with pytest.raises(ValueError, match="outChannels"):
+        read_netx(_conv_file(tmp_path, "a.net", outChannels=5))
+    with pytest.raises(ValueError, match="inChannels"):
+        read_netx(_conv_file(tmp_path, "b.net", inChannels=4))
+    with pytest.raises(ValueError, match="kernelSize"):
+        read_netx(_conv_file(tmp_path, "c.net", kernelSize=np.array([3, 2])))
+    with pytest.raises(ValueError, match="inFeatures"):
+        read_netx(_one_dense(tmp_path, [[1, 2]], "d.net", inFeatures=3))
+    with pytest.raises(ValueError, match="outFeatures"):
+        read_netx(_one_dense(tmp_path, [[1, 2]], "e.net", outFeatures=2))
+    assert read_netx(_one_dense(tmp_path, [[1, 2]], "f.net", inFeatures=2,
+                                outFeatures=1)).layers[2].weights.shape == (1, 2)
+
+
+@pytest.mark.parametrize("missing", ["stride", "padding", "dilation", "groups"])
+def test_missing_conv_attribute_is_value_error(tmp_path, missing):
+    with pytest.raises(ValueError, match=missing):
+        read_netx(_conv_file(tmp_path, f"{missing}.net", **{missing: None}))
+
+
+def test_scalar_stride_applies_to_both_axes(tmp_path):
+    layer = read_netx(_conv_file(tmp_path, stride=np.int64(2))).layers[1]
+    assert layer.stride == (2, 2)
+
+
+def test_dense_weight_with_extra_axes_refused(tmp_path):
+    path = _write(tmp_path / "x.net", [
+        _input((2, 1, 1)), ("flatten", (1, 1, 2), False, {}),
+        ("dense", (1, 1, 1), True, {"weight": np.ones((1, 2, 1), dtype=np.float32)}),
+    ])
+    with pytest.raises(ValueError, match="axes"):
+        read_netx(path)
+
+
+def test_conv_weights_outside_eight_bits_refused(tmp_path):
+    edge = np.full((2, 3, 2, 2), 127, dtype=np.float32)
+    edge[0, 0, 0, 0] = -128
+    assert read_netx(_conv_file(tmp_path, "edge.net", weight=edge)).layers[1].weights.min() == -128
+    for bad in (128, -129):
+        w = np.ones((2, 3, 2, 2), dtype=np.float32)
+        w[1, 2, 1, 1] = bad
+        with pytest.raises(ValueError, match="8-bit"):
+            read_netx(_conv_file(tmp_path, f"bad{bad}.net", weight=w))

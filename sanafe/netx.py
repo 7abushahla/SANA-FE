@@ -33,11 +33,11 @@ Conventions of the returned objects
   the result of netx's ``optimize_weight_bits`` (``utils.py`` lines 80 to 148,
   called at ``hdf5.py`` lines 351 and 352) and ``weight_exp`` and ``weight_bits``
   are the values that rule returns. For a convolution netx applies no such rule
-  (``hdf5.py`` lines 410 to 412). The stored integers are the weights, with
+  (``hdf5.py`` lines 411 and 412). The stored integers are the weights, with
   ``weight_exp`` 0 and ``weight_bits`` 8 (the defaults of Lava's Conv).
 * ``effective_weights()`` returns the integers that multiply a spike in the
   summed synaptic input. Lava's Dense shifts the accumulated sum, not each
-  weight (``proc/dense/models.py`` lines 99 to 107), by a right shift for a
+  weight (``proc/dense/models.py`` lines 103 to 107), by a right shift for a
   negative exponent and a left shift otherwise.
 * ``NetxLayer.transform`` of the input layer is the stored ``weight`` and ``bias``
   pair of the input. netx does not apply it. The dataset code of the caller does.
@@ -58,7 +58,7 @@ import numpy as np
 # with the same parameters, which this reader does not need).
 _LIF_TYPE = "LOIHI"
 
-# Neuron datasets that netx reads (hdf5.py lines 128 to 145).
+# Neuron datasets that netx reads (hdf5.py lines 128 to 144).
 _NEURON_USED = {"type", "iDecay", "vDecay", "vThMant", "messageBits"}
 # Neuron datasets that netx never reads and that describe the training-time
 # (slayer) neuron. Ignored: refDelay, scaleRho, tauRho, theta (the slayer
@@ -66,8 +66,8 @@ _NEURON_USED = {"type", "iDecay", "vDecay", "vThMant", "messageBits"}
 _NEURON_METADATA = {"refDelay", "scaleRho", "tauRho", "theta", "wgtExp"}
 
 # Layer datasets by type. Redundant size attributes (inChannels, outChannels,
-# kernelSize, inFeatures, outFeatures) are not read by netx. They are checked
-# against the weights for consistency.
+# kernelSize, inFeatures, outFeatures) are not read by netx. The reader checks
+# them against the weights and refuses a mismatch.
 _COMMON = {"type", "shape", "neuron"}
 _ALLOWED = {
     "input": _COMMON | {"weight", "bias"},
@@ -130,7 +130,7 @@ def _read(dataset) -> np.ndarray:
 
 
 def _text(dataset) -> str:
-    # utils.py lines 56 to 63: a one-element array or a scalar of ASCII bytes.
+    # utils.py lines 59 to 66: a one-element array or a scalar of ASCII bytes.
     value = _read(dataset)
     if isinstance(value, np.ndarray):
         value = value.reshape(-1)[0]
@@ -138,7 +138,7 @@ def _text(dataset) -> str:
 
 
 def _integers(array, what: str, layer: int) -> np.ndarray:
-    # netx converts with astype(int) (utils.py lines 51 and 68), which truncates.
+    # netx converts with astype(int) (utils.py line 68), which truncates.
     array = np.asarray(array)
     if not np.all(array == np.round(array)):
         raise ValueError(
@@ -150,13 +150,31 @@ def _integers(array, what: str, layer: int) -> np.ndarray:
 
 def _pair(value, name: str, layer: int) -> Tuple[int, int]:
     # hdf5.py lines 403 to 406: a scalar applies to both axes. The pair stays in
-    # file (height, width) order here, whereas netx reverses it.
-    array = np.asarray(value).reshape(-1)
-    if array.size == 1:
-        return int(array[0]), int(array[0])
-    if array.size != 2:
-        raise ValueError(f"layer {layer}: {name} has {array.size} entries, expected 2")
+    # file (height, width) order here, whereas netx reverses it (line 406).
+    array = np.asarray(value)
+    if array.ndim == 0:
+        return int(array), int(array)
+    if array.shape != (2,):
+        raise ValueError(f"layer {layer}: {name} has shape {array.shape}, expected "
+                         "a scalar or two entries")
     return int(array[0]), int(array[1])
+
+
+def _required(lg, name: str, layer: int):
+    # netx reads these with layer_config[name] (hdf5.py lines 407 to 416), which
+    # raises KeyError when the dataset is absent. There is no default.
+    if name not in lg:
+        raise ValueError(f"layer {layer}: required attribute '{name}' is missing "
+                         "(netx has no default for it)")
+    return _read(lg[name])
+
+
+def _check_size(lg, name: str, expected, layer: int) -> None:
+    if name in lg:
+        stored = tuple(int(x) for x in np.atleast_1d(_read(lg[name])))
+        if stored != tuple(int(x) for x in np.atleast_1d(expected)):
+            raise ValueError(f"layer {layer}: attribute '{name}' is {stored} but "
+                             f"the weights imply {tuple(np.atleast_1d(expected))}")
 
 
 def _optimize_weight_bits(weight: np.ndarray, layer: int):
@@ -169,7 +187,7 @@ def _optimize_weight_bits(weight: np.ndarray, layer: int):
                          "weight rule has no scale")
     max_weight = np.max(weight)
     min_weight = np.min(weight)
-    # utils.py lines 100 to 116
+    # utils.py lines 104 to 121
     if max_weight < 0:
         is_signed = 0
         scale = -256 / min_weight
@@ -178,9 +196,11 @@ def _optimize_weight_bits(weight: np.ndarray, layer: int):
         scale = 255 / max_weight
     else:
         is_signed = 1
-        scale = min(127 / max_weight, -128 / min_weight)
+        # A zero maximum gives an infinite positive scale, as in netx (line 115).
+        with np.errstate(divide="ignore"):
+            scale = min(127 / max_weight, -128 / min_weight)
     scale_bits = int(np.floor(np.log2(scale)) + is_signed)
-    # utils.py lines 120 to 135: the largest power of two (at most 8) that
+    # utils.py lines 125 to 134: the largest power of two (at most 8) that
     # divides every weight.
     n = 8
     while n > 0 and np.sum(np.abs(weight / 2.0**n - np.round(weight / 2.0**n))) != 0:
@@ -188,17 +208,25 @@ def _optimize_weight_bits(weight: np.ndarray, layer: int):
     n -= is_signed
     bits = 8 - scale_bits - n
     exponent = -scale_bits
+    if bits > 8:
+        # Lava's truncate_weights would shift by a negative amount (utils/
+        # weightutils.py lines 236 to 239), which is not defined.
+        raise ValueError(
+            f"layer {layer}: netx's weight rule gives {bits} weight bits, more than "
+            "the 8 that Lava's Dense supports"
+        )
     applied = np.left_shift(weight.astype(np.int32), scale_bits).astype(np.int64)
     # Lava's Dense then clips to 8 bits and truncates low bits (proc/dense/models.py
-    # lines 87 to 90, utils/weightutils.py). It decides the sign mode itself from
-    # the weights. The reader refuses a layer on which that changes a weight.
+    # lines 87 to 90, utils/weightutils.py lines 204 to 247 and 250 to 295). It
+    # decides the sign mode itself from the weights (determine_sign_mode, line 21).
+    # The reader refuses a layer on which that changes a weight.
     lava_mode = ("excitatory" if np.min(applied) >= 0
                  else "inhibitory" if np.max(applied) <= 0 else "mixed")
     signed = applied if lava_mode != "inhibitory" else -applied
     mixed = int(lava_mode == "mixed")
     clipped = np.clip(signed, -(2**8) * mixed, 2**8 - 1)
     drop = 8 - bits + mixed
-    truncated = (clipped >> drop) << drop if drop > 0 else clipped
+    truncated = (clipped >> drop) << drop
     if not np.array_equal(truncated, signed):
         raise ValueError(
             f"layer {layer}: Lava's Dense would clip or truncate the applied weights "
@@ -223,7 +251,7 @@ def _neuron(group, layer: int, reset_interval, reset_offset) -> Dict[str, Any]:
         raise ValueError(f"layer {layer}: neuron messageBits is not zero, so "
                          "graded spikes are not implemented")
     return {
-        # hdf5.py lines 138 to 145
+        # hdf5.py lines 141 to 144
         "du": int(_read(group["iDecay"])) - 1,
         "dv": int(_read(group["vDecay"])),
         "vth": int(_read(group["vThMant"])),
@@ -288,7 +316,7 @@ def read_netx(path, reset_interval: Optional[int] = None,
                 next_offset += 1
 
             if kind == "input":
-                # hdf5.py lines 261 to 271. The transform is stored on the block
+                # hdf5.py lines 261 to 270. The transform is stored on the block
                 # and never applied by netx.
                 weight = int(_read(lg["weight"])) if "weight" in lg else 64
                 bias = int(_read(lg["bias"])) if "bias" in lg else 0
@@ -302,13 +330,13 @@ def read_netx(path, reset_interval: Optional[int] = None,
 
 
 def _read_conv(lg, layer: NetxLayer, index: int) -> None:
-    layer.stride = _pair(_read(lg["stride"]), "stride", index)
-    layer.padding = _pair(_read(lg["padding"]), "padding", index)
-    layer.dilation = _pair(_read(lg["dilation"]), "dilation", index)
+    layer.stride = _pair(_required(lg, "stride", index), "stride", index)
+    layer.padding = _pair(_required(lg, "padding", index), "padding", index)
+    layer.dilation = _pair(_required(lg, "dilation", index), "dilation", index)
     if layer.dilation != (1, 1):
         raise ValueError(f"layer {index}: dilation {layer.dilation} is not "
                          "implemented, only 1")
-    groups = int(np.asarray(_read(lg["groups"])).reshape(-1)[0]) if "groups" in lg else 1
+    groups = int(np.asarray(_required(lg, "groups", index)).reshape(-1)[0])
     if groups != 1:
         raise ValueError(f"layer {index}: groups {groups} is not implemented, only 1")
     layer.groups = groups
@@ -319,6 +347,15 @@ def _read_conv(lg, layer: NetxLayer, index: int) -> None:
     if weight.ndim != 4:
         raise ValueError(f"layer {index}: convolution weight has shape "
                          f"{weight.shape}, expected 4 axes")
+    # Lava's fixed-point Conv holds weights as int32 with precision 8
+    # (proc/conv/models.py line 76), a signed 8-bit range. Lava does not clip them.
+    if weight.min() < -128 or weight.max() > 127:
+        raise ValueError(f"layer {index}: convolution weights span "
+                         f"[{weight.min()}, {weight.max()}], outside the signed 8-bit "
+                         "range of Lava's fixed-point Conv")
+    _check_size(lg, "outChannels", weight.shape[0], index)
+    _check_size(lg, "inChannels", weight.shape[1], index)
+    _check_size(lg, "kernelSize", weight.shape[2:], index)
     layer.weights = weight
     layer.weight_exp, layer.weight_bits = 0, 8
     if "bias" in lg:
@@ -331,8 +368,13 @@ def _read_dense(lg, layer: NetxLayer, index: int) -> None:
     weight = _integers(_read(lg["weight"]), "weight", index)
     if weight.ndim == 1:
         weight = weight.reshape(n_out, -1)  # hdf5.py lines 348 and 349
-    elif weight.ndim > 2:
-        weight = weight.reshape(n_out, -1)
+    elif weight.ndim != 2:
+        # netx passes other shapes on and Lava's Dense rejects them
+        # (proc/dense/process.py lines 82 to 85).
+        raise ValueError(f"layer {index}: dense weight has shape {weight.shape}, "
+                         "expected 1 or 2 axes")
+    _check_size(lg, "outFeatures", weight.shape[0], index)
+    _check_size(lg, "inFeatures", weight.shape[1], index)
     layer.weights, layer.weight_bits, layer.weight_exp = _optimize_weight_bits(
         weight, index)
     if "bias" in lg:
