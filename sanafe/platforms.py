@@ -225,7 +225,9 @@ PLATFORMS = (
                  'routing, up to 8,192 neurons and 192 KB per core. SANA-FE runs a '
                  'signed 24-bit integer integrate-and-fire soma with integer synapses and '
                  'accumulators as a candidate neuron program, and a gated variant for '
-                 'per-layer windows (modeled); graded spikes and microcode are not modeled.'),
+                 'per-layer windows (modeled). A third soma unit runs the fixed-point leaky '
+                 'integrate-and-fire rule of Lava for published LIF networks. Graded spikes '
+                 'and microcode are not modeled.'),
         cost_summary=('latencies scaled from Loihi 1 by Intel-stated factors · energy '
                       'inherited from Loihi 1'),
         costs=_loihi2_costs(), time_word='scaled', energy_word='inherited',

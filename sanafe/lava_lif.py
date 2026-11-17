@@ -303,8 +303,9 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
     profile = candidate_profile()
     profile['allocation'] = resources['allocation'].copy()
     # The profile's default semantics describe the IF units. This chain runs the LIF unit.
-    profile['numerical_profile'] = 'qcfs-lif-int24-v1'
+    profile['numerical_profile'] = 'lava-lif-int24-v1'
     profile['semantics'] = {
+        'describes_unit': LIF_SOMA_UNIT,
         'input_min': -ACTIVATION_BOUND, 'input_max': ACTIVATION_BOUND, 'input_shift_bits': 6,
         'current_bits': 24, 'current_overflow': 'single wrap by 2**24 into (-2**23, 2**23]',
         'decay_bits': 12, 'current_decay_offset': 1, 'voltage_decay_offset': 0,
@@ -317,13 +318,13 @@ def lif_chain_to_sanafe(layers, connections, a_in, arch, placements):
         'edge_delay_steps': 1}
     manifest = {
         'schema_version': 1,
-        'execution_profile': 'qcfs-lif-int24-v1',
+        'execution_profile': 'lava-lif-int24-v1',
         'soma_unit': LIF_SOMA_UNIT,
         'architecture_profile': profile, 'architecture_sha256': fingerprint,
         'hardware_validated': False, 'input_transfer_cost_included': False,
         'lava_models': [('lava.proc.lif.models.PyLifResetModelBitAcc' if type(layer) is LIFReset
                          else 'lava.proc.lif.models.PyLifModelBitAcc') for layer in layers]
-                       + ['lava.proc.dense.models.PyDenseModelBitAcc'],
+                       + (['lava.proc.dense.models.PyDenseModelBitAcc'] if connections else []),
         'architecture_instance': repr(arch),
         'input': 'external activation per update (a_in[t] at update t)',
         'updates': a.shape[0],

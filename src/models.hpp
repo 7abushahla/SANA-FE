@@ -449,7 +449,7 @@ private:
 // (lava/proc/lif/models.py: AbstractPyLifModelFixed.subthr_dynamics, PyLifModelBitAcc,
 // PyLifResetModelBitAcc): 12-bit decays, 6-bit MSB alignment of input and threshold,
 // 24-bit wrapped current, clipped voltage, strict threshold, reset to zero, periodic reset.
-// Published LIF networks only; it is not the IF neuron of the integer models above.
+// For published LIF networks only. It is not the IF neuron of the integer models above.
 class CubaLifInt24Model : public SomaUnit
 {
 public:
@@ -462,13 +462,13 @@ public:
     void reset() override;
     double get_potential(size_t address) override { return states.at(address).v; }
     static inline const std::unordered_map<std::string, std::string> attributes{
-        {"du", "(int) Unsigned 12-bit current decay register; u keeps (4096 - (du + 1)) / 4096."},
-        {"dv", "(int) Unsigned 12-bit voltage decay register; v keeps (4096 - dv) / 4096."},
-        {"vth", "(int) Unsigned 17-bit threshold, shifted left by 6; comparison uses >."},
+        {"du", "(int) Unsigned 12-bit current decay register. The current u keeps (4096 - (du + 1)) / 4096."},
+        {"dv", "(int) Unsigned 12-bit voltage decay register. The voltage v keeps (4096 - dv) / 4096."},
+        {"vth", "(int) Unsigned 17-bit threshold, shifted left by 6. The comparison uses >."},
         {"bias_mant", "(int) Signed 13-bit bias mantissa."},
-        {"bias_exp", "(int) Unsigned 3-bit bias exponent; the bias is bias_mant << bias_exp."},
-        {"reset_interval", "(int) Period in updates of the u and v reset; 0 disables it."},
-        {"reset_offset", "(int) Phase of the reset: one-based update t resets when t % interval == offset % interval."},
+        {"bias_exp", "(int) Unsigned 3-bit bias exponent. The bias is bias_mant << bias_exp."},
+        {"reset_interval", "(int) Period in updates of the u and v reset. A value of 0 disables it."},
+        {"reset_offset", "(int) Phase of the reset. One-based update t resets when t % interval == offset % interval."},
         {"initial_v", "(int) Signed 24-bit initial voltage in Lava's shifted scale, restored on reset."},
         {"currents", "(list[int]) External activation per update, then zero, each in [-(2^18 + 32), 2^18 + 32]."},
     };

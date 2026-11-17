@@ -17,6 +17,7 @@ import sanafe
 from sanafe.lava_lif import (ACTIVATION_BOUND, lava_lif_trace, lif_chain_to_sanafe,
                              sanafe_lif_trace)
 from sanafe.loihi2 import load_loihi2_candidate
+from test_integer_models import TestIfAgainstLeakFreeLif, if_trace
 
 
 @unittest.skipUnless(HAVE_LAVA, 'requires Lava')
@@ -75,6 +76,12 @@ class TestCubaLifAgainstLava(unittest.TestCase):
             with self.subTest(num_weight_bits=bits, weight_exp=exponent):
                 self.chain(bits, exponent)
 
+    def test_single_layer_manifest_lists_no_dense_model(self):
+        layer = LIF(shape=(3,), du=4095, dv=0, vth=10)
+        _, manifest = lif_chain_to_sanafe([layer], [], np.ones((4, 3), dtype=int),
+                                          load_loihi2_candidate(), [(0, 0)])
+        self.assertEqual(manifest['lava_models'], ['lava.proc.lif.models.PyLifModelBitAcc'])
+
     def chain(self, bits, exponent):
         rng = np.random.default_rng(3)
         steps = 100
@@ -110,13 +117,16 @@ class TestCubaLifAgainstLava(unittest.TestCase):
                           run_cfg=Loihi1SimCfg(select_tag='fixed_pt'))
             lava_v = [m.get_data()[l.name]['v'] for l, (m, _) in zip(layers, monitors)]
             lava_s = [m.get_data()[l.name]['s_out'] for l, (_, m) in zip(layers, monitors)]
-            applied = [d.weights.get() * (1 << d.proc_params.get('weight_exp', 0)) for d in dense]
+            truncated = [d.weights.get() for d in dense]      # Lava's weights before the exponent
+            applied = [w * (1 << d.proc_params.get('weight_exp', 0)) for w, d in zip(truncated, dense)]
         finally:
             layers[0].stop()
 
         self.assertTrue(np.array_equal(manifest['effective_weights'][0], applied[0]))
         self.assertTrue(np.array_equal(manifest['effective_weights'][1], applied[1]))
-        self.assertTrue(any(np.any(w != a) for w, a in zip(raw, applied)), 'Lava truncated a weight')
+        if bits < 8:
+            self.assertTrue(any(np.any(w != t) for w, t in zip(raw, truncated)),
+                            'Lava truncated a weight')
 
         chip = sanafe.SpikingChip(arch)
         chip.load(net)
@@ -131,6 +141,61 @@ class TestCubaLifAgainstLava(unittest.TestCase):
             self.assertTrue(np.any(lava_s[index]), f'layer {index} never spiked')
             self.assertTrue(np.array_equal(ours_s[index], lava_s[index]), index)
             self.assertTrue(np.array_equal(ours_v[index], lava_v[index]), index)
+
+
+def large_theta_cases():
+    """Cases at the top of the mapping's domain, theta 2**17 and the extreme bias mantissas.
+
+    The drifts are gentle so that the membrane stays inside +-131,071 before the first spike.
+    """
+    return ((131072, 4095, lambda rng, theta: rng.integers(-2000, 3001, size=200)),
+            (131072, -4096, lambda rng, theta: rng.integers(3000, 9000, size=200)),
+            (131072, 0, lambda rng, theta: rng.integers(-3000, 6001, size=200)))
+
+
+@unittest.skipUnless(HAVE_LAVA, 'requires Lava')
+class TestLeakFreeMappingOnLava(unittest.TestCase):
+    """Lava's own LIF under the leak-free mapping of TestIfAgainstLeakFreeLif, against the soft-reset IF.
+
+    The mapping is du = 4095, dv = 0, vth = theta - 1, initial_v = 32 theta and bias exponent 6.
+    Its domain is theta at most 131,072 (17-bit vth), bias in [-4096, 4095] (13-bit mantissa)
+    and membrane magnitude at most 131,071 (the LIF clips 64 V at +-(2^23 - 1)). Up to the
+    first spike the LIF voltage is 64 times the IF voltage. At the first spike the two differ by
+    design (the IF subtracts theta, the LIF resets to zero), so voltages are compared on every
+    update before it and spikes on every update up to and including it.
+    """
+    NEURONS = 50
+
+    def test_voltages_and_first_spike_agree_with_the_soft_reset_if(self):
+        rng = np.random.default_rng(2)
+        negative_before_spike = late_first_spike = exact_landing = runs = fired = 0
+        lowest = 0
+        for theta, bias, draw in TestIfAgainstLeakFreeLif.cases() + large_theta_cases():
+            a = np.stack([draw(rng, theta) for _ in range(self.NEURONS)], axis=1)
+            lava = lava_lif_trace(a, du=4095, dv=0, vth=theta - 1, bias_mant=bias, bias_exp=6,
+                                  initial_v=32 * theta)
+            for column in range(self.NEURONS):
+                column_a = a[:, column].tolist()
+                s_if, v_if = if_trace({'threshold': theta, 'initial_voltage': theta // 2,
+                                       'bias': bias, 'currents': column_a}, 200)
+                k = s_if.index(1) if 1 in s_if else 200
+                with self.subTest(theta=theta, bias=bias, column=column):
+                    self.assertEqual(lava['s'][:k + 1, column].tolist(), s_if[:k + 1])
+                    self.assertEqual(lava['v'][:k, column].tolist(), [64 * v for v in v_if[:k]])
+                runs += 1
+                lowest = min([lowest, *v_if[:k]])
+                if k < 200:
+                    fired += 1
+                    negative_before_spike += any(v < 0 for v in v_if[:k])
+                    late_first_spike += k > 20
+                    before = v_if[k - 1] if k > 0 else theta // 2
+                    exact_landing += before + column_a[k] + bias == theta
+        self.assertGreaterEqual(lowest, -131071, 'every membrane stays inside the domain')
+        self.assertGreater(fired, 0, 'some run fires')
+        self.assertGreater(negative_before_spike, 0, 'a run that goes negative and then fires')
+        self.assertGreater(late_first_spike, 0, 'a first spike after step 20')
+        self.assertGreater(exact_landing, 0, 'a membrane exactly at the threshold at the firing step')
+        self.counters = (runs, fired, negative_before_spike, late_first_spike, exact_landing)
 
 
 if __name__ == '__main__':

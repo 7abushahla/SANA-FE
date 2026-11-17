@@ -350,6 +350,7 @@ def qcfs_gated_chain_to_sanafe(layers, connections, currents, arch, placements,
     # The profile's default semantics describe the ungated IF unit. This chain runs the gated unit.
     profile['numerical_profile'] = 'qcfs-if-int24-gated-v1'
     profile['semantics'] = {
+        'describes_unit': GATED_SOMA_UNIT,
         'input_bits': 24, 'input_signed': True, 'integration': 'every update',
         'bias_at_start_bits': 24, 'bias_at_start': 'added once, on update window_start',
         'bias_per_check_bits': 16, 'bias_per_check': 'added on every check',

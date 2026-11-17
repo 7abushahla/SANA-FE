@@ -121,7 +121,7 @@ def candidate_profile():
         'profile': 'loihi2_candidate', 'profile_version': 1,
         'numerical_profile': 'qcfs-if-int24-binary-v1', 'physical_fit_verified': False,
         'numerical_profiles': ['qcfs-if-int24-binary-v1', 'qcfs-if-int24-gated-v1',
-                               'qcfs-lif-int24-v1'],
+                               'lava-lif-int24-v1'],
         'soma_units': {'loihi_lif': 'integrate_fire_int24', 'loihi_if_gated': 'integrate_fire_int24_gated',
                        'loihi_cuba_lif': 'cuba_lif_int24'},
         'gated_program': ('integrate_fire_int24_gated: a modeled neuron program that integrates every update, '
@@ -130,13 +130,14 @@ def candidate_profile():
                           'same inherited and scaled costs as loihi_lif'),
         'lif_program': ('cuba_lif_int24: the integer leaky integrate-and-fire rule of the bit-accurate LIF of Lava, '
                         'with current and voltage decay, a bias mantissa and exponent, and an optional periodic reset; '
-                        'for published LIF networks, not for the thesis networks, which run on the two IF units; '
-                        'same inherited and scaled costs as loihi_lif'),
+                        'for published LIF networks, not for the thesis networks, which run on the two IF units. '
+                        'It has the same inherited and scaled costs as loihi_lif'),
         'topology': {'width': 8, 'height': 4, 'cores_per_tile': 4, 'cores': 128},
         'limits': {'neurons_per_core': 8192, 'total_bytes_per_core': 192 * 1024,
                    'synapse_bytes_per_core': 128 * 1024,
                    'native_stored_weight_bits_max': 8},
-        'semantics': {'input_bits': 16, 'input_signed': True, 'bias_bits': 16,
+        'semantics': {'describes_unit': 'loihi_lif, the soft-reset integrate-and-fire unit',
+                      'input_bits': 16, 'input_signed': True, 'bias_bits': 16,
                       'effective_weight_transport_bits': 16, 'weight_signed': True,
                       'voltage_bits': 24, 'voltage_signed': True,
                       'clip_before_threshold': True, 'threshold_comparison': '>=',

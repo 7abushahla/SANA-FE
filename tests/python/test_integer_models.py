@@ -346,7 +346,9 @@ def lif_trace(attributes: dict, steps: int, chunks: tuple[int, ...] | None = Non
 
 
 class TestCubaLif(unittest.TestCase):
-    """Lava's bit-accurate fixed-point LIF (PyLifModelBitAcc, PyLifResetModelBitAcc), step for step."""
+    """cuba_lif_int24 on SANA-FE alone, with expected values from the rule of Lava's fixed-point LIF (PyLifModelBitAcc, PyLifResetModelBitAcc).
+
+    Lava itself runs in test_cuba_lif_lava."""
 
     def test_a_leak_free_accumulation_and_strict_threshold(self):
         s, v = lif_trace({'du': 4095, 'dv': 0, 'vth': 10, 'currents': [5] * 6}, 6)
@@ -438,7 +440,15 @@ def if_trace(attributes: dict, steps: int) -> tuple[list[int], list[int]]:
 
 
 class TestIfAgainstLeakFreeLif(unittest.TestCase):
-    """The soft-reset IF and Loihi's built-in leak-free LIF agree up to the first spike and differ only in the reset."""
+    """The soft-reset IF and the leak-free cuba_lif_int24 agree up to the first spike and differ only in the reset.
+
+    Both run on SANA-FE here. The mapping is the leak-free LIF (du = 4095, dv = 0) with
+    vth = theta - 1, initial_v = 32 theta and bias exponent 6, and the LIF voltage is 64 times
+    the IF voltage. Its domain is theta at most 131,072 (the 17-bit vth register holds theta - 1
+    at most 131,071), bias in [-4096, 4095] (the 13-bit bias mantissa), and membrane magnitude at
+    most 131,071 (the LIF clips 64 V at +-(2^23 - 1), the IF clips V at 2^23). The same mapping
+    is run on Lava's own LIF in test_cuba_lif_lava.TestLeakFreeMappingOnLava.
+    """
 
     def pair(self, theta, bias, a, steps):
         s_if, v_if = if_trace({'threshold': theta, 'initial_voltage': theta // 2,
@@ -461,15 +471,20 @@ class TestIfAgainstLeakFreeLif(unittest.TestCase):
         return np.where(jumps, rng.integers(theta // 3, 3 * theta // 2 + 1, size=200),
                         rng.integers(-(theta // 16) - 1, 1, size=200))
 
+    @classmethod
+    def cases(cls):
+        """(theta, bias, drift) triples shared with the run of the same mapping on Lava."""
+        return ((40, 0, cls.drift_positive), (40, 3, cls.drift_positive),
+                (2, 0, cls.drift_positive), (1000, -2, cls.drift_positive),
+                (1000, 0, cls.drift_zero), (1000, 1, cls.drift_zero),
+                (1000, 0, cls.drift_negative_with_jumps),
+                (40, -1, cls.drift_negative_with_jumps),
+                (2, 1, cls.drift_positive), (2, -1, cls.drift_positive),
+                (4, 1, cls.drift_zero), (4, -1, cls.drift_zero))
+
     def test_voltages_and_first_spike_agree(self):
         rng = np.random.default_rng(2)
-        cases = ((40, 0, self.drift_positive), (40, 3, self.drift_positive),
-                 (2, 0, self.drift_positive), (1000, -2, self.drift_positive),
-                 (1000, 0, self.drift_zero), (1000, 1, self.drift_zero),
-                 (1000, 0, self.drift_negative_with_jumps),
-                 (40, -1, self.drift_negative_with_jumps),
-                 (2, 1, self.drift_positive), (2, -1, self.drift_positive),
-                 (4, 1, self.drift_zero), (4, -1, self.drift_zero))
+        cases = self.cases()
         negative_before_spike = late_first_spike = exact_landing = 0
         for theta, bias, draw in cases:
             for _ in range(50):

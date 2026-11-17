@@ -5,6 +5,10 @@ try:
     import sanafe.lava as bridge
     from lava.proc.qcfs import QCFSIFFixed
     from lava.proc.dense.process import Dense
+    from lava.proc.io.source import RingBuffer
+    from lava.proc.monitor.process import Monitor
+    from lava.magma.core.run_conditions import RunSteps
+    from lava.magma.core.run_configs import Loihi2SimCfg
     HAVE_LAVA = True
 except ImportError:
     HAVE_LAVA = False
@@ -12,6 +16,71 @@ except ImportError:
 
 @unittest.skipUnless(HAVE_LAVA, 'requires optional Lava QCFSIFFixed extension')
 class TestIntegerBridge(unittest.TestCase):
+    def run_both(self, layers, connections, currents, steps):
+        """Spikes and voltages per layer, ``[steps, n]`` each, from SANA-FE and from Lava.
+
+        The chain is exported before Lava attaches its source and monitors.
+        """
+        import sanafe
+        from sanafe.loihi2 import load_loihi2_candidate
+        arch = load_loihi2_candidate()
+        placements = [(index, 0) for index in range(len(layers))]
+        net, manifest = bridge.qcfs_fixed_chain_to_sanafe(layers, connections, currents, arch,
+                                                          placements)
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        result = chip.sim(steps, spike_trace=True, potential_trace=True)
+        sizes = manifest['layer_sizes']
+        ours_s = [np.zeros((steps, n), dtype=np.int64) for n in sizes]
+        for t, active in enumerate(result['spike_trace']):
+            for neuron in active:
+                ours_s[int(neuron.group_name.split('_')[-1])][t, neuron.neuron_offset] = 1
+        ours_v = np.split(np.asarray(result['potential_trace'], dtype=np.int64),
+                          np.cumsum(sizes)[:-1], axis=1)
+        source = RingBuffer(data=np.asarray(currents, dtype=np.int32))
+        source.s_out.connect(layers[0].a_in)
+        monitors = []
+        for layer in layers:
+            v_mon, s_mon = Monitor(), Monitor()
+            v_mon.probe(layer.v, steps)
+            s_mon.probe(layer.s_out, steps)
+            monitors.append((v_mon, s_mon))
+        try:
+            layers[0].run(condition=RunSteps(num_steps=steps),
+                          run_cfg=Loihi2SimCfg(select_tag='fixed_pt'))
+            lava_v = [np.asarray(m.get_data()[l.name]['v']).astype(np.int64)
+                      for l, (m, _) in zip(layers, monitors)]
+            lava_s = [np.asarray(m.get_data()[l.name]['s_out']).astype(np.int64)
+                      for l, (_, m) in zip(layers, monitors)]
+        finally:
+            layers[0].stop()
+        return (ours_s, ours_v), (lava_s, lava_v)
+
+    def test_dense_chain_with_bias_matches_lava_on_every_spike_and_voltage(self):
+        # Three layers of 8, 6 and 4 neurons, thresholds even in [4, 24], biases in [-3, 3],
+        # Dense weights in [-6, 6] with odd values, 40 updates, three seeds. The weights are
+        # those Lava applies, and every layer spikes in every seed.
+        steps, sizes = 40, (8, 6, 4)
+        for seed in (1, 2, 3):
+            with self.subTest(seed=seed):
+                rng = np.random.default_rng(seed)
+                layers = [QCFSIFFixed(shape=(size,), threshold=2 * rng.integers(2, 13, size=size),
+                                      bias=rng.integers(-3, 4, size=size)) for size in sizes]
+                raw = [rng.integers(-6, 7, size=(post, pre)) for pre, post in zip(sizes, sizes[1:])]
+                self.assertTrue(all(np.any(w % 2) for w in raw))
+                dense = [Dense(weights=w) for w in raw]
+                for pre, conn, post in zip(layers, dense, layers[1:]):
+                    pre.s_out.connect(conn.s_in)
+                    conn.a_out.connect(post.a_in)
+                self.assertTrue(any(np.any(layer.bias.init != 0) for layer in layers))
+                currents = rng.integers(-4, 14, size=(sizes[0], steps))
+                (ours_s, ours_v), (lava_s, lava_v) = self.run_both(layers, dense, currents, steps)
+                for index, size in enumerate(sizes):
+                    self.assertEqual(lava_s[index].shape, (steps, size))
+                    self.assertTrue(np.any(lava_s[index]), f'layer {index} never spiked')
+                    self.assertTrue(np.array_equal(ours_s[index], lava_s[index]), index)
+                    self.assertTrue(np.array_equal(ours_v[index], lava_v[index]), index)
+
     def graph(self, weights=None, **dense_params):
         weights = np.array([[3, -3]], dtype=np.int32) if weights is None else weights
         first = QCFSIFFixed(shape=(weights.shape[1],), threshold=4)
@@ -34,6 +103,8 @@ class TestIntegerBridge(unittest.TestCase):
             [(0, 0), (1, 0)] if places is None else places, **kwargs)
 
     def test_effective_weights_and_integer_execution(self):
+        # The expected potentials are a hand-worked trace. Lava itself runs in
+        # test_dense_chain_with_bias_matches_lava_on_every_spike_and_voltage.
         import sanafe
         net, manifest = self.export()
         from sanafe.loihi2 import load_loihi2_candidate

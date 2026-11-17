@@ -94,7 +94,7 @@ class TestLoihi2Profile(unittest.TestCase):
         seen = set()
         for path, value in flat(cand):
             name = path[-1]
-            # the gated and CUBA LIF somas carry the costs of the LIF soma unit it sits beside
+            # the gated IF unit and the CUBA LIF unit carry the costs of the IF unit loihi_lif beside them
             path = tuple('loihi_lif' if p in ('loihi_if_gated', 'loihi_cuba_lif') else p for p in path)
             if name in LATENCY_SCALING:
                 factor, _ = LATENCY_SCALING[name]
@@ -150,7 +150,7 @@ class TestLoihi2Profile(unittest.TestCase):
         cost = lambda block: sorted(l.strip() for l in block.splitlines() if 'energy_' in l or 'latency_' in l)
         self.assertEqual(cost(lif), cost(gated))
 
-    def test_profile_has_the_cuba_lif_unit_with_the_lif_unit_costs(self):
+    def test_profile_has_the_cuba_lif_unit_with_the_costs_of_the_if_unit_loihi_lif(self):
         text = (files('sanafe.examples') / 'loihi2.yaml').read_text()
         lif = text.split('- name: loihi_lif')[1].split('- name:')[0]
         cuba = text.split('- name: loihi_cuba_lif')[1].split('dendrite:')[0]
@@ -161,7 +161,7 @@ class TestLoihi2Profile(unittest.TestCase):
         self.assertEqual(cost(lif), cost(cuba))
         profile = candidate_profile()
         self.assertEqual(profile['soma_units']['loihi_cuba_lif'], 'cuba_lif_int24')
-        self.assertIn('qcfs-lif-int24-v1', profile['numerical_profiles'])
+        self.assertIn('lava-lif-int24-v1', profile['numerical_profiles'])
         self.assertIn('Lava', profile['lif_program'])
         self.assertIn('loihi_lif', profile['lif_program'])
 
