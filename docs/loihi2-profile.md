@@ -8,6 +8,10 @@
 
 Each core lists a second soma unit, `loihi_if_gated` (model `integrate_fire_int24_gated`, numerical profile `qcfs-if-int24-gated-v1`), with the same costs as `loihi_lif`. A neuron selects it with `soma_hw_name`. It integrates every arriving input on every update, adds `bias_at_start` once at `window_start`, and compares its threshold (`>=`, subtractive reset) only on updates `window_start + j * stride` before `window_stop`, adding `bias_per_check` at each. Its input current per update is signed 24-bit, not the 16 bits of `integrate_fire_int24`, because a convolution's fan-in in one step can exceed 16 bits; deployed Loihi 2 networks accumulate in 24 bits (Brehove et al., ICONS 2026, Sec. 3.1; Abreu et al., arXiv:2503.18002, Sec. 3). The voltage saturates at signed 24 bits, as in the other integer soma, without a signal; a comparison with an unbounded reference detects it as a state mismatch. The program is realizable in the documented Loihi 2 microcode classes but is a modeled program, not a verified Intel one.
 
+## LIF soma unit (`loihi_cuba_lif`)
+
+Each core lists a third soma unit, `loihi_cuba_lif` (model `cuba_lif_int24`, numerical profile `qcfs-lif-int24-v1`), with the same inherited and scaled costs as `loihi_lif`. A neuron selects it with `soma_hw_name`. It follows the rule of the bit-accurate LIF of Lava, with integer current and voltage decay, a bias mantissa and exponent, and an optional periodic reset. It exists for published LIF networks. The thesis networks run on the two IF units and never on this one. No cost of this unit is tuned.
+
 ## Cost derivation
 
 Decided 2026-09-30. The candidate's costs are the fitted Loihi 1 coefficients of `arch/loihi.yaml` (see that file's header for their Nahuku provenance), with the following changes and nothing else. `sanafe.loihi2.candidate_cost_provenance()` returns the same table programmatically and `test_loihi2_profile` checks the YAML against it.

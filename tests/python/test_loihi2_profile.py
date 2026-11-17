@@ -4,6 +4,7 @@ from pathlib import Path
 from importlib.resources import files
 import unittest
 import numpy as np
+import sanafe
 from sanafe.loihi2 import (Allocation, audit_unit_scale_signed8_weights,
                           candidate_profile, load_loihi2_candidate,
                           validate_chain_resources, validate_group_resources)
@@ -93,8 +94,8 @@ class TestLoihi2Profile(unittest.TestCase):
         seen = set()
         for path, value in flat(cand):
             name = path[-1]
-            # the gated soma carries the costs of the LIF soma unit it sits beside
-            path = tuple('loihi_lif' if p == 'loihi_if_gated' else p for p in path)
+            # the gated and CUBA LIF somas carry the costs of the LIF soma unit it sits beside
+            path = tuple('loihi_lif' if p in ('loihi_if_gated', 'loihi_cuba_lif') else p for p in path)
             if name in LATENCY_SCALING:
                 factor, _ = LATENCY_SCALING[name]
                 self.assertIn(path, base_costs, path)
@@ -128,7 +129,7 @@ class TestLoihi2Profile(unittest.TestCase):
             self.assertEqual(len(tile.cores), 4)
             for core in tile.cores:
                 self.assertEqual(core.max_neurons_supported, 8192)
-                self.assertEqual([x.model_info.name for x in core.pipeline_hw if x.implements_soma], ['integrate_fire_int24', 'integrate_fire_int24_gated'])
+                self.assertEqual([x.model_info.name for x in core.pipeline_hw if x.implements_soma], ['integrate_fire_int24', 'integrate_fire_int24_gated', 'cuba_lif_int24'])
                 self.assertEqual([x.model_info.name for x in core.pipeline_hw if x.implements_dendrite], ['accumulator_int'])
                 self.assertEqual([x.model_info.name for x in core.pipeline_hw if x.implements_synapse], ['current_based_int'])
 
@@ -136,17 +137,46 @@ class TestLoihi2Profile(unittest.TestCase):
     def test_candidate_has_the_gated_soma_with_the_same_costs(self):
         arch = load_loihi2_candidate()
         somas = [u for u in arch.tiles[0].cores[0].pipeline_hw if u.implements_soma]
-        self.assertEqual([u.name for u in somas], ['loihi_lif', 'loihi_if_gated'])
+        self.assertEqual([u.name for u in somas], ['loihi_lif', 'loihi_if_gated', 'loihi_cuba_lif'])
         profile = candidate_profile()
         self.assertEqual(profile['soma_units'], {'loihi_lif': 'integrate_fire_int24',
-                                                 'loihi_if_gated': 'integrate_fire_int24_gated'})
+                                                 'loihi_if_gated': 'integrate_fire_int24_gated',
+                                                 'loihi_cuba_lif': 'cuba_lif_int24'})
         self.assertIn('qcfs-if-int24-gated-v1', profile['numerical_profiles'])
         self.assertIn('modeled', profile['gated_program'])
         text = (files('sanafe.examples') / 'loihi2.yaml').read_text()
         lif = text.split('- name: loihi_lif')[1].split('- name:')[0]
-        gated = text.split('- name: loihi_if_gated')[1].split('dendrite:')[0]
+        gated = text.split('- name: loihi_if_gated')[1].split('- name: loihi_cuba_lif')[0]
         cost = lambda block: sorted(l.strip() for l in block.splitlines() if 'energy_' in l or 'latency_' in l)
         self.assertEqual(cost(lif), cost(gated))
+
+    def test_profile_has_the_cuba_lif_unit_with_the_lif_unit_costs(self):
+        text = (files('sanafe.examples') / 'loihi2.yaml').read_text()
+        lif = text.split('- name: loihi_lif')[1].split('- name:')[0]
+        cuba = text.split('- name: loihi_cuba_lif')[1].split('dendrite:')[0]
+        self.assertIn('model: cuba_lif_int24', cuba)
+        cost = lambda block: sorted(l.split('#')[0].strip() for l in block.splitlines()
+                                    if 'energy_' in l or 'latency_' in l)
+        self.assertEqual(len(cost(lif)), 6)
+        self.assertEqual(cost(lif), cost(cuba))
+        profile = candidate_profile()
+        self.assertEqual(profile['soma_units']['loihi_cuba_lif'], 'cuba_lif_int24')
+        self.assertIn('qcfs-lif-int24-v1', profile['numerical_profiles'])
+        self.assertIn('Lava', profile['lif_program'])
+        self.assertIn('loihi_lif', profile['lif_program'])
+
+    def test_a_network_on_the_cuba_lif_unit_runs_on_the_candidate(self):
+        arch = load_loihi2_candidate()
+        net = sanafe.Network()
+        group = net.create_neuron_group('lif', 1, log_spikes=True)
+        group[0].set_attributes(soma_hw_name='loihi_cuba_lif',
+                                model_attributes={'du': 4095, 'dv': 0, 'vth': 10,
+                                                  'currents': [5] * 6})
+        group[0].map_to_core(arch.tiles[0].cores[0])
+        chip = sanafe.SpikingChip(arch)
+        chip.load(net)
+        out = chip.sim(6, spike_trace=True)
+        self.assertEqual([len(s) for s in out['spike_trace']], [0, 0, 1, 0, 0, 1])
 
 
 class TestGroupResources(unittest.TestCase):
