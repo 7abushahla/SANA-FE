@@ -28,9 +28,11 @@ readings:
       columns of its row as floor means over its 12 cores, the synapse column as 64-bit words per axon),
       an inference from the table, since on the labeled rows the neuron column is the full slice. It is
       not the only division consistent with them, it agrees with the per-core memory bars (eleven equal
-      cores and one lower), and it is the division the per-core plots select. The statement below, copied
-      from results/fit_time.json, calls this layer not resolved by the printout, wording written before
-      this reading and not regenerated
+      cores and one lower), and it is the evidence partition's division, which the per-core plots leave
+      undecided on this layer. The statement below, copied from results/fit_time.json, calls this layer
+      not resolved by the printout and the evidence partition the division the per-core plots select,
+      wording written before this reading and not regenerated. The plots select the evidence partition
+      on two convolutions and leave it open on the other layers
     modeled_us: 154.762
     relative_spread_of_three_runs: 0.000244625
     modeled_over_measured:
@@ -154,8 +156,9 @@ readings:
     low_builder_partition: 0.490994
     high_printed_partition: 0.682154
     high_evidence_partition: 0.681578
-    high_evidence_partition_is: the high end under the division the per-core plots select, the value carried
-      before the printed partition was read. A labeled reading, not carried
+    high_evidence_partition_is: the high end under the evidence partition, which the per-core plots select
+      on two convolutions and leave open on the other layers, the value carried before the printed partition
+      was read. A labeled reading, not carried
     high_dense_near_equal: 0.682094
     high_dense_near_equal_is: the high end with near-equal slices on the dense layer of 100, which the
       printout labels with no slice shape. Under the reading stated in the time reading's partition_is,
@@ -253,8 +256,8 @@ readings:
     SANA-FE-thesis/calibration/results/fit_dynamic.json: 95f534d7bf346ec6b4812e67add197f4eaacb6aedf654e5ca380b056f4fa0418
   written_from:
     commits:
-      thesis_inputs: f3c45b6b63585542972a0fc3aa5cf55216a5abaf
-      sanafe_fork: 40d08ffe006a6dee55765e634cca1e641c20733c
+      thesis_inputs: 4f31bef2411ba40e5902cdf5021558839fbe343c
+      sanafe_fork: 2b9d4638171b230e5d770284833131a14aee14ac
       mixed_horizon: c68e9e5507832b78369d06e58e7c2b4000c10e01
     tree_clean: true
     ledger_records_sha256: 13cd6304ca3618ca3e29b93472eb565d69598a7fbc9d9fbe3a2a6c6e1645a24a
@@ -335,17 +338,18 @@ dynamic:
       low end, 0.491, rests on the simulator's own PilotNet run under the builder partition and holds
       for a network with PilotNet's excess message energy. The high end, 0.682, rests on the same event
       energies on the counts of the partition the compiler printed, which the simulator's own run under
-      that partition reproduces, and holds for a network with no excess messages. Under the partition
-      the per-core plots select it was 0.6816, the value carried before the printed partition was read,
-      kept as a reading. Near-equal slices on the dense layer of 100, which the printout labels with no
-      slice shape, give 0.6821. Applying it to the new records of the thesis network assumes that the
-      thesis network would be laid out on the chip in Lava's order, and the anchor rests on the inference
-      that the published runs ran without their input. It raises their scaled dynamic energy by 14 percent
-      over the reader-order value. In Lava's neuron order the network share of the thesis network is 0.026,
-      estimated by the same method from the counts of the new records. The range from the low end to the
-      high end is a range of the scale between the two partitions of PilotNet LIF. Every event energy
-      is inherited from the first Loihi chip and scaled, not fitted. The published dynamic power of the
-      three runs differs by a factor of 1.91, a floor on what any model can match.
+      that partition reproduces, and holds for a network with no excess messages. Under the evidence partition,
+      which the per-core plots select on two convolutions and leave open on the other layers, it was 0.6816,
+      the value carried before the printed partition was read, kept as a reading. Near-equal slices on
+      the dense layer of 100, which the printout labels with no slice shape, give 0.6821. Applying it
+      to the new records of the thesis network assumes that the thesis network would be laid out on the
+      chip in Lava's order, and the anchor rests on the inference that the published runs ran without
+      their input. It raises their scaled dynamic energy by 14 percent over the reader-order value. In
+      Lava's neuron order the network share of the thesis network is 0.026, estimated by the same method
+      from the counts of the new records. The range from the low end to the high end is a range of the
+      scale between the two partitions of PilotNet LIF. Every event energy is inherited from the first
+      Loihi chip and scaled, not fitted. The published dynamic power of the three runs differs by a factor
+      of 1.91, a floor on what any model can match.
 transfer:
 - coefficient: dynamic.energy_scale, synaptic and network events
   from: cuba_lif_int24 (Lava's LIF, the PilotNet LIF deployment)
