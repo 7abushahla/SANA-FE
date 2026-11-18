@@ -265,7 +265,12 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
     inference
     time is `sim_time_s` times the latency scale, divided by `samples`. The
     dynamic energy of one inference is `dynamic_energy_j` times the energy
-    scale, divided by `samples`. Dynamic power is that energy over the
+    scale, divided by `samples`. The energy scale is applied without regard to
+    how the counts were laid out over cores, and a calibration file may state
+    that it holds for one neuron order only (the Loihi 2 file holds for counts
+    in Lava's neuron order, and counts in the reader order need the value its
+    readings give), so the caller passes energies of the order the file names.
+    Dynamic power is that energy over the
     inference time. For each static rule, total power is static plus dynamic
     power, inference energy is total power times inference time, and total
     energy adds static power times the host time of one inference,

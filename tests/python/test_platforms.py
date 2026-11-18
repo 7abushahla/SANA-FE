@@ -114,6 +114,11 @@ class TestRegistry(unittest.TestCase):
         with self.assertRaises(ValueError):
             P.describe(broken)
 
+    def test_the_loihi2_validation_states_the_receive_cost_comparison(self):
+        validation = P.get('loihi2').validation
+        self.assertTrue(validation.startswith('One coefficient derives from a Loihi 2 measurement. '))
+        self.assertIn('the one whose time prompted it, so the comparison is not a held-out test. ', validation)
+
     def test_badges(self):
         self.assertEqual(P.badge(P.get('loihi2')),
                          'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors, '

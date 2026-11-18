@@ -237,8 +237,8 @@ PLATFORMS = (
         costs=_loihi2_costs(), time_word='scaled', energy_word='inherited',
         validation=('One coefficient derives from a Loihi 2 measurement. The message receive '
                     'latency is derived from the published Loihi 2 link bandwidth and was compared '
-                    'with one published deployment only, the one whose time prompted it, so not in a '
-                    'held-out test. The other latencies are the fitted Loihi 1 values scaled by '
+                    'with one published deployment only, the one whose time prompted it, so the '
+                    'comparison is not a held-out test. The other latencies are the fitted Loihi 1 values scaled by '
                     'Intel\'s stated factors (neuron update 2x, synaptic operation 5x, spike '
                     'generation 10x, chip-wide step floor 200 ns). Energies, hop costs and the '
                     'message send costs are the Loihi 1 values. Scaled and derived estimates, not '
