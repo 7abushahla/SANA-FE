@@ -23,8 +23,14 @@ readings:
     partition: printed
     partition_is: the division the compiler printed for the published runs, the input layer and every
       convolution in whole columns of Lava's order with the remainder on the last core, and the dense
-      layer of 100, which the printout labels with no slice shape, in eleven slices of 9 and one of 1,
-      the division its printed neuron and synapse counts fit and the one the per-core plots select
+      layer of 100, which the printout labels with no slice shape, in eleven slices of 9 and one of 1.
+      Its printed counts are consistent with that division under a stated reading (the neuron and synapse
+      columns of its row as floor means over its 12 cores, the synapse column as 64-bit words per axon),
+      an inference from the table, since on the labeled rows the neuron column is the full slice. It is
+      not the only division consistent with them, it agrees with the per-core memory bars (eleven equal
+      cores and one lower), and it is the division the per-core plots select. The statement below, copied
+      from results/fit_time.json, calls this layer not resolved by the printout, wording written before
+      this reading and not regenerated
     modeled_us: 154.762
     relative_spread_of_three_runs: 0.000244625
     modeled_over_measured:
@@ -152,7 +158,9 @@ readings:
       before the printed partition was read. A labeled reading, not carried
     high_dense_near_equal: 0.682094
     high_dense_near_equal_is: the high end with near-equal slices on the dense layer of 100, which the
-      printout labels with no slice shape. A sensitivity, not carried
+      printout labels with no slice shape. Under the reading stated in the time reading's partition_is,
+      near-equal slices are not consistent with the printed synapse count of that layer. A sensitivity,
+      not carried
     applied_to_lava_order_counts: 0.682154
     carried_for_reader_order_records: 0.59689
     carried_for_reader_order_records_by_cut_set:
@@ -245,8 +253,8 @@ readings:
     SANA-FE-thesis/calibration/results/fit_dynamic.json: 95f534d7bf346ec6b4812e67add197f4eaacb6aedf654e5ca380b056f4fa0418
   written_from:
     commits:
-      thesis_inputs: cdccb4058b7b385e59e574b7bdd9ce745eb206b2
-      sanafe_fork: 434c9eabe023ac34e819779a6791608bf28a7dd5
+      thesis_inputs: f3c45b6b63585542972a0fc3aa5cf55216a5abaf
+      sanafe_fork: 40d08ffe006a6dee55765e634cca1e641c20733c
       mixed_horizon: c68e9e5507832b78369d06e58e7c2b4000c10e01
     tree_clean: true
     ledger_records_sha256: 13cd6304ca3618ca3e29b93472eb565d69598a7fbc9d9fbe3a2a6c6e1645a24a
