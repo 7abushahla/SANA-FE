@@ -23,8 +23,8 @@ from lava.proc.qcfs import QCFSIFFixed
 import sanafe.lava as bridge
 from sanafe.lif_network import netx_to_sanafe, sanafe_run
 from sanafe.loihi2 import load_loihi2_candidate
-from sanafe.loihi2_counts import (core_step_counts, expanded_connectivity,
-                                  message_trace_counts, spikes_from_trace,
+from sanafe.loihi2_counts import (builder_partition, core_step_counts, expanded_connectivity,
+                                  message_trace_counts, neuron_positions, spikes_from_trace,
                                   workload_from_counts)
 from sanafe.loihi2_runtime import RuntimeRates, analyze_binary_chain, max_affine_runtime
 from sanafe.netx import read_netx
@@ -163,7 +163,7 @@ def test_dense_chain_counts_equal_analyze_binary_chain(if_chain, if_chain_turnin
         expected = analyze_binary_chain(manifest, result, packet_bits=BITS)
         counts = _counts(manifest, result)
         assert counts["verified_against_perf_trace"]
-        work = workload_from_counts(counts)
+        work = workload_from_counts(counts, synops="nonzero", synmem="expanded")
         assert work["messages"] == expected["messages"]
         assert _sorted_workload(work) == _sorted_workload(expected)
         assert any(step["links"] for step in expected["steps"])
@@ -184,10 +184,18 @@ def test_dense_chain_counts_equal_analyze_binary_chain(if_chain, if_chain_turnin
         == CHAIN_PLACES
     lif_counts = _counts(lif_manifest, {"spikes": spikes},
                          connectivity=expanded_connectivity(network))
-    assert _sorted_workload(workload_from_counts(lif_counts)) == _sorted_workload(expected)
+    assert _sorted_workload(workload_from_counts(lif_counts, synops="nonzero",
+                                                 synmem="expanded")) == \
+        _sorted_workload(expected)
 
     # The conventions differ on the source whose weights are all zero.
     assert counts["messages_out"]["nonzero"].sum() < counts["messages_out"]["expanded"].sum()
+    # Per-spike rule: every spike of a layer with a next layer, except, under the nonzero
+    # convention, the spikes of source 3, whose weights are all zero.
+    sent = spikes[0].sum(axis=1) + spikes[1].sum(axis=1)
+    assert np.array_equal(counts["messages_out_per_spike"]["expanded"].sum(axis=1), sent)
+    assert np.array_equal(counts["messages_out_per_spike"]["nonzero"].sum(axis=1),
+                          sent - spikes[0][:, 3])
     assert np.array_equal(counts["synops"]["nonzero"], lif_counts["synops"]["nonzero"])
     # The IF exporter emits zero weights, so its message trace follows the expanded convention.
     assert counts["emitted_convention"] == "expanded"
@@ -264,7 +272,7 @@ def test_hand_worked_convolution(tmp_path):
                           ("router_to_core", 0, 2)]
     assert np.array_equal(c["link_messages"]["nonzero"], every * [3, 2, 1])
     assert np.array_equal(c["link_bits"]["nonzero"], every * [3, 2, 1] * BITS)
-    # 7 neurons of the convolution receive a nonzero weight: all 4 of channel 0 and
+    # 6 neurons of the convolution receive a nonzero weight: all 4 of channel 0 and
     # outputs (0, 1) and (1, 0) of channel 1.
     assert np.array_equal(c["neurons_receiving"], every * [0, 4, 2])
 
@@ -276,6 +284,27 @@ def test_hand_worked_convolution(tmp_path):
     assert labels == {("core_to_router", 0, 0): 3, ("router_to_core", 1, 0): 2,
                       ("router_to_core", 2, 0): 1, ("mesh", 0, 0, 0, 1): 3,
                       ("mesh", 0, 1, 0, 2): 1}
+
+    # Lava's order: slices [4, 4] are the output columns x = 0 and x = 1, both channels.
+    # From (0, 0): output (0, 0) only, weights 1 and 0, on the first core. From (1, 1):
+    # column x = 0 gets outputs (0, 0) and (1, 0) with weights 5, 0 and 2, 1, column
+    # x = 1 gets outputs (0, 1) and (1, 1) with weights 4, 1 and 1, 0.
+    manifest, run = _hand_run(network, bias, "packed")
+    lava = {"name": "lava columns", "layers": [{"order": "lava", "sizes": [16]},
+                                               {"order": "lava", "sizes": [4, 4]}]}
+    c = _counts(manifest, run, connectivity=connectivity, partition=lava)
+    assert c["partition"] == lava
+    assert np.array_equal(c["neuron_updates"], every * [16, 4, 4])
+    assert np.array_equal(c["synops"]["nonzero"], every * [0, 4, 3])
+    assert np.array_equal(c["synops"]["expanded"], every * [0, 6, 4])
+    assert np.array_equal(c["messages_out"]["nonzero"], every * [3, 0, 0])
+    assert np.array_equal(c["messages_in"]["nonzero"], every * [0, 2, 1])
+    # Both channels of output (0, 0) are on the first core, so (0, 0) sends one message
+    # there under either convention.
+    assert np.array_equal(c["messages_out"]["expanded"], every * [3, 0, 0])
+    assert np.array_equal(c["messages_out_per_spike"]["nonzero"], every * [2, 0, 0])
+    assert c["synmem_access_histograms"]["nonzero"][0] == [{}, {1: 1, 3: 1}, {3: 1}]
+    assert np.array_equal(c["neurons_receiving"], every * [0, 3, 3])
 
 
 def test_a_layer_without_input_spikes_updates_its_neurons_and_has_no_synaptic_operation(
@@ -325,10 +354,19 @@ def test_counts_from_spikes_equal_counts_read_from_runs_under_each_order(tmp_pat
     arch = load_loihi2_candidate()
     runs = {}
     for order in ("packed", "spread", "packed_reversed"):
-        net, manifest = netx_to_sanafe(network, bias, arch, [2, 2, 2, 1], order=order)
+        net, manifest = netx_to_sanafe(network, bias, arch, [2, 4, 3, 3], order=order)
         runs[order] = (manifest, sanafe_run(net, manifest, arch, 20, extra_traces=True))
     reference = runs["packed"][1]["spikes"]
     assert all(s.any() for s in reference)
+    # Sources reach up to three destination cores in the second convolution and in the dense
+    # layer, which is split over three cores.
+    manifest = runs["packed"][0]
+    for conn in connectivity[1:]:
+        slices = manifest["placement"][conn["dst"]]["slices"]
+        stops = np.asarray([s["stop"] for s in slices])
+        dst = np.searchsorted(stops, conn["target"][conn["weight"] != 0], side="right")
+        reach = np.bincount(np.unique(conn["source"][conn["weight"] != 0] * 8 + dst) // 8)
+        assert len(slices) == 3 and reach.max() == 3, conn["dst"]
     for order, (manifest, run) in runs.items():
         assert all(np.array_equal(a, b) for a, b in zip(run["spikes"], reference)), order
         # Spikes of the packed run, placement of this order, perf trace of this order's run.
@@ -348,6 +386,68 @@ def test_counts_from_spikes_equal_counts_read_from_runs_under_each_order(tmp_pat
         assert any(label[0] == "mesh" for label in traced_links), order
         # The zero weights change the expanded counts.
         assert counts["synops"]["expanded"].sum() > counts["synops"]["nonzero"].sum()
+        # The builder's partition stated explicitly gives the same counts as the default.
+        explicit = _counts(manifest, {"spikes": reference}, connectivity=connectivity,
+                           partition=builder_partition(manifest))
+        for key in ("neuron_updates", "spikes_out", "neurons_receiving"):
+            assert np.array_equal(explicit[key], counts[key]), (order, key)
+        for key in ("synops", "messages_out", "messages_in", "link_messages"):
+            for convention in ("nonzero", "expanded"):
+                assert np.array_equal(explicit[key][convention], counts[key][convention])
+
+
+def _same_counts(a, b):
+    """Every per-core and per-link count of two count dicts is equal."""
+    assert a["cores"] == b["cores"] and a["links"] == b["links"]
+    for key in ("neuron_updates", "spikes_out", "neurons_receiving"):
+        assert np.array_equal(a[key], b[key]), key
+    for key in ("synops", "messages_out", "messages_in", "messages_out_per_spike",
+                "link_messages"):
+        for convention in ("nonzero", "expanded"):
+            assert np.array_equal(a[key][convention], b[key][convention]), (key, convention)
+    for convention in ("nonzero", "expanded"):
+        assert a["synmem_access_histograms"][convention] == \
+            b["synmem_access_histograms"][convention]
+        for per_read in READS:
+            assert np.array_equal(a["synmem_reads"][convention][per_read],
+                                  b["synmem_reads"][convention][per_read])
+
+
+def test_a_partition_in_lava_order_equals_the_relabeled_network_in_reader_order(tmp_path):
+    """The builder places neurons in reader order only, so the simulator is not run under
+    Lava's order. Instead every neuron of every layer is relabeled by its position in Lava's
+    order, spikes and synapses alike. The relabeled network under a reader-order partition
+    with the same slice sizes must give every count of the original under the Lava-order
+    partition. The sizes have a remainder slice, as the published plots suggest."""
+    network = _conv_network(tmp_path)
+    bias = np.random.default_rng(3).integers(-10, 60, size=(2, 9, 7))
+    connectivity = expanded_connectivity(network)
+    arch = load_loihi2_candidate()
+    net, manifest = netx_to_sanafe(network, bias, arch, [2, 4, 3, 3], order="spread")
+    spikes = sanafe_run(net, manifest, arch, 20, extra_traces=False)["spikes"]
+    sizes = [[64, 62], [24, 24, 24, 12], [21, 21, 6], [4, 4, 2]]
+    lava = {"name": "lava remainder", "layers": [{"order": "lava", "sizes": s} for s in sizes]}
+    reader = {"name": "reader remainder", "layers": [{"order": "reader", "sizes": s}
+                                                     for s in sizes]}
+    perms = [neuron_positions(shape, kind, "lava")
+             for shape, kind in zip(manifest["layer_shapes"], manifest["layer_kinds"])]
+    assert all(np.array_equal(np.sort(p), np.arange(p.size)) for p in perms)
+    assert not np.array_equal(perms[1], np.arange(perms[1].size))
+    relabeled_spikes = []
+    for s, perm in zip(spikes, perms):
+        moved = np.zeros_like(s)
+        moved[:, perm] = s
+        relabeled_spikes.append(moved)
+    relabeled = [dict(c, source=perms[c["src"]][c["source"]], target=perms[c["dst"]][c["target"]])
+                 for c in connectivity]
+    original = _counts(manifest, {"spikes": spikes}, connectivity=connectivity, partition=lava)
+    moved = _counts(manifest, {"spikes": relabeled_spikes}, connectivity=relabeled,
+                    partition=reader)
+    _same_counts(original, moved)
+    # The Lava order changes the counts against the builder's partition.
+    builder = _counts(manifest, {"spikes": spikes}, connectivity=connectivity)
+    assert not np.array_equal(builder["messages_in"]["nonzero"],
+                              original["messages_in"]["nonzero"])
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +456,9 @@ def test_counts_from_spikes_equal_counts_read_from_runs_under_each_order(tmp_pat
 
 def test_workload_from_counts_gives_the_modeled_time_of_analyze_binary_chain(if_chain_turning):
     manifest, result, _ = if_chain_turning
+    assert RATES.is_file(), (f"{RATES} is missing. The test reads the rate scenarios of the "
+                             "thesis route (mixed-horizon-snn), so the fork must sit inside the "
+                             "Thesis repository.")
     scenarios = {name: s for name, s in json.loads(RATES.read_text()).items()
                  if not name.startswith("_")}
     assert len(scenarios) == 5
@@ -367,7 +470,8 @@ def test_workload_from_counts_gives_the_modeled_time_of_analyze_binary_chain(if_
                                                            packet_bits=s["packet_bits"]), rates)
         counts = core_step_counts(manifest, result, weights_per_read=READS,
                                   message_bits=s["packet_bits"])
-        modeled = max_affine_runtime(workload_from_counts(counts), rates)
+        modeled = max_affine_runtime(workload_from_counts(counts, synops="nonzero",
+                                                          synmem="expanded"), rates)
         # Every term of every step is compared, not only the bound.
         assert modeled == expected, name
         assert any(step["synmem_reads_assumed"] > 0 and step["terms_seconds"]["link"] > 0

@@ -92,26 +92,31 @@ Synaptic memory read (SynMem read), ``synmem_reads`` and ``synmem_access_histogr
     The runtime model's SynMem read microbenchmark (dense-packed 8-bit identity
     weights) scales the reads with the stored entries, not with the SynOps.
 
-Message, ``messages_out`` and ``messages_in``.
-    One message per spiking source neuron and destination core that stores at
-    least one of its entries, sent in the step of the spike. It counts out at the
-    source core and in at the destination core. ``analyze_binary_chain`` (lines
-    154 to 168 and 193) sends one message per spike of a layer that has a next
-    layer, since each layer has one core and that core stores the whole row.
-    ``step_counts`` (lines 83 to 86) counts one per SANA-FE message, and SANA-FE
-    allocates one axon per source neuron and destination core
-    (``sim_allocate_axon`` in ``src/chip.cpp``, ``Message`` in
-    ``src/message.cpp``). A convolution split over several cores and a source
-    neuron whose fan-out reaches several cores are covered by ``step_counts``
-    and not by ``analyze_binary_chain``. This module follows ``step_counts``,
-    which reduces to ``analyze_binary_chain`` on a chain. Which pairs exist
-    follows the storage convention. Under ``nonzero`` (the network the builder
-    emits, whose messages the simulator sends) a source whose entries on a core
-    are all zero sends no message there. Under ``expanded`` (the dense chain of
-    ``analyze_binary_chain``) it does. The ``expanded`` messages of a network
-    split over cores are this module's definition. The runtime model's link
-    microbenchmark sends one message per spiking neuron and destination, and
-    its bandwidth is bits per message times messages over the step time.
+Message, ``messages_out``, ``messages_in`` and ``messages_out_per_spike``.
+    The rule of ``messages_out`` and ``messages_in`` is SANA-FE's. One message
+    per spiking source neuron and destination core that stores at least one of
+    its entries, sent in the step of the spike, counted out at the source core
+    and in at the destination core. SANA-FE allocates one axon per source neuron
+    and destination core (``sim_allocate_axon`` in ``src/chip.cpp``, ``Message``
+    in ``src/message.cpp``), and ``step_counts`` (lines 83 to 86) counts one per
+    SANA-FE message. ``analyze_binary_chain`` (lines 154 to 168 and 193) sends
+    one message per spike of a layer that has a next layer, which is the same
+    rule when each layer has one core. The runtime model does not decide the
+    rule. Its link microbenchmark uses identity synapses, so every source has
+    one destination, and per-core, per-axon and per-neuron counting cannot be
+    told apart there. Which pairs exist follows the storage convention. Under
+    ``nonzero`` (the network the builder emits, whose messages the simulator
+    sends) a source whose entries on a core are all zero sends no message there.
+    Under ``expanded`` (the dense chain of ``analyze_binary_chain``) it does.
+    The ``expanded`` messages of a network split over cores are this module's
+    definition. ``messages_out_per_spike`` is a second rule, under which a spike
+    leaves its core once whatever its fan-out. It counts, at the source core,
+    each spike of a neuron that has at least one entry under the convention.
+    Under that rule each destination core still receives the spike once, so
+    ``messages_in`` is the same under both rules, and the link loads of this
+    module are defined for SANA-FE's rule only (the second rule would need a
+    multicast route). Messages, accesses and link loads depend on the partition
+    (see below) and on the placement. SynOps and neuron updates per layer do not.
 
 Directed link bits, ``link_messages`` and ``link_bits``.
     A message between distinct cores loads the core-to-router link of its source
@@ -129,6 +134,19 @@ Spikes, ``spikes_out``.
     The spikes emitted by the neurons of a core in the step. No counterpart in
     ``analyze_binary_chain``. They serve the per-layer tables.
 
+Partition
+---------
+How the neurons of a layer are divided over its cores is a structural
+hypothesis. A partition gives, per layer, an ordering of the neurons and a list
+of slice sizes over that ordering. Slice ``j`` sits on the ``j``-th core the
+manifest gives that layer. The ordering ``reader`` is the flattened (channels,
+height, width) order of ``sanafe.netx``. The ordering ``lava`` is Lava's
+flattened (width, height, channels) order, in which contiguous slices are
+spatial and hold every channel. Dense layers have one order. ``builder`` is the
+partition ``netx_to_sanafe`` builds (reader order, near-equal slices) and is the
+default. Counts under another partition come from the same per-neuron spikes,
+since the function of the network does not depend on where a neuron sits.
+
 Conventions of the returned arrays
 ----------------------------------
 Columns are the occupied cores sorted by (tile, core), as ``analyze_binary_chain``
@@ -142,6 +160,7 @@ from collections import Counter
 import numpy as np
 
 from sanafe.lif_network import _conv_geometry, _neuron_layers, conv_synapses
+from sanafe.loihi2_runtime import _route_links
 
 CONVENTIONS = ("nonzero", "expanded")
 _IF_PROFILES = ("qcfs-if-int24-binary-v1", "qcfs-if-int24-binary-windowed-v1")
@@ -264,25 +283,15 @@ def _spikes_and_result(manifest, traces):
     return spikes, result, steps.pop()
 
 
-def _route(src, dst):
-    """Directed dimension-order route, horizontal before vertical (``_route_links``)."""
-    x, y = src
-    while x != dst[0]:
-        nx = x + (1 if dst[0] > x else -1)
-        yield ("mesh", x, y, nx, y)
-        x = nx
-    while y != dst[1]:
-        ny = y + (1 if dst[1] > y else -1)
-        yield ("mesh", x, y, x, ny)
-        y = ny
-
-
 def _links_of(src, dst, height):
     """Links loaded by one message from core ``src`` to core ``dst`` ((tile, core) pairs)."""
     if src == dst:
         return []
     out = [("core_to_router",) + src, ("router_to_core",) + dst]
-    out += list(_route((src[0] // height, src[0] % height), (dst[0] // height, dst[0] % height)))
+    # The route of analyze_binary_chain itself. The fork imports private helpers across
+    # its modules (lif_network imports lava_lif's), so the private name is used directly.
+    out += [("mesh",) + link for link in _route_links((src[0] // height, src[0] % height),
+                                                      (dst[0] // height, dst[0] % height))]
     return out
 
 
@@ -325,7 +334,66 @@ def _check_manifest_fanout(manifest, structure, pair_tables, slice_of):
                              "manifest")
 
 
-def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connectivity=None):
+ORDERS = ("reader", "lava")
+
+
+def neuron_positions(shape, kind, order):
+    """Position of every neuron (indexed in reader order) in the ordering ``order``.
+
+    ``reader`` keeps the flattened (channels, height, width) index. ``lava`` gives
+    the index in Lava's flattened (width, height, channels) order, (x * H + y) * C
+    + c, for input and convolution layers. A dense layer has one order.
+    """
+    if order not in ORDERS:
+        raise ValueError(f"order {order!r} is not one of {ORDERS}")
+    n = int(np.prod(shape))
+    if order == "reader" or kind == "dense":
+        return np.arange(n, dtype=np.int64)
+    if len(shape) != 3:
+        raise ValueError(f"shape {shape} is not (channels, height, width)")
+    c, h, w = (int(x) for x in shape)
+    cc, yy, xx = np.indices((c, h, w))
+    return ((xx * h + yy) * c + cc).reshape(-1).astype(np.int64)
+
+
+def builder_partition(manifest):
+    """The partition ``netx_to_sanafe`` built: reader order, the manifest's slice sizes."""
+    return {"name": "builder",
+            "layers": [{"order": "reader",
+                        "sizes": [int(s["stop"]) - int(s["start"]) for s in layer["slices"]]}
+                       for layer in manifest["placement"]]}
+
+
+def _slice_indices(manifest, structure, partition):
+    """Per layer, the slice index of every neuron (reader index) under ``partition``."""
+    out = []
+    if partition is None:
+        for k, layer in enumerate(structure["slices"]):
+            sli = np.empty(structure["sizes"][k], dtype=np.int64)
+            for j, (_, _, start, stop) in enumerate(layer):
+                sli[start:stop] = j
+            out.append(sli)
+        return out
+    if manifest.get("execution_profile") != _LIF_PROFILE:
+        raise ValueError("a partition other than the builder's needs a LIF manifest")
+    layers = partition["layers"]
+    if len(layers) != len(structure["sizes"]):
+        raise ValueError("the partition needs one entry per layer")
+    for k, spec in enumerate(layers):
+        sizes = [int(v) for v in spec["sizes"]]
+        if (len(sizes) != len(structure["slices"][k]) or any(v < 1 for v in sizes) or
+                sum(sizes) != structure["sizes"][k]):
+            raise ValueError(f"layer {k}: the partition needs one positive slice size per core "
+                             f"({len(structure['slices'][k])}) summing to "
+                             f"{structure['sizes'][k]}")
+        pos = neuron_positions(manifest["layer_shapes"][k], manifest["layer_kinds"][k],
+                               spec["order"])
+        out.append(np.searchsorted(np.cumsum(sizes), pos, side="right").astype(np.int64))
+    return out
+
+
+def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connectivity=None,
+                     partition=None):
     """Per-step, per-core counts under the manifest's placement (see the module docstring).
 
     ``manifest`` is from ``netx_to_sanafe`` or from the IF chain exporter.
@@ -336,9 +404,13 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
     must equal the counts (``verified_against_perf_trace``), and the synaptic
     events are compared under the convention the builder emitted. A LIF
     manifest needs ``connectivity`` (``expanded_connectivity`` of its network),
-    and its per-core fan-out must equal the manifest's. ``weights_per_read`` is
-    one integer or several. Returns a dict of int64 arrays, ``[steps, cores]``
-    per count and ``[steps, links]`` per link count.
+    and under the builder's partition its per-core fan-out must equal the
+    manifest's. ``partition`` is ``None`` for the builder's partition, or
+    ``{"name": ..., "layers": [{"order": "reader" or "lava", "sizes": [...]}]}``
+    with one slice size per core of the manifest's placement (see the module
+    docstring). ``weights_per_read`` is one integer or several. Returns a dict of
+    int64 arrays, ``[steps, cores]`` per count and ``[steps, links]`` per link
+    count, with the partition and the message rule recorded.
     """
     per_read = ([int(weights_per_read)] if np.isscalar(weights_per_read)
                 else [int(v) for v in weights_per_read])
@@ -357,29 +429,32 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
     column = {place: i for i, place in enumerate(cores)}
     n_cores = len(cores)
     column_of = []      # neuron -> core column, per layer
-    slice_of = []       # neuron -> slice index within its layer, per layer
+    slice_of = _slice_indices(manifest, structure, partition)
     structure["slice_of_column"] = []
     core_layers = [[] for _ in cores]
     layer_columns = np.zeros((len(sizes), n_cores), dtype=np.int64)  # neurons per layer and core
     for k, layer in enumerate(structure["slices"]):
-        col = np.empty(sizes[k], dtype=np.int64)
-        sli = np.empty(sizes[k], dtype=np.int64)
+        layer_cols = np.asarray([column[(tile, core)] for tile, core, _, _ in layer],
+                                dtype=np.int64)
+        col = layer_cols[slice_of[k]]
         by_column = np.full(n_cores, -1, dtype=np.int64)
-        for j, (tile, core, start, stop) in enumerate(layer):
-            c = column[(tile, core)]
-            col[start:stop], sli[start:stop] = c, j
-            by_column[c] = j
-            layer_columns[k, c] += stop - start
+        by_column[layer_cols] = np.arange(len(layer))
+        layer_columns[k] = np.bincount(col, minlength=n_cores)
+        for c in layer_cols.tolist():
             if k not in core_layers[c]:
                 core_layers[c].append(k)
         column_of.append(col)
-        slice_of.append(sli)
         structure["slice_of_column"].append(by_column)
 
     pair_tables = [_pairs(conn, column_of[conn["src"]], column_of[conn["dst"]], n_cores)
                    for conn in structure["connectivity"]]
-    if manifest.get("execution_profile") == _LIF_PROFILE:
+    if manifest.get("execution_profile") == _LIF_PROFILE and partition is None:
         _check_manifest_fanout(manifest, structure, pair_tables, slice_of)
+    # Sources with at least one entry under each convention, for the per-spike rule.
+    has_entry = [{"nonzero": np.bincount(conn["source"][conn["weight"] != 0],
+                                         minlength=sizes[conn["src"]]) > 0,
+                  "expanded": np.bincount(conn["source"], minlength=sizes[conn["src"]]) > 0}
+                 for conn in structure["connectivity"]]
     nonzero_entries = [(conn["source"][conn["weight"] != 0], conn["target"][conn["weight"] != 0])
                        for conn in structure["connectivity"]]
 
@@ -389,6 +464,7 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
     reads = {c: {v: zeros() for v in per_read} for c in CONVENTIONS}
     messages_out = {c: zeros() for c in CONVENTIONS}
     messages_in = {c: zeros() for c in CONVENTIONS}
+    per_spike = {c: zeros() for c in CONVENTIONS}
     histograms = {c: [[{} for _ in cores] for _ in range(steps)] for c in CONVENTIONS}
     link_counts = {c: [Counter() for _ in range(steps)] for c in CONVENTIONS}
     windows = structure["windows"]
@@ -400,11 +476,15 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
             fired = np.flatnonzero(spikes[k][t])
             if fired.size:
                 spikes_out[t] += np.bincount(column_of[k][fired], minlength=n_cores)
-        for conn, pairs, (nz_src, nz_dst) in zip(structure["connectivity"], pair_tables,
-                                                 nonzero_entries):
+        for conn, pairs, (nz_src, nz_dst), has in zip(structure["connectivity"], pair_tables,
+                                                      nonzero_entries, has_entry):
             active = spikes[conn["src"]][t]
             if not active.any():
                 continue
+            for convention in CONVENTIONS:
+                senders = np.flatnonzero(active & has[convention])
+                per_spike[convention][t] += np.bincount(column_of[conn["src"]][senders],
+                                                        minlength=n_cores)
             hit = np.zeros(sizes[conn["dst"]], dtype=bool)
             hit[nz_dst[active[nz_src]]] = True
             receiving[t] += np.bincount(column_of[conn["dst"]][hit], minlength=n_cores)
@@ -452,8 +532,15 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
         verified = True
 
     return {
-        "schema": "loihi2-core-step-counts-v1",
+        "schema": "loihi2-core-step-counts-v2",
         "execution_profile": manifest["execution_profile"],
+        "partition": (builder_partition(manifest) if partition is None and
+                      manifest.get("execution_profile") == _LIF_PROFILE
+                      else partition if partition is not None
+                      else {"name": "builder", "layers": "one core per layer"}),
+        "message_rule": "SANA-FE's, one message per spiking source neuron and destination core "
+                        "holding at least one of its entries (messages_out, messages_in, links), "
+                        "and one per spike at its source core (messages_out_per_spike)",
         "steps": steps,
         "cores": cores,
         "core_layers": core_layers,
@@ -469,6 +556,7 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
         "synmem_access_histograms": histograms,
         "messages_out": messages_out,
         "messages_in": messages_in,
+        "messages_out_per_spike": per_spike,
         "links": links,
         "link_messages": link_messages,
         "link_bits": {c: link_messages[c] * message_bits for c in CONVENTIONS},
@@ -534,14 +622,18 @@ def message_trace_counts(manifest, result, *, message_bits):
 # The workload of max_affine_runtime
 
 
-def workload_from_counts(counts, *, synops="nonzero", synmem="expanded"):
+def workload_from_counts(counts, *, synops, synmem):
     """The workload ``max_affine_runtime`` consumes, in the schema of ``analyze_binary_chain``.
 
-    ``synops`` selects the convention of the SynOps and ``synmem`` the storage
-    convention of the SynMem entries, the accesses, the messages and the links.
-    The defaults are the conventions of ``analyze_binary_chain`` (nonzero SynOps,
-    every dense entry stored), under which a dense chain gives its workload. The
-    network the simulator runs is ``synmem="nonzero"``.
+    Both conventions must be stated. ``synops`` selects the convention of the
+    SynOps and ``synmem`` the storage convention of the SynMem entries, the
+    accesses, the messages and the links. ``synops="nonzero", synmem="expanded"``
+    are the conventions of ``analyze_binary_chain``, under which a dense chain
+    gives its workload. The network the simulator runs is ``synmem="nonzero"``.
+    The messages and links of the workload follow SANA-FE's message rule (one
+    message per spiking source neuron and destination core) under the partition
+    and placement the counts were taken with, recorded in the workload as
+    ``partition`` and ``message_rule``.
     """
     if synops not in CONVENTIONS or synmem not in CONVENTIONS:
         raise ValueError(f"conventions are {CONVENTIONS}")
@@ -581,6 +673,9 @@ def workload_from_counts(counts, *, synops="nonzero", synmem="expanded"):
             "updates": counts["steps"], "messages": sum(s["messages"] for s in steps),
             "packet_bits_assumption": bits,
             "conventions": {"synops": synops, "synmem": synmem},
+            "partition": counts.get("partition"),
+            "message_rule": "SANA-FE's, one message per spiking source neuron and destination "
+                            "core holding at least one of its entries",
             "link_scope": "directed core-router endpoints and XY router-router links, "
                           "two physical fabrics aggregated, same-core bypass assumed",
             "synmem_measure": f"stored entries under the {synmem} convention, physical reads "
