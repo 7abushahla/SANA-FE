@@ -417,6 +417,12 @@ public:
             long int timestep) override;
     void reset() override;
     double get_potential(size_t address) override { return states.at(address).voltage; }
+    // Whether the neuron at this address holds graded_values. Not virtual, so the interface
+    // that plugins compile against does not change.
+    bool is_graded_source(const size_t address) const
+    {
+        return address < states.size() && states.at(address).graded_source;
+    }
     static inline const std::unordered_map<std::string, std::string> attributes{
         {"threshold", "(int) Positive even signed 24-bit threshold; comparison uses >=."},
         {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
@@ -426,7 +432,7 @@ public:
         {"window_stop", "(int) Exclusive zero-based update index ending the window."},
         {"stride", "(int) Check every stride-th update of the window, from its start."},
         {"currents", "(list[int]) Signed 24-bit external current per update, then zero."},
-        {"graded_values", "(list[int]) Signed 32-bit value sent per update, then zero. Sets the neuron as a graded source. Not supported with the time-step buffer before the axon-out unit, where the soma runs only when a message arrives and its value does not reach the messages."},
+        {"graded_values", "(list[int]) Signed 32-bit value sent per update, then zero. Sets the neuron as a graded source. Refused where the time-step buffer is inside the soma unit or before the axon-out unit, since the soma runs on the message path there."},
     };
 private:
     struct State
@@ -442,7 +448,9 @@ private:
         std::vector<int32_t> currents;
         size_t cursor{0};
         size_t updates_seen{0};
-        // A graded source sends graded_values[u] at its update u, then zero.
+        // A graded source sends graded_values[u] at its update u, then zero. It keeps its own
+        // value cursor and never reaches the IF path, so it never advances updates_seen or the
+        // cursor of currents.
         bool graded_source{false};
         std::vector<int32_t> graded_values;
         size_t graded_cursor{0};

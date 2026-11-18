@@ -7,6 +7,7 @@ of a binary run.
 import hashlib
 import json
 import math
+from importlib.resources import files
 
 import numpy as np
 import pytest
@@ -18,15 +19,15 @@ from sanafe.loihi2 import load_loihi2_candidate
 DST = dict(threshold=8388606, initial_voltage=0, window_start=0)
 
 
-def make_chip(groups, edges):
+def make_chip(groups, edges, *, arch=None):
     """Return ``(chip, arch)`` for groups of neurons on the Loihi 2 candidate.
 
     ``groups`` is a list of ``(name, unit, attrs_per_neuron, places)``, with ``places`` one
     ``(tile, core)`` per neuron. ``edges`` is a list of
     ``(src_group, src_index, dst_group, dst_index, weight)``. Every group logs its spikes and
-    potentials except a group named ``"input"``.
+    potentials except a group named ``"input"``. ``arch`` replaces the candidate when given.
     """
-    arch = load_loihi2_candidate()
+    arch = load_loihi2_candidate() if arch is None else arch
     network = sanafe.Network()
     made = {}
     for name, unit, attrs_per_neuron, places in groups:
@@ -228,3 +229,77 @@ def test_a_value_beyond_32_bits_is_refused_when_set():
     neuron = network.create_neuron_group("input", 1)[0]
     with pytest.raises(RuntimeError):
         neuron.set_attributes(model_attributes={"graded_values": [1 << 31]})
+
+
+def test_reset_restarts_the_values_of_a_source():
+    chip, _ = make_chip([sources([[5, 1]]), destinations(1)], [("input", 0, "layer_0", 0, 1)])
+    first = run(chip, 3)["potential_trace"]
+    chip.reset()
+    second = run(chip, 3)["potential_trace"]
+    assert first == second == [[0], [5], [6]]
+
+
+def test_an_empty_list_makes_a_source_that_sends_nothing():
+    # Without graded_values the current of 2 would make the neuron fire at its first update.
+    source = ("layer_0", "loihi_if_gated",
+              [dict(graded_values=[], threshold=2, initial_voltage=0, window_start=0,
+                    currents=[2, 2])], [(0, 0)])
+    target = ("layer_1", "loihi_if_gated", [dict(DST)], [(0, 1)])
+    chip, _ = make_chip([source, target], [("layer_0", 0, "layer_1", 0, 3)])
+    out = run(chip, 3)
+    assert out["potential_trace"] == [[0, 0], [0, 0], [0, 0]]
+    assert sent_per_step(out) == [0, 0, 0]
+
+
+def test_a_source_ignores_threshold_window_biases_and_currents():
+    # As an IF neuron these attributes would make it fire at every update of its window.
+    source = ("layer_0", "loihi_if_gated",
+              [dict(graded_values=[4], threshold=2, initial_voltage=6, window_start=0,
+                    window_stop=3, stride=1, bias_at_start=10, bias_per_check=5,
+                    currents=[2, 2, 2])], [(0, 0)])
+    target = ("layer_1", "loihi_if_gated", [dict(DST)], [(0, 1)])
+    chip, _ = make_chip([source, target], [("layer_0", 0, "layer_1", 0, 1)])
+    out = run(chip, 4)
+    assert out["potential_trace"] == [[6, 0], [6, 4], [6, 4], [6, 4]]
+    assert sent_per_step(out) == [1, 0, 0, 0]
+
+
+def candidate_with_buffer(position, inside):
+    """The candidate architecture with every core's time-step buffer moved, loaded from a copy
+    of its description in which only the two buffer lines of the core differ."""
+    import tempfile
+    from pathlib import Path
+    text = (files("sanafe.examples") / "loihi2.yaml").read_text()
+    stanza = "buffer_position: soma\n            buffer_inside_unit: false"
+    assert text.count(stanza) == 1
+    moved = text.replace(stanza, f"buffer_position: {position}\n"
+                                 f"            buffer_inside_unit: {str(inside).lower()}")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "loihi2_buffer.yaml"
+        path.write_text(moved)
+        return sanafe.load_arch(str(path))
+
+
+@pytest.mark.parametrize("position, inside, expected, feeder", [
+    # Before the axon-out unit the soma runs only when a message arrives, so a source
+    # without input would never send.
+    ("axon_out", False, 4, False),
+    # Inside the soma unit a source reached by a message runs twice per step, so a
+    # message of zero weight would make it skip a value.
+    ("soma", True, 3, True),
+])
+def test_a_source_is_refused_where_its_soma_runs_on_the_message_path(
+        position, inside, expected, feeder):
+    arch = candidate_with_buffer(position, inside)
+    assert int(arch.tiles[0].cores[0].buffer_position) == expected
+    groups = [("input", "loihi_if_gated", [dict(graded_values=[5, 7])], [(0, 2)]),
+              destinations(1)]
+    edges = [("input", 0, "layer_0", 0, 3)]
+    if feeder:
+        groups.append(("feeder", "loihi_if_gated",
+                       [dict(threshold=2, initial_voltage=0, window_start=0,
+                             currents=[2, 2, 2])], [(0, 0)]))
+        edges.append(("feeder", 0, "input", 0, 0))
+    chip, _ = make_chip(groups, edges, arch=arch)
+    with pytest.raises(ValueError, match=r"input\[0\]: A graded source requires"):
+        run(chip, 3)

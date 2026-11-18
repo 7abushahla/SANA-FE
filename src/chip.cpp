@@ -41,6 +41,7 @@
 #include "core.hpp"
 #include "mapped.hpp"
 #include "message.hpp"
+#include "models.hpp" // For the graded source check of GatedInt24IfModel
 #include "network.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -782,6 +783,24 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
     const bool simulate_buffer = (c.pipeline_config.buffer_position ==
                                          buffer_before_dendrite_unit) ||
             (c.pipeline_config.buffer_position == buffer_before_soma_unit);
+
+    // Where the buffer is inside the soma unit or before the axon-out unit, the
+    //  soma runs on the message path. There a graded source would run twice
+    //  per step, or only when a message reaches it, and its value would not
+    //  reach its messages. Every neuron passes here in each step before any
+    //  message is processed, so a source is refused before it sends.
+    if (c.pipeline_config.buffer_position >= buffer_inside_soma_unit)
+    {
+        const auto *gated = dynamic_cast<const GatedInt24IfModel *>(n.soma_hw);
+        if ((gated != nullptr) &&
+                gated->is_graded_source(n.mapped_soma_hw_address))
+        {
+            throw std::invalid_argument(n.parent_group_name + "[" +
+                    std::to_string(n.offset) +
+                    "]: A graded source requires the time-step buffer before "
+                    "the dendrite unit, inside it or before the soma unit");
+        }
+    }
 
     PipelineResult input{};
     if (simulate_buffer)
