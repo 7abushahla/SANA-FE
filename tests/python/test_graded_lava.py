@@ -112,6 +112,13 @@ def test_conv_graded_matches_lava_fixed_point():
     lava_v = lava_run(conv.s_in, layer, values, steps, Loihi2SimCfg(select_tag="fixed_pt"),
                       ["v"])["v"]
     assert np.abs(lava_v).max() < (1 << 23)                # inside Lava's 24-bit wrap
+    # The same convolution with num_message_bits=0 sends the binary activation instead.
+    binary_conv = Conv(weight=weight, input_shape=input_shape, padding=(1, 1), num_message_bits=0)
+    binary_layer = QCFSIFGated(shape=binary_conv.output_shape, threshold=8388606,
+                               initial_voltage=0)
+    binary_conv.a_out.connect(binary_layer.a_in)
+    binary_lava_v = lava_run(binary_conv.s_in, binary_layer, values, steps,
+                             Loihi2SimCfg(select_tag="fixed_pt"), ["v"])["v"]
 
     # Sources and destinations both in Lava's flattened order, as in
     # sanafe.lava_conv_integer.qcfs_fixed_conv_to_sanafe.
@@ -121,13 +128,15 @@ def test_conv_graded_matches_lava_fixed_point():
     ours_v, _ = sanafe_run(values.reshape(-1, sent).tolist(), list(zip(src, dst, kernel)),
                            count, steps, dict(DST, strict=True))
     assert np.array_equal(ours_v, lava_v)
+    # The binary run differs.
+    assert not np.array_equal(lava_v, binary_lava_v)
 
 
 def test_held_current_matches_lava_lif_with_du_minus_one():
     steps = 20
     first = [37, -12, 0, 1000]
     values = np.zeros((4, steps), dtype=np.int32)
-    values[:, 0] = first                                   # a RingBuffer repeats its data
+    values[:, 0] = first                                   # the zero columns make the input arrive once
     lif = LIF(shape=(4,), du=-1, dv=0, vth=131071, bias_mant=0)
     lava = lava_run(lif.a_in, lif, values, steps, Loihi1SimCfg(select_tag="fixed_pt"),
                     ["u", "v"])
