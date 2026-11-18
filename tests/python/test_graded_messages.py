@@ -400,3 +400,76 @@ def test_strict_inside_24_bits_changes_nothing():
     assert set(traced["neuron_trace"]) == set(EXTREMES)
     for name in EXTREMES:
         assert [len(row) for row in traced["neuron_trace"][name]] == [3] * 6, name
+
+
+# A destination that holds its input current over the window [1, 4), in strict mode.
+HOLD = dict(DST, window_start=1, window_stop=4, hold_input=1, strict=1)
+
+
+def held_run(source_values, destination, steps):
+    chip, _ = make_chip([sources([source_values]), one_neuron(destination)],
+                        [("input", 0, "layer_0", 0, 3)])
+    return chip, run(chip, steps, neuron_trace=True)
+
+
+def test_a_value_sent_once_drives_every_step_of_the_window():
+    _, out = held_run([5], HOLD, 6)
+    assert out["potential_trace"] == [[0], [15], [30], [45], [45], [45]]
+    assert out["neuron_trace"]["held_current"] == [[0], [15], [15], [15], [15], [15]]
+
+
+def test_without_hold_input_the_neuron_is_unchanged():
+    _, out = held_run([5], dict(HOLD, hold_input=0), 6)
+    assert out["potential_trace"] == [[0], [15], [15], [15], [15], [15]]
+    # Off, the neuron reports the traces of the strict mode and no held current.
+    assert set(out["neuron_trace"]) == set(EXTREMES)
+
+
+def test_reset_clears_the_held_current():
+    chip, _ = held_run([5], HOLD, 6)
+    chip.reset()
+    again = run(chip, 1, neuron_trace=True)
+    assert again["potential_trace"] == [[0]] and again["neuron_trace"]["held_current"] == [[0]]
+
+
+def test_input_after_the_window_bypasses_the_held_current():
+    _, out = held_run([5, 0, 0, 0, 0, 2], HOLD, 8)
+    assert out["potential_trace"] == [[0], [15], [30], [45], [45], [45], [51], [51]]
+    assert out["neuron_trace"]["held_current"][-1] == [15]
+
+
+def test_the_two_deliveries_give_identical_membranes():
+    destination = dict(threshold=40, initial_voltage=20, window_start=1, window_stop=4)
+    chip, _ = make_chip([sources([[5, 5, 5]]), one_neuron(dict(destination, hold_input=0))],
+                        [("input", 0, "layer_0", 0, 3)])
+    a = run(chip, 6)
+    chip, _ = make_chip([sources([[5]]), one_neuron(dict(destination, hold_input=1))],
+                        [("input", 0, "layer_0", 0, 3)])
+    b = run(chip, 6)
+    assert a["potential_trace"] == b["potential_trace"] == [[20], [35], [10], [25], [25], [25]]
+    assert ([len(step) for step in spikes_of(a)] == [len(step) for step in spikes_of(b)]
+            == [0, 0, 1, 0, 0, 0])
+
+
+def test_strict_stops_when_the_held_current_leaves_24_bits():
+    attrs = dict(threshold=8388606, initial_voltage=-8000000, window_start=0, window_stop=4,
+                 currents=[4194304, 4194304], hold_input=1)
+    chip, _ = make_chip([one_neuron(dict(attrs, strict=1))], [])
+    with pytest.raises(OverflowError, match=r"^layer_0\[0\]: strict mode: held current 8388608 "
+                                            r"leaves the signed 24-bit range"):
+        run(chip, 2)
+    # Without strict the held current saturates at the top of signed 24 bits.
+    chip, _ = make_chip([one_neuron(attrs)], [])
+    out = run(chip, 2, neuron_trace=True)
+    assert out["neuron_trace"] == {"held_current": [[4194304], [8388607]]}
+    assert out["potential_trace"] == [[-3805696], [4582911]]
+
+
+def test_a_source_does_not_take_hold_input():
+    source = ("input", "loihi_if_gated", [dict(graded_values=[5], hold_input=1)], [(0, 0)])
+    with pytest.raises(ValueError, match="graded source does not take hold_input"):
+        make_chip([source, destinations(1)], [("input", 0, "layer_0", 0, 3)])
+    # Set to 0 it changes nothing.
+    source = ("input", "loihi_if_gated", [dict(graded_values=[5], hold_input=0)], [(0, 0)])
+    chip, _ = make_chip([source, destinations(1)], [("input", 0, "layer_0", 0, 3)])
+    assert run(chip, 3)["potential_trace"] == [[0], [15], [15]]

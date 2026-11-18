@@ -249,6 +249,12 @@ void sanafe::GatedInt24IfModel::set_attribute_neuron(const size_t address,
         state.graded_cursor = 0;
         state.graded_source = true;
     }
+    else if (name == "hold_input")
+    {
+        state.hold_input = std::holds_alternative<bool>(param.value)
+                ? std::get<bool>(param.value)
+                : int32_attr(0, 1, "IF hold_input flag (bool or 0/1)") != 0;
+    }
     else if (name == "threshold")
     {
         const int32_t threshold = int32_attr(1, voltage_max, "IF threshold");
@@ -289,6 +295,11 @@ void sanafe::GatedInt24IfModel::set_attribute_neuron(const size_t address,
         state.strict = std::holds_alternative<bool>(param.value)
                 ? std::get<bool>(param.value)
                 : int32_attr(0, 1, "IF strict flag (bool or 0/1)") != 0;
+    }
+    // Checked after every attribute, so the refusal holds in either order of setting.
+    if (state.graded_source && state.hold_input)
+    {
+        throw std::invalid_argument("A graded source does not take hold_input");
     }
 }
 
@@ -361,7 +372,20 @@ sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
                 voltage_min, voltage_max, "IF signed 24-bit input current");
     }
     const auto u = static_cast<int64_t>(state.updates_seen++);
-    int64_t v = static_cast<int64_t>(state.voltage) + input;
+    // The current that drives the membrane at this update. With hold_input and before
+    // window_stop it is the register, to which the input is first added.
+    int64_t drive = input;
+    if (state.hold_input && u < state.window_stop)
+    {
+        const int64_t held = static_cast<int64_t>(state.held_current) + input;
+        if (state.strict && (held < voltage_min || held > voltage_max))
+        {
+            throw sanafe::StrictRangeError(strict_message("held current", held));
+        }
+        state.held_current = static_cast<int32_t>(std::clamp(held, voltage_min, voltage_max));
+        drive = state.held_current;
+    }
+    int64_t v = static_cast<int64_t>(state.voltage) + drive;
     if (u == state.window_start)
     {
         v += state.bias_at_start;
@@ -419,6 +443,7 @@ void sanafe::GatedInt24IfModel::reset()
         state.input_max = 0;
         state.membrane_min = 0;
         state.membrane_max = 0;
+        state.held_current = 0;
     }
 }
 
@@ -430,14 +455,23 @@ std::map<std::string, double> sanafe::GatedInt24IfModel::get_neuron_traces(
         return {};
     }
     const State &state = states.at(address);
-    if (!state.strict || state.graded_source)
+    std::map<std::string, double> traces;
+    if (state.graded_source)
     {
-        return {};
+        return traces;
     }
-    return {{"input_min", static_cast<double>(state.input_min)},
-            {"input_max", static_cast<double>(state.input_max)},
-            {"voltage_min", static_cast<double>(state.membrane_min)},
-            {"voltage_max", static_cast<double>(state.membrane_max)}};
+    if (state.strict)
+    {
+        traces = {{"input_min", static_cast<double>(state.input_min)},
+                {"input_max", static_cast<double>(state.input_max)},
+                {"voltage_min", static_cast<double>(state.membrane_min)},
+                {"voltage_max", static_cast<double>(state.membrane_max)}};
+    }
+    if (state.hold_input)
+    {
+        traces["held_current"] = static_cast<double>(state.held_current);
+    }
+    return traces;
 }
 
 namespace

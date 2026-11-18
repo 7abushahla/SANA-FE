@@ -426,7 +426,8 @@ public:
             long int timestep) override;
     void reset() override;
     double get_potential(size_t address) override { return states.at(address).voltage; }
-    // The extremes of a strict neuron that is not a graded source, and nothing otherwise.
+    // The extremes of a strict neuron that is not a graded source and the held current of a
+    // neuron with hold_input, and nothing otherwise.
     std::map<std::string, double> get_neuron_traces(size_t address) override;
     // Whether the neuron at this address holds graded_values. Not virtual, so the interface
     // that plugins compile against does not change.
@@ -450,6 +451,7 @@ public:
         {"currents", "(list[int]) Signed 24-bit external current per update, then zero."},
         {"graded_values", "(list[int]) Signed 32-bit value sent per update, then zero. Sets the neuron as a graded source. Refused where the time-step buffer is inside the soma unit or before the axon-out unit, since the soma runs on the message path there."},
         {"strict", "(bool) Stop the run when the input or the membrane leaves signed 24 bits, and record their extremes as neuron traces."},
+        {"hold_input", "(bool) Hold the input current. Input is added to a current register, which drives the membrane on every update before window_stop."},
     };
 private:
     struct State
@@ -481,6 +483,12 @@ private:
         int32_t input_max{0};
         int32_t membrane_min{0};
         int32_t membrane_max{0};
+        // With hold_input, at each update u < window_stop the input is added to held_current,
+        // which then drives the membrane in place of the input. From window_stop on the
+        // register is left as it is and the input drives the membrane directly. The register
+        // saturates at signed 24 bits, or stops the run in strict mode, and reset clears it.
+        bool hold_input{false};
+        int32_t held_current{0};
     };
     std::vector<State> states;
 };
