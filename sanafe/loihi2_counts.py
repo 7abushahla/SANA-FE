@@ -148,8 +148,10 @@ manifest gives that layer. The ordering ``reader`` is the flattened (channels,
 height, width) order of ``sanafe.netx``. The ordering ``lava`` is Lava's
 flattened (width, height, channels) order, in which contiguous slices are
 spatial and hold every channel. Dense layers have one order. ``builder`` is the
-partition ``netx_to_sanafe`` builds (reader order, near-equal slices) and is the
-default. Counts under another partition come from the same per-neuron spikes,
+partition ``netx_to_sanafe`` builds by default (reader order, near-equal slices).
+The builder also accepts a partition in this form and records it in the
+manifest. The default of the functions here is the partition the manifest was
+built with. Counts under another partition come from the same per-neuron spikes,
 since the function of the network does not depend on where a neuron sits.
 
 Conventions of the returned arrays
@@ -164,7 +166,8 @@ from collections import Counter
 
 import numpy as np
 
-from sanafe.lif_network import _conv_geometry, _neuron_layers, conv_synapses
+from sanafe.lif_network import (ORDERS, _conv_geometry, _neuron_layers,  # noqa: F401 (ORDERS)
+                                conv_synapses, neuron_positions)
 from sanafe.loihi2_runtime import _route_links
 
 CONVENTIONS = ("nonzero", "expanded")
@@ -339,30 +342,14 @@ def _check_manifest_fanout(manifest, structure, pair_tables, slice_of):
                              "manifest")
 
 
-ORDERS = ("reader", "lava")
-
-
-def neuron_positions(shape, kind, order):
-    """Position of every neuron (indexed in reader order) in the ordering ``order``.
-
-    ``reader`` keeps the flattened (channels, height, width) index. ``lava`` gives
-    the index in Lava's flattened (width, height, channels) order, (x * H + y) * C
-    + c, for input and convolution layers. A dense layer has one order.
-    """
-    if order not in ORDERS:
-        raise ValueError(f"order {order!r} is not one of {ORDERS}")
-    n = int(np.prod(shape))
-    if order == "reader" or kind == "dense":
-        return np.arange(n, dtype=np.int64)
-    if len(shape) != 3:
-        raise ValueError(f"shape {shape} is not (channels, height, width)")
-    c, h, w = (int(x) for x in shape)
-    cc, yy, xx = np.indices((c, h, w))
-    return ((xx * h + yy) * c + cc).reshape(-1).astype(np.int64)
-
-
 def builder_partition(manifest):
-    """The partition ``netx_to_sanafe`` built: reader order, the manifest's slice sizes."""
+    """The partition ``netx_to_sanafe`` built, with the manifest's slice sizes.
+
+    The partition the manifest records when the builder was given one, and
+    otherwise reader order under the name ``builder``.
+    """
+    if manifest.get("partition") is not None:
+        return manifest["partition"]
     return {"name": "builder",
             "layers": [{"order": "reader",
                         "sizes": [int(s["stop"]) - int(s["start"]) for s in layer["slices"]]}
@@ -370,8 +357,14 @@ def builder_partition(manifest):
 
 
 def _slice_indices(manifest, structure, partition):
-    """Per layer, the slice index of every neuron (reader index) under ``partition``."""
+    """Per layer, the slice index of every neuron (reader index) under ``partition``.
+
+    ``None`` is the partition the manifest was built with, which is the one it
+    records, or reader order when it records none.
+    """
     out = []
+    if partition is None and manifest.get("partition") is not None:
+        partition = manifest["partition"]
     if partition is None:
         for k, layer in enumerate(structure["slices"]):
             sli = np.empty(structure["sizes"][k], dtype=np.int64)

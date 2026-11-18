@@ -19,6 +19,10 @@ Conventions
 * Neurons of a layer are indexed in flattened (channels, height, width) order,
   the order of the reader. Every returned array has shape ``[steps, n]`` with
   that column order. Row ``t`` is the state after update ``t``.
+* Where a neuron sits is a separate matter. By default the builder splits each
+  layer in reader order. ``netx_to_sanafe`` also accepts a partition, which may
+  order a layer as Lava does (width, height, channels) before it is sliced over
+  the cores (``neuron_positions``). The indices above do not change with it.
 * The input layer is a LIF layer like the others, driven only by its bias, as
   netx builds it (its input port is not connected). ``input_bias`` is written
   into its bias mantissa, with the layer's bias exponent, on both sides. It must
@@ -296,7 +300,55 @@ def slice_sizes(size, cores):
     return [base + 1] * extra + [base] * (cores - extra)
 
 
-def _placement(entries, layer_cores, order):
+ORDERS = ("reader", "lava")
+
+
+def neuron_positions(shape, kind, order):
+    """Position of every neuron (indexed in reader order) in the ordering ``order``.
+
+    ``reader`` keeps the flattened (channels, height, width) index. ``lava`` gives
+    the index in Lava's flattened (width, height, channels) order, (x * H + y) * C
+    + c, for input and convolution layers. A dense layer has one order.
+    """
+    if order not in ORDERS:
+        raise ValueError(f"order {order!r} is not one of {ORDERS}")
+    n = int(np.prod(shape))
+    if order == "reader" or kind == "dense":
+        return np.arange(n, dtype=np.int64)
+    if len(shape) != 3:
+        raise ValueError(f"shape {shape} is not (channels, height, width)")
+    c, h, w = (int(x) for x in shape)
+    cc, yy, xx = np.indices((c, h, w))
+    return ((xx * h + yy) * c + cc).reshape(-1).astype(np.int64)
+
+
+def _partition_layers(entries, counts, partition):
+    """Per layer, the (order, slice sizes) of ``partition``, or of the default when it is None.
+
+    The default is reader order with the near-equal slices of ``slice_sizes``. A
+    stated partition needs one entry per layer with a neuron, each with an order
+    of ``ORDERS`` and one positive slice size per core of that layer, summing to
+    the layer's size. These are the rules of ``sanafe.loihi2_counts``.
+    """
+    if partition is None:
+        return [("reader", slice_sizes(entry["size"], n)) for entry, n in zip(entries, counts)]
+    layers = list(partition["layers"])
+    if len(layers) != len(entries):
+        raise ValueError(f"the partition needs one entry per layer with a neuron "
+                         f"({len(entries)}), got {len(layers)}")
+    out = []
+    for k, (spec, entry, n) in enumerate(zip(layers, entries, counts)):
+        if spec["order"] not in ORDERS:
+            raise ValueError(f"layer {k}: order {spec['order']!r} is not one of {ORDERS}")
+        sizes = [_scalar_integer(v, "slice size", 0, _INT32_MAX) for v in spec["sizes"]]
+        if len(sizes) != n or any(v < 1 for v in sizes) or sum(sizes) != entry["size"]:
+            raise ValueError(f"layer {k}: the partition needs one positive slice size per core "
+                             f"({n}) summing to {entry['size']}")
+        out.append((spec["order"], sizes))
+    return out
+
+
+def _placement(entries, layer_cores, order, partition=None):
     counts = list(layer_cores)
     if len(counts) != len(entries):
         raise ValueError(f"layer_cores needs one core count per layer with a neuron "
@@ -306,14 +358,16 @@ def _placement(entries, layer_cores, order):
     if sum(counts) > len(available):
         raise ValueError(f"the placement needs {sum(counts)} cores, the candidate has "
                          f"{len(available)} free")
+    layers = _partition_layers(entries, counts, partition)
     # Layers take consecutive runs of the sequence, the last layer first under
-    # packed_reversed. Within a layer the slices keep their order.
+    # packed_reversed. Within a layer the slices keep their order. A slice's start
+    # and stop are positions in the layer's neuron order.
     turn = range(len(entries))
     if order == "packed_reversed":
         turn = reversed(turn)
     placement, cursor = [None] * len(entries), 0
     for k in turn:
-        sizes = slice_sizes(entries[k]["size"], counts[k])
+        sizes = layers[k][1]
         start, slices = 0, []
         for place, n in zip(available[cursor:cursor + counts[k]], sizes):
             slices.append({"tile": int(place[0]), "core": int(place[1]),
@@ -321,15 +375,13 @@ def _placement(entries, layer_cores, order):
             start += n
         cursor += counts[k]
         placement[k] = slices
-    return placement
+    return placement, [neuron_order for neuron_order, _ in layers]
 
 
-def _slice_index(slices, size):
-    """Index of the slice that holds each neuron of a layer."""
-    index = np.empty(size, dtype=np.int64)
-    for k, s in enumerate(slices):
-        index[s["start"]:s["stop"]] = k
-    return index
+def _slice_index(slices, positions):
+    """Index of the slice that holds each neuron of a layer, from its position in the layer's order."""
+    stops = np.asarray([s["stop"] for s in slices], dtype=np.int64)
+    return np.searchsorted(stops, positions, side="right").astype(np.int64)
 
 
 def _per_core(src, dst, src_slice, dst_slice, n_src_cores, n_dst_cores, n_src):
@@ -351,20 +403,34 @@ def _group_name(k):
     return f"layer_{k:02d}"
 
 
-def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", log=True):
+def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", log=True,
+                   partition=None):
     """Return ``(Network, manifest)`` for a netx network on the candidate architecture.
 
     ``input_bias`` is the integer bias mantissa of the input layer for one frame,
     an array of exactly the layer's (channels, height, width) shape. Any other
     shape is refused, a flat array included. ``layer_cores`` is the number of
-    cores of each layer with a neuron, in order. The neurons of a layer are split
-    into contiguous slices of near-equal size over its cores (sizes differ by at
-    most one, larger slices first). The cores are taken from the sequence of
-    ``core_order(order)``, layer by layer in layer order, or in reverse layer
-    order for ``packed_reversed``. ``log`` records spikes and voltages of every
-    neuron. Weights, fan-in, biases and registers outside what the soma and
-    ``sanafe.lava_lif`` accept are refused with the messages of ``lava_lif``.
-    All checks precede network construction.
+    cores of each layer with a neuron, in order. The cores are taken from the
+    sequence of ``core_order(order)``, layer by layer in layer order, or in
+    reverse layer order for ``packed_reversed``. ``log`` records spikes and
+    voltages of every neuron. Weights, fan-in, biases and registers outside what
+    the soma and ``sanafe.lava_lif`` accept are refused with the messages of
+    ``lava_lif``. All checks precede network construction.
+
+    ``partition`` states how the neurons of each layer are divided over its
+    cores, in the form ``sanafe.loihi2_counts`` accepts,
+    ``{"name": ..., "layers": [{"order": "reader" or "lava", "sizes": [...]}]}``
+    with one entry per layer with a neuron and one slice size per core of that
+    layer. The neurons of a layer are ordered by ``neuron_positions`` under the
+    entry's order, and slice ``j`` (the next ``sizes[j]`` neurons of that order)
+    sits on the layer's ``j``-th core. On each core the neurons are mapped in that
+    order. Neuron indices, spikes and voltages stay in reader order. With
+    ``partition=None`` (the default) the neurons are split in reader order into
+    contiguous slices of near-equal size (sizes differ by at most one, larger
+    slices first), and the network and the manifest are those the builder made
+    before it accepted a partition. A stated partition adds the key
+    ``partition`` to the manifest and the key ``order`` to each layer of its
+    ``placement``, whose ``start`` and ``stop`` are then positions in that order.
     """
     entries = _neuron_layers(network)
     registers = [_registers_of(entry) for entry in entries]
@@ -374,7 +440,7 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
         src, dst, weight, record = _connection(entries[k - 1], entries[k])
         record.update(src=k - 1, dst=k)
         connections.append((src, dst, weight, record))
-    placement = _placement(entries, layer_cores, order)
+    placement, neuron_orders = _placement(entries, layer_cores, order, partition)
     fingerprint = check_lif_architecture(arch)
     cores = []
     for k, slices in enumerate(placement):
@@ -382,7 +448,9 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
         for j, (s, core) in enumerate(zip(slices, cores[-1])):
             check_lif_core(core, s["stop"] - s["start"],
                            what=f"layer {k} slice {j} on core ({s['tile']}, {s['core']})")
-    slice_of = [_slice_index(slices, entry["size"]) for slices, entry in zip(placement, entries)]
+    positions = [neuron_positions(entry["shape"], entry["kind"], neuron_order)
+                 for entry, neuron_order in zip(entries, neuron_orders)]
+    slice_of = [_slice_index(slices, p) for slices, p in zip(placement, positions)]
     for src, dst, _, record in connections:
         k = record["dst"]
         synapses, axons, routes = _per_core(src, dst, slice_of[k - 1], slice_of[k],
@@ -400,9 +468,12 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
             soma_hw_name=LIF_SOMA_UNIT, log_spikes=bool(log), log_potential=bool(log))
         for offset in np.flatnonzero(bias).tolist():
             group[offset].set_attributes(model_attributes={"bias_mant": int(bias[offset])})
+        # Reader index of the neuron at each position of the layer's order (the identity
+        # in reader order).
+        at_position = np.argsort(positions[k], kind="stable").tolist()
         for s, core in zip(placement[k], cores[k]):
-            for offset in range(s["start"], s["stop"]):
-                group[offset].map_to_core(core)
+            for position in range(s["start"], s["stop"]):
+                group[at_position[position]].map_to_core(core)
         groups.append(group)
     for src, dst, weight, record in connections:
         pre, post = groups[record["src"]], groups[record["dst"]]
@@ -458,6 +529,13 @@ def netx_to_sanafe(network, input_bias, arch, layer_cores, *, order="packed", lo
         "placement": [{"layer": k, "slices": slices} for k, slices in enumerate(placement)],
         "connections": [record for _, _, _, record in connections],
     }
+    if partition is not None:
+        manifest["partition"] = {
+            "name": partition.get("name"),
+            "layers": [{"order": o, "sizes": [s["stop"] - s["start"] for s in slices]}
+                       for o, slices in zip(neuron_orders, placement)]}
+        for layer, neuron_order in zip(manifest["placement"], neuron_orders):
+            layer["order"] = neuron_order
     return network_out, manifest
 
 

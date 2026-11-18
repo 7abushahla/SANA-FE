@@ -414,9 +414,9 @@ def _same_counts(a, b):
 
 
 def test_a_partition_in_lava_order_equals_the_relabeled_network_in_reader_order(tmp_path):
-    """The builder places neurons in reader order only, so the simulator is not run under
-    Lava's order. Instead every neuron of every layer is relabeled by its position in Lava's
-    order, spikes and synapses alike. The relabeled network under a reader-order partition
+    """The counts under a partition are checked here without the simulator running it. Every
+    neuron of every layer is relabeled by its position in Lava's order, spikes and synapses
+    alike. The relabeled network under a reader-order partition
     with the same slice sizes must give every count of the original under the Lava-order
     partition. The sizes have a remainder slice, as the published plots suggest."""
     network = _conv_network(tmp_path)
@@ -448,6 +448,192 @@ def test_a_partition_in_lava_order_equals_the_relabeled_network_in_reader_order(
     builder = _counts(manifest, {"spikes": spikes}, connectivity=connectivity)
     assert not np.array_equal(builder["messages_in"]["nonzero"],
                               original["messages_in"]["nonzero"])
+
+
+# ---------------------------------------------------------------------------
+# The builder under an explicit partition
+
+CONV_CORES = [2, 4, 3, 3]
+LAVA_REMAINDER = {"name": "lava remainder",
+                  "layers": [{"order": "lava", "sizes": s} for s in
+                             ([64, 62], [24, 24, 24, 12], [21, 21, 6], [4, 4, 2])]}
+# The builder's manifest and saved netlist for _conv_network, recorded from the builder as
+# it was before it accepted a partition. The default must reproduce them byte for byte.
+DEFAULT_SHA256 = {
+    "spread": ("1859f2f1df3e36a62cf11c3a21222a66c62d84a801bbfcc0439e34fbebb7fad6",
+               "6ca042f85977488567a7aa638570fb60647ee328515c5e7d6ba9e272cdffccf1"),
+    "packed_reversed": ("e487df005a2a15ab0b753411bccc917b068016627edea99048de42c1abfa1f56",
+                        "816244f178ecd0385e66920cb8e1b547137007a16cdcd0f6e5993451b56afbaa"),
+}
+
+
+def _conv_bias():
+    return np.random.default_rng(3).integers(-10, 60, size=(2, 9, 7))
+
+
+def _digests(net, manifest, path):
+    """sha256 of the manifest (JSON, sorted keys) and of the network saved as a netlist."""
+    import hashlib
+    net.save(str(path), use_netlist_format=True)
+    return (hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
+            hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def test_the_default_partition_leaves_the_builder_unchanged(tmp_path):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    for order, expected in DEFAULT_SHA256.items():
+        net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order=order)
+        assert _digests(net, manifest, tmp_path / f"default_{order}.net") == expected, order
+        assert "partition" not in manifest
+        net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order=order,
+                                       partition=None)
+        assert _digests(net, manifest, tmp_path / f"none_{order}.net") == expected, order
+        # The builder's own partition stated explicitly builds the same network. Only the
+        # manifest differs, since it then records the partition.
+        explicit = builder_partition(manifest)
+        net, stated = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order=order,
+                                     partition=explicit)
+        digests = _digests(net, stated, tmp_path / f"explicit_{order}.net")
+        assert digests[1] == expected[1], order
+        assert stated["partition"] == explicit
+        assert stated["placement"] == [dict(p, order="reader") for p in manifest["placement"]]
+
+
+def test_a_lava_order_partition_places_the_neurons_of_its_slice_table(tmp_path):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    _, builder = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread")
+    net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread",
+                                   partition=LAVA_REMAINDER)
+    assert manifest["partition"] == LAVA_REMAINDER
+    names = manifest["group_names"]
+    moved = 0
+    for k, (spec, layer, kept) in enumerate(zip(LAVA_REMAINDER["layers"], manifest["placement"],
+                                                builder["placement"])):
+        # The same cores as the builder's, in the same order, with the table's slice sizes.
+        assert [(s["tile"], s["core"]) for s in layer["slices"]] == \
+            [(s["tile"], s["core"]) for s in kept["slices"]]
+        assert [s["stop"] - s["start"] for s in layer["slices"]] == spec["sizes"]
+        assert layer["order"] == "lava"
+        position = neuron_positions(manifest["layer_shapes"][k], manifest["layer_kinds"][k],
+                                    "lava")
+        slot = np.searchsorted(np.cumsum(spec["sizes"]), position, side="right")
+        group = net.groups[names[k]]
+        mapped = [tuple(group[i].mapped_core) for i in range(manifest["layer_sizes"][k])]
+        expected = [(layer["slices"][j]["tile"], layer["slices"][j]["core"]) for j in slot]
+        assert mapped == expected, k
+        # On each core the neurons are mapped in the partition's order.
+        mapping = np.asarray([group[i].mapping_order for i in range(manifest["layer_sizes"][k])])
+        for j in range(len(spec["sizes"])):
+            on_core = np.flatnonzero(slot == j)
+            assert np.all(np.diff(mapping[on_core[np.argsort(position[on_core])]]) > 0), (k, j)
+        reader = np.searchsorted(np.cumsum(spec["sizes"]), np.arange(position.size), side="right")
+        moved += int(np.count_nonzero(reader != slot))
+    assert moved > 0, "the Lava order must move neurons in this network"
+    # The per-core fan-out of the manifest follows the partition.
+    connectivity = expanded_connectivity(network)
+    for record, conn in zip(manifest["connections"], connectivity):
+        k = conn["dst"]
+        position = neuron_positions(manifest["layer_shapes"][k], manifest["layer_kinds"][k],
+                                    "lava")
+        slot = np.searchsorted(np.cumsum(LAVA_REMAINDER["layers"][k]["sizes"]), position,
+                               side="right")
+        nz = conn["weight"] != 0
+        assert record["synapses_per_dst_core"] == np.bincount(
+            slot[conn["target"][nz]], minlength=len(manifest["placement"][k]["slices"])).tolist()
+
+
+def test_a_partition_is_refused_unless_it_covers_every_core_of_every_layer(tmp_path):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    layers = LAVA_REMAINDER["layers"]
+
+    def build(partition):
+        return netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, partition=partition)
+
+    with pytest.raises(ValueError, match="one entry per layer"):
+        build({"name": "short", "layers": layers[:3]})
+    with pytest.raises(ValueError, match=r"layer 1: the partition needs one positive slice size "
+                                         r"per core \(4\) summing to 84"):
+        build({"name": "sum", "layers": [layers[0], {"order": "lava", "sizes": [24, 24, 24, 13]},
+                                         *layers[2:]]})
+    with pytest.raises(ValueError, match=r"layer 2: the partition needs one positive slice size "
+                                         r"per core \(3\) summing to 48"):
+        build({"name": "count", "layers": [*layers[:2], {"order": "lava", "sizes": [24, 24]},
+                                           layers[3]]})
+    with pytest.raises(ValueError, match="layer 0: order 'width' is not one of"):
+        build({"name": "order", "layers": [{"order": "width", "sizes": [64, 62]}, *layers[1:]]})
+    # A dense layer has one order, so both names give the same placement, as in the counts.
+    _, a = build({"name": "dense lava", "layers": layers})
+    _, b = build({"name": "dense reader", "layers": [*layers[:3],
+                                                     {"order": "reader", "sizes": [4, 4, 2]}]})
+    assert [p["slices"] for p in a["placement"]] == [p["slices"] for p in b["placement"]]
+
+
+def test_the_spikes_do_not_depend_on_the_partition(tmp_path):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    runs = []
+    for partition in (None, LAVA_REMAINDER):
+        net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES,
+                                       order="packed_reversed", partition=partition)
+        runs.append(sanafe_run(net, manifest, arch, 20, extra_traces=False))
+    assert all(s.any() for s in runs[0]["spikes"])
+    for a, b in zip(runs[0]["spikes"], runs[1]["spikes"]):
+        assert np.array_equal(a, b)
+    for a, b in zip(runs[0]["voltages"], runs[1]["voltages"]):
+        assert np.array_equal(a, b)
+
+
+def test_the_message_trace_under_a_lava_order_partition_equals_its_counts(tmp_path):
+    network = _conv_network(tmp_path)
+    connectivity = expanded_connectivity(network)
+    arch = load_loihi2_candidate()
+    _, builder = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread")
+    net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread",
+                                   partition=LAVA_REMAINDER)
+    run = sanafe_run(net, manifest, arch, 20, extra_traces=True)
+    traced = message_trace_counts(manifest, run["trace"], message_bits=BITS)
+    # The manifest's own partition, read from the manifest, and the same partition stated on
+    # the builder's manifest give the same counts.
+    own = _counts(manifest, run, connectivity=connectivity)
+    assert own["verified_against_perf_trace"]
+    assert own["partition"] == LAVA_REMAINDER
+    stated = _counts(builder, {"spikes": run["spikes"]}, connectivity=connectivity,
+                     partition=LAVA_REMAINDER)
+    _same_counts(own, stated)
+    assert traced["cores"] == own["cores"]
+    for key in ("messages_out", "messages_in", "synops"):
+        assert np.array_equal(traced[key], own[key]["nonzero"]), key
+        assert traced[key].any(), key
+    assert traced["synmem_access_histograms"] == own["synmem_access_histograms"]["nonzero"]
+    links = dict(zip(own["links"], own["link_messages"]["nonzero"].T.tolist()))
+    traced_links = dict(zip(traced["links"], traced["link_messages"].T.tolist()))
+    assert {k: v for k, v in links.items() if any(v)} == traced_links
+    assert any(label[0] == "mesh" for label in traced_links)
+    # The simulator's messages differ from those of the builder's partition.
+    default = _counts(builder, {"spikes": run["spikes"]}, connectivity=connectivity)
+    assert not np.array_equal(default["messages_in"]["nonzero"], traced["messages_in"])
+
+
+def test_the_hand_worked_convolution_runs_under_lava_columns(tmp_path):
+    """The literal counts of the Lava-order case of ``test_hand_worked_convolution``, now
+    read from the message trace of a run that places the output columns on the two cores."""
+    network = _hand_network(tmp_path)
+    bias = np.zeros((1, 4, 4), dtype=np.int64)
+    bias[0, 0, 0] = bias[0, 1, 1] = 30
+    lava = {"name": "lava columns", "layers": [{"order": "lava", "sizes": [16]},
+                                               {"order": "lava", "sizes": [4, 4]}]}
+    arch = load_loihi2_candidate()
+    net, manifest = netx_to_sanafe(network, bias, arch, [1, 2], order="packed", partition=lava)
+    run = sanafe_run(net, manifest, arch, 4, extra_traces=True)
+    traced = message_trace_counts(manifest, run["trace"], message_bits=BITS)
+    every = np.ones((4, 1), dtype=np.int64)
+    assert np.array_equal(traced["synops"], every * [0, 4, 3])
+    assert np.array_equal(traced["messages_out"], every * [3, 0, 0])
+    assert np.array_equal(traced["messages_in"], every * [0, 2, 1])
+    assert traced["synmem_access_histograms"][0] == [{}, {1: 1, 3: 1}, {3: 1}]
 
 
 # ---------------------------------------------------------------------------
