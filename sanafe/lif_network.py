@@ -21,8 +21,14 @@ Conventions
   that column order. Row ``t`` is the state after update ``t``.
 * Where a neuron sits is a separate matter. By default the builder splits each
   layer in reader order. ``netx_to_sanafe`` also accepts a partition, which may
-  order a layer as Lava does (width, height, channels) before it is sliced over
-  the cores (``neuron_positions``). The indices above do not change with it.
+  order a layer in Lava's tensor order (width, height, channels) before it is
+  sliced over the cores (``neuron_positions``). That tensor order is documented
+  (Lava documentation, module ``lava.proc.conv``, orders WHC and NWHC, and
+  ``src/lava/proc/conv/utils.py`` and ``process.py``). The contiguous, uniform
+  division over cores in that order is an assumption. The Loihi 2 toolchain is
+  not open and no public source states it. Pierro et al., arXiv:2602.04717,
+  Section 3.1, make the same assumption and note that the toolchain does not
+  require it. The indices above do not change with it.
 * The input layer is a LIF layer like the others, driven only by its bias, as
   netx builds it (its input port is not connected). ``input_bias`` is written
   into its bias mantissa, with the layer's bias exponent, on both sides. It must
@@ -308,7 +314,10 @@ def neuron_positions(shape, kind, order):
 
     ``reader`` keeps the flattened (channels, height, width) index. ``lava`` gives
     the index in Lava's flattened (width, height, channels) order, (x * H + y) * C
-    + c, for input and convolution layers. A dense layer has one order.
+    + c, for input and convolution layers. That tensor order is documented in the
+    Lava convolution module. That the toolchain slices a layer contiguously in it
+    is an assumption (Pierro et al., arXiv:2602.04717, Section 3.1, make the same
+    one). A dense layer has one order.
     """
     if order not in ORDERS:
         raise ValueError(f"order {order!r} is not one of {ORDERS}")
