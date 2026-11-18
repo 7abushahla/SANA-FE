@@ -239,7 +239,7 @@ a.export { color: #2368a0; }
 .cardtable th, .cardtable td { text-align: left; vertical-align: top; padding: 2px 6px; border-bottom: 1px solid var(--line); white-space: pre-line; overflow-wrap: anywhere; }
 .status { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 0 4px; color: #fff; white-space: nowrap; }
 .status.fitted, .status.documented { background: #16846f; }
-.status.scaled, .status.inherited { background: #c77622; }
+.status.scaled, .status.derived, .status.inherited { background: #c77622; }
 .status.none { background: #8aa0ad; }
 .kv .mw { white-space: nowrap; font-size: 9.5px; color: var(--muted); }
 .platformcard .modified { color: #b8445a; font-weight: 600; margin: 3px 0; }

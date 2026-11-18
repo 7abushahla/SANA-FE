@@ -19,7 +19,7 @@ import sanafe
 from sanafe.loihi2 import (INTEL_BRIEF, LOIHI1_COSTS, RUNTIME_PAPER, architecture_fingerprint,
                            candidate_cost_provenance)
 
-STATUSES = ('fitted', 'scaled', 'inherited', 'documented', 'none', 'planned')
+STATUSES = ('fitted', 'scaled', 'derived', 'inherited', 'documented', 'none', 'planned')
 NOT_HARDWARE = ('Nothing on this card is a hardware measurement: structure and values are '
                 'read from the architecture file SANA-FE simulates.')
 
@@ -139,6 +139,10 @@ def _loihi2_costs():
         entry = base[name]
         if entry['status'] == 'scaled':
             costs[name] = _status('scaled', INTEL_BRIEF, entry['basis'], factor=entry['factor'])
+        elif entry['status'] == 'derived':
+            costs[name] = _status('derived', RUNTIME_PAPER, entry['assumption'],
+                                  seconds=entry['seconds'],
+                                  alternative_seconds=entry['alternative_seconds'])
         else:
             costs[name] = _status('inherited', LOIHI1_COSTS, entry['reason'])
     return costs
@@ -233,8 +237,9 @@ PLATFORMS = (
         costs=_loihi2_costs(), time_word='scaled', energy_word='inherited',
         validation=('No Loihi 2 measurement. Latencies are the fitted Loihi 1 values scaled '
                     'by Intel\'s stated factors (neuron update 2x, synaptic operation 5x, '
-                    'spike generation 10x, chip-wide step floor 200 ns); energies, hop and '
-                    'message costs are the Loihi 1 values. Scaled estimates, not calibrated '
+                    'spike generation 10x, chip-wide step floor 200 ns). The message receive '
+                    'latency is derived from the published Loihi 2 link bandwidth. Energies, '
+                    'hop costs and the message send costs are the Loihi 1 values. Scaled estimates, not calibrated '
                     'predictions.'),
         not_modeled=('graded (integer-payload) spikes', 'programmable neuron microcode',
                      'learning engines', 'the two physical mesh fabrics',

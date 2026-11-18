@@ -256,7 +256,7 @@ drive it.
   model each runs and the attributes that model accepts, a costs table with
   every coefficient's value, status and source, the validation statement,
   the not-modeled list, and references. Status words use the mark colors:
-  `fitted` and `documented` in green, `scaled` and `inherited` in orange,
+  `fitted` and `documented` in green, `scaled`, `derived` and `inherited` in orange,
   `none` in gray. In the inspector every modeled time and energy shows the
   platform's word after its mark, as "R · fitted", "R · scaled",
   "R · inherited", "R · documented" or "R · none". A workload that

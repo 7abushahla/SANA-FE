@@ -13,9 +13,12 @@
 #    spike generation 10x. The barrier table is scaled so that the chip-wide
 #    entry equals the stated "minimum chip-wide time steps under 200ns"
 #    (factor 9 against the fitted 1.8 us).
-#  - Every energy value, the NoC hop costs and the axon message costs are
+#  - latency_message_in is derived: one 32-bit message over the effective Loihi 2
+#    link bandwidth of 9.05e9 bit/s (Timcheck, Pierro and Shrestha, arXiv:2601.10035,
+#    Fig. 4(d)) is 3.536 ns. The decimal reading, 8.42e9 bit/s, gives 3.800 ns.
+#  - Every energy value, the NoC hop costs and the message-out costs are
 #    inherited from Loihi 1 unchanged: no public Loihi 2 datum scales them.
-#  These are scaled estimates, NOT calibrated Loihi 2 measurements.
+#  These are scaled and derived estimates, NOT calibrated Loihi 2 measurements.
 # One effective mesh is modeled; two physical fabrics are not explicit.
 # Integer IF semantics are implemented directly, not via Intel microcode.
 # loihi_if_gated is a second soma unit with the same costs: the gated IF program of
@@ -63,7 +66,7 @@ architecture:
             - name: loihi_in
               attributes:
                 energy_message_in: 0.0e-12  # inherited Loihi 1
-                latency_message_in: 16.0e-9  # inherited Loihi 1
+                latency_message_in: 3.536e-9  # derived from the Loihi 2 link bandwidth (32 bit at 9.05e9 bit/s), not inherited
           soma:
             - name: loihi_lif
               attributes:

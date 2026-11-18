@@ -72,10 +72,10 @@ class TestLoihi2Profile(unittest.TestCase):
                 Allocation(**kwargs)
 
     def test_candidate_costs_derive_from_loihi1_by_the_stated_factors(self):
-        """Every cost is the fitted Loihi 1 value, scaled only where a factor is declared."""
+        """Every cost is the fitted Loihi 1 value, scaled where a factor is declared, and the receive cost is derived."""
         import yaml
         from sanafe.loihi2 import (LATENCY_SCALING, SYNC_SCALING, INHERITED_COSTS,
-                                   candidate_cost_provenance)
+                                   MESSAGE_IN_DERIVATION, candidate_cost_provenance)
         base = yaml.safe_load((files('sanafe.examples') / 'loihi.yaml').read_text())['architecture']
         cand = yaml.safe_load((files('sanafe.examples') / 'loihi2.yaml').read_text())['architecture']
 
@@ -106,6 +106,31 @@ class TestLoihi2Profile(unittest.TestCase):
                 self.assertEqual(value, base_costs[path], path)
                 seen.add(name)
         self.assertEqual(seen, set(LATENCY_SCALING) | set(INHERITED_COSTS))
+        self.assertNotIn('latency_message_in', INHERITED_COSTS)
+        derivation = MESSAGE_IN_DERIVATION
+        message_in = {path: value for path, value in flat(cand) if path[-1] == 'latency_message_in'}
+        self.assertEqual(len(message_in), 1)
+        value = next(iter(message_in.values()))
+        self.assertAlmostEqual(value, derivation['message_bits'] / derivation['link_bits_per_second'],
+                               delta=value * 1e-3)
+        base_in = [v for path, v in flat(base) if path[-1] == 'latency_message_in']
+        self.assertEqual(base_in, [16.0e-9])
+        self.assertNotEqual(value, base_in[0])
+        provenance = candidate_cost_provenance()
+        self.assertEqual({k for k, v in provenance.items() if v['status'] == 'derived'},
+                         {'latency_message_in'})
+        self.assertNotIn('latency_message_in',
+                         {k for k, v in provenance.items() if v['status'] == 'inherited'})
+        entry = provenance['latency_message_in']
+        self.assertAlmostEqual(entry['seconds'], entry['message_bits'] / entry['link_bits_per_second'],
+                               delta=entry['seconds'] * 1e-12)
+        self.assertAlmostEqual(entry['alternative_seconds'],
+                               entry['message_bits'] / entry['alternative_link_bits_per_second'],
+                               delta=entry['alternative_seconds'] * 1e-12)
+        self.assertAlmostEqual(entry['seconds'], value, delta=value * 1e-3)
+        self.assertTrue(entry['assumption'])
+        for mark in ('\u2014', ';'):
+            self.assertNotIn(mark, entry['assumption'])
         base_sync = base['attributes']['latency_sync']
         cand_sync = cand['attributes']['latency_sync']
         self.assertEqual(set(cand_sync), set(base_sync))

@@ -30,12 +30,27 @@ LATENCY_SCALING = {
 SYNC_SCALING = (9.0, 'chip-wide barrier table scaled to the stated 200 ns floor '
                      '(fitted Loihi 1 chip-wide entry 1.8 us / 9)')
 INHERITED_COSTS = ('energy_access_neuron', 'energy_update_neuron', 'energy_spike_out',
-                   'energy_process_spike', 'energy_message_in', 'latency_message_in',
+                   'energy_process_spike', 'energy_message_in',
                    'energy_message_out', 'latency_message_out', 'energy_update',
                    'latency_update', 'energy_north_hop', 'latency_north_hop',
                    'energy_east_hop', 'latency_east_hop', 'energy_south_hop',
                    'latency_south_hop', 'energy_west_hop', 'latency_west_hop',
                    'link_buffer_size')
+
+# Receive cost of the axon_in unit, derived from the effective Loihi 2 link
+# bandwidth that Timcheck, Pierro and Shrestha read from their Fig. 4(d),
+# 1.053 GiB/s (9.05e9 bit/s). The decimal reading, 1.053 GB/s (8.42e9 bit/s),
+# is kept as the alternative. One 32-bit message is taken to occupy a link
+# for message_bits / link_bits_per_second.
+MESSAGE_IN_DERIVATION = {'message_bits': 32, 'link_bits_per_second': 9.05e9,
+                         'alternative_link_bits_per_second': 8.42e9}
+MESSAGE_IN_SOURCE = RUNTIME_PAPER + ' (Timcheck, Pierro and Shrestha, arXiv:2601.10035, Fig. 4(d))'
+MESSAGE_IN_ASSUMPTION = (
+    'The time a destination core spends receiving one message is taken to be the time one '
+    '32-bit message occupies a link at the measured effective bandwidth. This identifies a '
+    'link measurement with a per-message cost of the simulator\'s receive stage. It is an '
+    'assumption and not a measurement of that stage. It was checked on one published '
+    'deployment only.')
 
 
 def candidate_cost_provenance():
@@ -52,7 +67,15 @@ def candidate_cost_provenance():
                         'source': LOIHI1_COSTS,
                         'reason': 'no public Loihi 2 datum scales this coefficient'}
                  for name in INHERITED_COSTS}
-    return {**scaled, **inherited}
+    bits = MESSAGE_IN_DERIVATION['message_bits']
+    rate = MESSAGE_IN_DERIVATION['link_bits_per_second']
+    alternative = MESSAGE_IN_DERIVATION['alternative_link_bits_per_second']
+    derived = {'latency_message_in': {
+        'status': 'derived', 'message_bits': bits, 'link_bits_per_second': rate,
+        'alternative_link_bits_per_second': alternative,
+        'seconds': bits / rate, 'alternative_seconds': bits / alternative,
+        'source': MESSAGE_IN_SOURCE, 'assumption': MESSAGE_IN_ASSUMPTION}}
+    return {**scaled, **inherited, **derived}
 
 
 def _integer(value, name, minimum, maximum=None):
@@ -152,7 +175,8 @@ def candidate_profile():
                           'multiple 8-bit synapses and change workload',
         'timing': 'fitted Loihi 1 latencies scaled by Intel-stated Loihi 2 factors '
                   '(neuron 2x, synapse 5x, spike 10x, barrier to a 200 ns chip-wide '
-                  'floor); hop and message latencies inherited; not calibrated for Loihi 2',
+                  'floor); the message receive latency derived from the Loihi 2 link bandwidth; '
+                  'hop and message-out latencies inherited; not calibrated for Loihi 2',
         'energy': 'inherited Loihi 1 costs; no public Loihi 2 datum; not calibrated for Loihi 2',
         'cost_provenance': candidate_cost_provenance(),
         'provenance': {
