@@ -522,3 +522,11 @@ def test_input_delivery_counts_separate_the_source():
 def test_input_delivery_counts_need_a_message_trace():
     with pytest.raises(ValueError, match="message trace"):
         input_delivery_counts({"message_trace": None}, ["input"])
+
+
+def test_input_delivery_counts_take_a_string_as_one_group_name():
+    chip, _ = make_chip([sources([[4]]), destinations(1)], [("input", 0, "layer_0", 0, 1)])
+    out = run(chip, 2)
+    assert input_delivery_counts(out, "input")["input"]["messages"] == 1
+    assert input_delivery_counts(out, "input")["source_groups"] == ["input"]
+    assert input_delivery_counts(out, ["absent"])["input"]["messages"] == 0

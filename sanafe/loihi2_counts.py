@@ -657,12 +657,13 @@ def input_delivery_counts(result, source_groups):
     and its ``spikes`` (the synapses it reaches) count as its synaptic events. A message
     whose ``src_neuron_group_id`` is in ``source_groups`` counts under ``"input"``,
     with its per-step lists, and every other message under ``"layers"``. A result without
-    a message trace raises ``ValueError``.
+    a message trace raises ``ValueError``. A string is taken as one group name. A
+    name that does not occur gives zeros, as an image of zeros sends nothing.
     """
     trace = result.get("message_trace")
     if trace is None:
         raise ValueError("the run was not logged, so it holds no message trace")
-    names = [str(name) for name in source_groups]
+    names = [source_groups] if isinstance(source_groups, str) else [str(n) for n in source_groups]
     chosen = set(names)
     steps = len(trace)
     in_messages = [0] * steps
