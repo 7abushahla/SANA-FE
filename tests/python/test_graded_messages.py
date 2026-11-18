@@ -14,6 +14,7 @@ import pytest
 
 import sanafe
 from sanafe.loihi2 import load_loihi2_candidate
+from sanafe.loihi2_counts import input_delivery_counts
 
 # A destination whose threshold is out of reach, so its potential shows every input it sums.
 DST = dict(threshold=8388606, initial_voltage=0, window_start=0)
@@ -489,3 +490,35 @@ def test_a_source_does_not_take_hold_input():
     source = ("input", "loihi_if_gated", [dict(graded_values=[5], hold_input=0)], [(0, 0)])
     chip, _ = make_chip([source, destinations(1)], [("input", 0, "layer_0", 0, 3)])
     assert run(chip, 3)["potential_trace"] == [[0], [15], [15]]
+
+
+def test_input_delivery_counts_separate_the_source():
+    # The source in0 sends 4 to n0 on (0, 1) and to n2 on (1, 0), so two messages and two
+    # synaptic events. in1 sends 0 and so nothing. in2 sends -2 to n2 and n3, which share the
+    # core (1, 0), so one message and two synaptic events. At the next update n0 receives 4
+    # and n2 receives 4 - 2 = 2, so both reach their threshold of 2 inside the window and
+    # each sends one message with one synaptic event to the output neuron. n1 and n3 do not.
+    hidden = dict(threshold=2, initial_voltage=0, window_start=1, window_stop=2)
+    groups = [sources([[4], [0], [-2]]),
+              ("layer_0", "loihi_if_gated", [dict(hidden) for _ in range(4)],
+               [(0, 1), (0, 1), (1, 0), (1, 0)]),
+              ("layer_1", "loihi_if_gated", [dict(DST)], [(2, 0)])]
+    edges = [("input", 0, "layer_0", 0, 1), ("input", 0, "layer_0", 2, 1),
+             ("input", 1, "layer_0", 1, 1), ("input", 2, "layer_0", 2, 1),
+             ("input", 2, "layer_0", 3, 1), ("layer_0", 0, "layer_1", 0, 1),
+             ("layer_0", 2, "layer_1", 0, 1)]
+    chip, _ = make_chip(groups, edges)
+    out = run(chip, 3)
+    counts = input_delivery_counts(out, ["input"])
+    assert counts["source_groups"] == ["input"] and counts["steps"] == 3
+    assert counts["input"] == {"messages": 3, "synaptic_events": 4,
+                               "messages_per_step": [3, 0, 0],
+                               "synaptic_events_per_step": [4, 0, 0]}
+    assert counts["layers"] == {"messages": 2, "synaptic_events": 2}
+    # Naming no source group counts every message under the layers.
+    assert input_delivery_counts(out, [])["layers"] == {"messages": 5, "synaptic_events": 6}
+
+
+def test_input_delivery_counts_need_a_message_trace():
+    with pytest.raises(ValueError, match="message trace"):
+        input_delivery_counts({"message_trace": None}, ["input"])

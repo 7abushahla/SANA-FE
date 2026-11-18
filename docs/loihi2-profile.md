@@ -6,7 +6,7 @@
 
 ## Gated soma unit (`loihi_if_gated`)
 
-Each core lists a second soma unit, `loihi_if_gated` (model `integrate_fire_int24_gated`, numerical profile `qcfs-if-int24-gated-v1`), with the same costs as `loihi_lif`. A neuron selects it with `soma_hw_name`. It integrates every arriving input on every update, adds `bias_at_start` once at `window_start`, and compares its threshold (`>=`, subtractive reset) only on updates `window_start + j * stride` before `window_stop`, adding `bias_per_check` at each. Its input current per update is signed 24-bit, not the 16 bits of `integrate_fire_int24`, because a convolution's fan-in in one step can exceed 16 bits; deployed Loihi 2 networks accumulate in 24 bits (Brehove et al., ICONS 2026, Sec. 3.1; Abreu et al., arXiv:2503.18002, Sec. 3). The voltage saturates at signed 24 bits, as in the other integer soma, without a signal; a comparison with an unbounded reference detects it as a state mismatch. The program is realizable in the documented Loihi 2 microcode classes but is a modeled program, not a verified Intel one.
+Each core lists a second soma unit, `loihi_if_gated` (model `integrate_fire_int24_gated`, numerical profile `qcfs-if-int24-gated-v1`), with the same costs as `loihi_lif`. A neuron selects it with `soma_hw_name`. It integrates every arriving input on every update, adds `bias_at_start` once at `window_start`, and compares its threshold (`>=`, subtractive reset) only on updates `window_start + j * stride` before `window_stop`, adding `bias_per_check` at each. Its input current per update is signed 24-bit, not the 16 bits of `integrate_fire_int24`, because a convolution's fan-in in one step can exceed 16 bits; deployed Loihi 2 networks accumulate in 24 bits (Brehove et al., ICONS 2026, Sec. 3.1; Abreu et al., arXiv:2503.18002, Sec. 3). The voltage saturates at signed 24 bits, as in the other integer soma, without a signal unless the neuron sets `strict` (see [Graded messages](#graded-messages-the-graded-source-and-the-held-current)); a comparison with an unbounded reference detects it as a state mismatch. The program is realizable in the documented Loihi 2 microcode classes but is a modeled program, not a verified Intel one.
 
 ## LIF soma unit (`loihi_cuba_lif`)
 
@@ -43,6 +43,64 @@ Lava therefore integrates an activation of 40,000 exactly, with no 16-bit limit.
 The single wrap keeps the current in (-2^23, 2^23] only while the sum stays in (-3 * 2^23, 3 * 2^23]. The decay keeps at most 4095/4096 of the current, because Lava adds a fixed offset of 1 to `du`, so the decayed current lies in [-8,386,559, 8,386,560]. The wrap is therefore a 24-bit wrap from every reachable current and every decay exactly when |a| is at most 2^18 + 32 = 262,176. The bound is tight on both sides. From a current of 8,388,608 with `du = 0`, an input of 262,176 holds the current at 8,388,608, while 262,177 moves it to 8,388,672 and then 8,388,735, outside 24 bits. From -8,388,544, an input of -262,176 holds it at -8,388,544, while -262,177 moves it to -8,388,608 and then -8,388,672. Past the bound, a sustained input drives Lava's current away from 24 bits, and from 2^25 the 32-bit shift itself overflows.
 
 The neuron accepts every activation in [-262,176, 262,176], whether external (`currents`), synaptic, or their sum in one update, and reproduces Lava's wrap over that whole range. It refuses anything beyond it with a `ValueError`. The comparison with Lava covers the range with random activations drawn over all of it, together with its two ends, ±2^17 and ±40,000. A source that sent 16-bit data to Lava's LIF would overflow in its 6-bit shift for |a| of 512 or more. Lava's own fixed-point `Dense` and `RingBuffer` send 32-bit data, so this does not arise in a Lava network.
+
+## Graded messages, the graded source and the held current
+
+A message may carry a signed 32-bit value. The synapse stage multiplies the stored weight by it, and the accumulator of the destination core sums the products of a step. The product of a signed 16-bit weight and a 32-bit value is below 2^47, so the product and the sum are exact. The accumulator stops when a sum leaves signed 32 bits, with an `OverflowError` that names no group, and it refuses a single product beyond that range with a `ValueError`. A binary message carries no value and takes the path it took before graded messages existed. The value is not written to the message trace, so the `spikes` field of a message still counts the synapses it reaches.
+
+Three attributes of the soft-reset IF neuron of ANN-to-SNN conversion, as `integrate_fire_int24_gated` implements it, use the value.
+
+| Attribute | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `graded_values` | list of signed 32-bit integers | absent | Makes the neuron a graded source. Entry `u` is the value it sends at its update `u`, and it sends zero after the last entry. |
+| `hold_input` | bool or 0/1 | false | Adds the input of each update to a current register that drives the membrane at every update before `window_stop`. |
+| `strict` | bool or 0/1 | false | Stops the run when an input, the held current or the membrane leaves signed 24 bits, and records the extremes of the input and the membrane. |
+
+The three are attributes of the existing unit, so `arch/loihi2.yaml`, `sanafe/examples/loihi2.yaml`, the candidate profile and the architecture fingerprint are unchanged, and every record keeps its profile. A graded source costs what any neuron of the gated unit costs.
+
+### Timing and fan-out
+
+A value sent at timestep t reaches the membrane at t + 1, as every spike does. A zero value sends nothing. No message and no synaptic event is produced, and the destination sees no input. A graded spike produces one message for each destination core that stores at least one of its synapses. Every one of them carries the value, and each synapse it reaches is one synaptic event. The messages of an image may therefore exceed its number of nonzero values.
+
+### The graded source
+
+A graded source keeps its own cursor over `graded_values` and integrates nothing. It ignores its threshold, window, biases and currents, and its voltage stays at the initial voltage. It takes no synaptic input, and a nonzero input raises a `ValueError` that names the graded source. It does not take `hold_input`, and setting the attribute on a source raises a `ValueError`. An empty list makes a source that sends nothing. A reset restarts the cursor. A source in strict mode is accepted and reports no trace.
+
+Any soma model that returns a current together with a fired status now sends that current as the value of its spike, where it was ignored before. The value must be a nonzero integer within signed 32 bits. No soma model of the repository other than the graded source returns one. A message gained a member, so a plugin must be built against the headers of the fork it is loaded into.
+
+### The held current
+
+With `hold_input` the neuron adds the input of an update to a register, and the register drives the membrane at every update before `window_stop`. This includes the updates before `window_start`. The bias at the start of the window and the biases of the checks are added as before, and the threshold is compared only at the checks. From `window_stop` on the register is neither updated nor added, and input that arrives then is added to the membrane once. The register is signed 24 bits and saturates there unless the neuron is strict. A reset clears it. The neuron reports it as the trace `held_current`, its value after each update.
+
+A value sent once and held equals the same value sent at every timestep only when it arrives at `window_start`. A value sent at timestep t arrives at t + 1, so the source sends from one step before the window starts. A value that arrives earlier also drives the updates before the window.
+
+### The strict mode
+
+A strict neuron checks three quantities of each update against signed 24 bits. These are the input (synaptic plus external), the held current when the neuron holds its input, and the membrane after the input and the biases are added and before the threshold is subtracted. Only the total of an update is checked, and no partial sum of it. The first quantity outside the range stops the run with an `OverflowError` whose message begins with the group and the neuron and holds `strict mode:`, the quantity and its value. The accumulator raises its own `OverflowError` above 32 bits, without a group name, so a caller that wants strict stops matches on `strict mode:`. After a stop the simulation is discarded or reset before reuse.
+
+A strict neuron that is not a graded source records four extremes since its last reset, `input_min`, `input_max`, `voltage_min` and `voltage_max`. The input and the membrane of every update that completes are recorded, including updates in which no message arrived, so the smallest input of a neuron that receives only positive input reads 0. The initial voltage is not recorded on its own, and an update that stops records nothing. Each trace comes back in the `neuron_trace` of a run as one flat list per step, ordered by group name and then by neuron, and holds the neurons that are strict and not sources. The held current is reported the same way for the neurons that hold their input.
+
+### Where the soma may run
+
+A graded source, a strict neuron and a neuron with `hold_input` are each refused when the time-step buffer of their core is inside the soma unit or before the axon-out unit, because the soma then runs on the message path. The first step of the run raises a `ValueError` that names the group and the neuron. The supported positions are before the dendrite unit, inside it, and before the soma unit, which is the position of the candidate profile.
+
+With the buffer inside the dendrite unit, the integer accumulator of the candidate delivers no input to the soma, for binary and graded messages alike. The soma reads the buffer only when it sits before the dendrite unit or before the soma unit, so what the dendrite stores is never read. This holds without graded messages, and a short run on such an architecture shows every potential at zero.
+
+### Counting the input delivery
+
+`sanafe.loihi2_counts.input_delivery_counts(result, source_groups)` counts the messages and synaptic events of the delivery of an image apart from the spiking layers. Every message of the message trace that is not a placeholder counts once, and its `spikes` count as synaptic events. A message whose source group is in `source_groups` counts under `input`, with one entry per step, and every other message under `layers`. A result without a message trace raises a `ValueError`.
+
+### The cost assumption
+
+No cost depends on the width of a value. A graded message is charged as a message and each of its synaptic events as a synaptic event, because no published cost separates them. The receive latency of the profile was derived from a 32-bit message, which holds any value a graded message carries here. Every time or energy of a graded network is therefore stated with the assumption that a graded message costs what a message costs.
+
+### An ordering limit of the simulator
+
+A neuron's messages to cores on different tiles are emitted in an order that is not reproducible from one run to the next. The destination cores of a neuron are held in a set ordered by memory address (`sim_get_post_synaptic_cores` in `src/chip.cpp`). The message identifiers, some delays and timestamps, and the modeled time vary slightly between runs of a network that spans tiles. Spikes, voltages, energies and counts do not. This holds for binary and graded networks alike. A test pins a binary network inside one tile on every field of the run. A second pins the same network across tiles on every reproducible field.
+
+### Checks
+
+`tests/python/test_graded_messages.py` checks the product, signs, the zero value, the fan-out to two cores, the source, the refused buffer positions, the strict stops and extremes, the held current at both edges of its window, the equality of the two deliveries, the two binary pins above and `input_delivery_counts`. `tests/python/test_graded_lava.py` runs Lava's fixed-point `Dense` and `Conv` with message bits set, each with a binary control run that differs, and Lava's `LIF` with `du = -1`, and requires every voltage and the held current to equal those of the simulator. It skips when the Lava fork that holds `lava.proc.qcfs` is not importable. The runs used the local Lava checkout at `74840cb8`, the output of `git -C Lava rev-parse --short HEAD`.
 
 ## Cost derivation
 
@@ -92,7 +150,7 @@ analytical topology. These descriptions address different architectural levels.
 | Neuron execution | Programmable neuron microcode [1]. | Direct integer IF implementation, without an instruction interpreter. |
 | Learning | Programmable learning [1]. | Not implemented in this profile. |
 | Management CPUs | Up to six embedded processors [1]. Intel also describes x86 and RISC-V management cores [4]. | Not modeled. |
-| “32-bit instruction set” | Do not use this as a description of the neurocores. Management CPU ISA, neuron microcode, and the documented 32-bit graded spike payload are separate properties [1], [4]. | Binary output events; no management CPU or neuron ISA emulation. |
+| “32-bit instruction set” | Do not use this as a description of the neurocores. Management CPU ISA, neuron microcode, and the documented 32-bit graded spike payload are separate properties [1], [4]. | Binary output events, and the graded messages of the graded source; no management CPU or neuron ISA emulation. |
 
 ## Resource validation
 
@@ -123,7 +181,7 @@ A successful report means **model-feasible under the assumed layout**. It does n
 
 [4] A. Rao Mangalore, Intel Labs, Loihi presentation, slide “The Latest Loihi chip: Loihi 2.” [Intel-authored slides hosted by TUM](https://www.tum-venture-labs.de/media/images/Labs/Quantum/Events/HWfAI_presentations/HWfAI_Intel_Labs_Ashish_Rao_Mangalore.pdf). The slide identifies six microprocessor cores and asynchronous x86 and RISC-V. Processor ISA claims should identify the hardware revision rather than treating every Loihi 2 revision as all-x86.
 
-Graded events, instruction execution, packed synaptic-memory traffic, detailed multicast, physical input/output transfer, and Loihi 2 cost calibration are outside this profile. Using the candidate with SANA-FE's scheduler does not execute Intel compiler output or Intel hardware.
+A cost that depends on the width of a graded value, instruction execution, packed synaptic-memory traffic, detailed multicast, physical input/output transfer, and Loihi 2 cost calibration are outside this profile. Using the candidate with SANA-FE's scheduler does not execute Intel compiler output or Intel hardware.
 
 ## Integer Lava export
 
@@ -139,7 +197,7 @@ An opt-in zero-based `[valid_start, valid_stop)` window gates each fixed IF laye
 
 `Architecture.configuration()` provides a complete configuration snapshot for provenance. The candidate adapter verifies its fingerprint, including topology, buffering, pipeline parameters, synchronization, and costs, against the loader's configuration. Modified architectures are rejected rather than receiving incorrect provenance. The manifest records the fingerprint, numerical model classes, effective weights, state, currents, placement, and actual allocation assumptions. Save the configuration snapshot alongside experiment results.
 
-The integer pipeline carries bounded integers through SANA-FE's existing double-valued pipeline interface. All transported signed32 values are exactly representable. Neuron integration uses widened integer arithmetic, with explicit clipping at the voltage boundary. This does not add graded emitted messages.
+The integer pipeline carries bounded integers through SANA-FE's existing double-valued pipeline interface. All transported signed32 values are exactly representable. Neuron integration uses widened integer arithmetic, with explicit clipping at the voltage boundary. A binary message carries no value. Graded messages are described in the section on graded messages above.
 
 Range errors in core processing are captured inside worker loops and rethrown after synchronization. After an execution error, discard or reset the simulation before reuse. The implementation has been checked on a macOS build without OpenMP; an OpenMP-enabled Linux runtime remains a separate portability check.
 

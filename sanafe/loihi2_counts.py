@@ -8,8 +8,9 @@ cores. ``core_step_counts`` takes the counts from the spikes of every step and
 the expanded connectivity of the network, under a placement, with the meaning
 each count has in ``analyze_binary_chain``. ``workload_from_counts`` turns them
 into the workload that ``max_affine_runtime`` consumes. ``message_trace_counts``
-reads the same quantities from a message trace, for comparison. Nothing here
-computes a time or holds a rate.
+reads the same quantities from a message trace, for comparison.
+``input_delivery_counts`` counts the delivery of an image apart from the spiking
+layers. Nothing here computes a time or holds a rate.
 
 The runtime model is Eq. 1 of Timcheck, Pierro and Shrestha (arXiv:2601.10035v2,
 ledger record ``timcheck2026runtime-v2``). Per step it takes the maximum of the
@@ -138,6 +139,18 @@ Directed link bits, ``link_messages`` and ``link_bits``.
 Spikes, ``spikes_out``.
     The spikes emitted by the neurons of a core in the step. No counterpart in
     ``analyze_binary_chain``. They serve the per-layer tables.
+
+Input delivery, ``input_delivery_counts``.
+    The delivery of an image is counted from the messages of the named source
+    groups, once per image, and never inside the synaptic operations of the
+    spiking layers. A graded source sends one message per nonzero value and
+    destination core, and each synapse the message reaches is one synaptic event.
+    A zero value sends nothing, so the messages of an image may exceed its number
+    of nonzero values, since a value that reaches several cores is sent once to
+    each. The count reads the message trace and holds no rate, so the cost of a
+    delivery is the cost of the same number of messages and synaptic events of
+    the layers. The trace holds one row per step, so a delivery over several
+    steps shows its schedule in the per-step lists.
 
 Partition
 ---------
@@ -631,6 +644,45 @@ def message_trace_counts(manifest, result, *, message_bits):
     return {"cores": cores, "messages_out": out_, "messages_in": in_, "synops": syn,
             "synmem_access_histograms": histograms, "links": links,
             "link_messages": link_messages, "link_bits": link_messages * int(message_bits)}
+
+
+# ---------------------------------------------------------------------------
+# The delivery of the input, apart from the spiking layers
+
+
+def input_delivery_counts(result, source_groups):
+    """The messages and synaptic events of the input delivery, apart from the spiking layers.
+
+    Every message of ``result["message_trace"]`` that is not a placeholder counts once,
+    and its ``spikes`` (the synapses it reaches) count as its synaptic events. A message
+    whose ``src_neuron_group_id`` is in ``source_groups`` counts under ``"input"``,
+    with its per-step lists, and every other message under ``"layers"``. A result without
+    a message trace raises ``ValueError``.
+    """
+    trace = result.get("message_trace")
+    if trace is None:
+        raise ValueError("the run was not logged, so it holds no message trace")
+    names = [str(name) for name in source_groups]
+    chosen = set(names)
+    steps = len(trace)
+    in_messages = [0] * steps
+    in_events = [0] * steps
+    layer_messages = layer_events = 0
+    for t, row in enumerate(trace):
+        for m in row:
+            if m["placeholder"]:
+                continue
+            events = int(m["spikes"])
+            if m["src_neuron_group_id"] in chosen:
+                in_messages[t] += 1
+                in_events[t] += events
+            else:
+                layer_messages += 1
+                layer_events += events
+    return {"source_groups": names, "steps": steps,
+            "input": {"messages": sum(in_messages), "synaptic_events": sum(in_events),
+                      "messages_per_step": in_messages, "synaptic_events_per_step": in_events},
+            "layers": {"messages": layer_messages, "synaptic_events": layer_events}}
 
 
 # ---------------------------------------------------------------------------
