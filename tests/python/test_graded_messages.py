@@ -65,7 +65,7 @@ def destinations(count, places=None):
     return ("layer_0", "loihi_if_gated", [dict(DST) for _ in range(count)], places)
 
 
-def binary_network(third, *, strict=False):
+def binary_network(third, *, strict=False, neuron_trace=False):
     """A binary network of three layers on the candidate, run for six steps.
 
     ``input``: four gated neurons on (0, 0), neurons 0 and 2 driven once by a current of 2.
@@ -91,7 +91,7 @@ def binary_network(third, *, strict=False):
     edges = [("input", i, "layer_0", j, w0[i, j]) for i in range(4) for j in range(3)]
     edges += [("layer_0", i, "layer_1", j, w1[i, j]) for i in range(3) for j in range(2)]
     chip, _ = make_chip(groups, edges)
-    return run(chip, 6)
+    return run(chip, 6, neuron_trace=neuron_trace)
 
 
 def spikes_of(out):
@@ -283,6 +283,16 @@ def candidate_with_buffer(position, inside):
         return sanafe.load_arch(str(path))
 
 
+# A neuron refused where its soma runs on the message path, with the start of its message.
+# A strict neuron there would stop on the message path, outside the step that names its layer.
+REFUSED_ON_THE_MESSAGE_PATH = {
+    "source": (dict(graded_values=[5, 7]), "A graded source requires"),
+    "strict": (dict(threshold=2, initial_voltage=0, window_start=0, currents=[2, 2, 2],
+                    strict=True), "A strict neuron requires"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(REFUSED_ON_THE_MESSAGE_PATH))
 @pytest.mark.parametrize("position, inside, expected, feeder", [
     # Before the axon-out unit the soma runs only when a message arrives, so a source
     # without input would never send.
@@ -291,11 +301,12 @@ def candidate_with_buffer(position, inside):
     # message of zero weight would make it skip a value.
     ("soma", True, 3, True),
 ])
-def test_a_source_is_refused_where_its_soma_runs_on_the_message_path(
-        position, inside, expected, feeder):
+def test_a_source_or_a_strict_neuron_is_refused_where_its_soma_runs_on_the_message_path(
+        position, inside, expected, feeder, kind):
+    attrs, message = REFUSED_ON_THE_MESSAGE_PATH[kind]
     arch = candidate_with_buffer(position, inside)
     assert int(arch.tiles[0].cores[0].buffer_position) == expected
-    groups = [("input", "loihi_if_gated", [dict(graded_values=[5, 7])], [(0, 2)]),
+    groups = [("input", "loihi_if_gated", [dict(attrs)], [(0, 2)]),
               destinations(1)]
     edges = [("input", 0, "layer_0", 0, 3)]
     if feeder:
@@ -304,7 +315,7 @@ def test_a_source_is_refused_where_its_soma_runs_on_the_message_path(
                              currents=[2, 2, 2])], [(0, 0)]))
         edges.append(("feeder", 0, "input", 0, 0))
     chip, _ = make_chip(groups, edges, arch=arch)
-    with pytest.raises(ValueError, match=r"input\[0\]: A graded source requires"):
+    with pytest.raises(ValueError, match=r"input\[0\]: " + message):
         run(chip, 3)
 
 
@@ -370,6 +381,12 @@ def test_a_neuron_without_strict_reports_no_trace():
     assert run(chip, 2, neuron_trace=True)["neuron_trace"] == {}
 
 
+def test_a_strict_source_reports_no_trace():
+    source = ("input", "loihi_if_gated", [dict(graded_values=[4], strict=True)], [(0, 0)])
+    chip, _ = make_chip([source, destinations(1)], [("input", 0, "layer_0", 0, 3)])
+    assert run(chip, 2, neuron_trace=True)["neuron_trace"] == {}
+
+
 def test_strict_inside_24_bits_changes_nothing():
     plain = binary_network((0, 2))
     strict = binary_network((0, 2), strict=True)
@@ -377,3 +394,9 @@ def test_strict_inside_24_bits_changes_nothing():
     assert spikes_of(strict) == spikes_of(plain)
     # Strict mode adds no cost, so the whole run still matches the pinned digest.
     assert digest_of(full_payload(strict)) == BINARY_DIGEST
+    # Strict mode was on: each of the three layer_0 neurons reports its four extremes at
+    # every step, and no other neuron reports any.
+    traced = binary_network((0, 2), strict=True, neuron_trace=True)
+    assert set(traced["neuron_trace"]) == set(EXTREMES)
+    for name in EXTREMES:
+        assert [len(row) for row in traced["neuron_trace"][name]] == [3] * 6, name

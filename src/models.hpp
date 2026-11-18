@@ -434,6 +434,11 @@ public:
     {
         return address < states.size() && states.at(address).graded_source;
     }
+    // Whether the neuron at this address is in strict mode. Not virtual, for the same reason.
+    bool is_strict(const size_t address) const
+    {
+        return address < states.size() && states.at(address).strict;
+    }
     static inline const std::unordered_map<std::string, std::string> attributes{
         {"threshold", "(int) Positive even signed 24-bit threshold; comparison uses >=."},
         {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
@@ -474,8 +479,8 @@ private:
         bool extremes_recorded{false};
         int32_t input_min{0};
         int32_t input_max{0};
-        int32_t voltage_min{0};
-        int32_t voltage_max{0};
+        int32_t membrane_min{0};
+        int32_t membrane_max{0};
     };
     std::vector<State> states;
 };

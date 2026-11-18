@@ -386,15 +386,15 @@ sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
         if (!state.extremes_recorded)
         {
             state.input_min = state.input_max = in;
-            state.voltage_min = state.voltage_max = mem;
+            state.membrane_min = state.membrane_max = mem;
             state.extremes_recorded = true;
         }
         else
         {
             state.input_min = std::min(state.input_min, in);
             state.input_max = std::max(state.input_max, in);
-            state.voltage_min = std::min(state.voltage_min, mem);
-            state.voltage_max = std::max(state.voltage_max, mem);
+            state.membrane_min = std::min(state.membrane_min, mem);
+            state.membrane_max = std::max(state.membrane_max, mem);
         }
     }
     state.voltage = static_cast<int32_t>(std::clamp(v, voltage_min, voltage_max));
@@ -417,8 +417,8 @@ void sanafe::GatedInt24IfModel::reset()
         state.extremes_recorded = false;
         state.input_min = 0;
         state.input_max = 0;
-        state.voltage_min = 0;
-        state.voltage_max = 0;
+        state.membrane_min = 0;
+        state.membrane_max = 0;
     }
 }
 
@@ -436,8 +436,8 @@ std::map<std::string, double> sanafe::GatedInt24IfModel::get_neuron_traces(
     }
     return {{"input_min", static_cast<double>(state.input_min)},
             {"input_max", static_cast<double>(state.input_max)},
-            {"voltage_min", static_cast<double>(state.voltage_min)},
-            {"voltage_max", static_cast<double>(state.voltage_max)}};
+            {"voltage_min", static_cast<double>(state.membrane_min)},
+            {"voltage_max", static_cast<double>(state.membrane_max)}};
 }
 
 namespace
