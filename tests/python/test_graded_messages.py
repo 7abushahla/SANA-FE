@@ -285,10 +285,13 @@ def candidate_with_buffer(position, inside):
 
 # A neuron refused where its soma runs on the message path, with the start of its message.
 # A strict neuron there would stop on the message path, outside the step that names its layer.
+# A held input there would be added to its register once per arriving message.
 REFUSED_ON_THE_MESSAGE_PATH = {
     "source": (dict(graded_values=[5, 7]), "A graded source requires"),
     "strict": (dict(threshold=2, initial_voltage=0, window_start=0, currents=[2, 2, 2],
                     strict=True), "A strict neuron requires"),
+    "hold": (dict(threshold=2, initial_voltage=0, window_start=0, currents=[2, 2, 2],
+                  hold_input=True), "A neuron with hold_input requires"),
 }
 
 
@@ -301,7 +304,7 @@ REFUSED_ON_THE_MESSAGE_PATH = {
     # message of zero weight would make it skip a value.
     ("soma", True, 3, True),
 ])
-def test_a_source_or_a_strict_neuron_is_refused_where_its_soma_runs_on_the_message_path(
+def test_a_source_a_strict_or_a_holding_neuron_is_refused_where_its_soma_runs_on_the_message_path(
         position, inside, expected, feeder, kind):
     attrs, message = REFUSED_ON_THE_MESSAGE_PATH[kind]
     arch = candidate_with_buffer(position, inside)
@@ -436,6 +439,19 @@ def test_input_after_the_window_bypasses_the_held_current():
     _, out = held_run([5, 0, 0, 0, 0, 2], HOLD, 8)
     assert out["potential_trace"] == [[0], [15], [30], [45], [45], [45], [51], [51]]
     assert out["neuron_trace"]["held_current"][-1] == [15]
+
+
+def test_values_arriving_at_the_two_edges_of_the_window():
+    # Each value reaches the destination one update after it is sent, as an input of 3 times
+    # the value. The 5 sent at update 2 arrives at window_start 3 as 15 and is held from there.
+    # The 1 sent at update 5 arrives at update 6, the last of the window, and the register
+    # becomes 18. The 2 sent at update 6 arrives at window_stop 7 as 6, which leaves the
+    # register at 18 and is added once.
+    destination = dict(DST, window_start=3, window_stop=7, hold_input=1, strict=1)
+    _, out = held_run([0, 0, 5, 0, 0, 1, 2], destination, 10)
+    assert out["potential_trace"] == [[0], [0], [0], [15], [30], [45], [63], [69], [69], [69]]
+    assert out["neuron_trace"]["held_current"] == [[0], [0], [0], [15], [15], [15], [18], [18],
+                                                   [18], [18]]
 
 
 def test_the_two_deliveries_give_identical_membranes():

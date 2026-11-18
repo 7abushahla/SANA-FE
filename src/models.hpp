@@ -440,6 +440,12 @@ public:
     {
         return address < states.size() && states.at(address).strict;
     }
+    // Whether the neuron at this address holds its input current. Not virtual, for the same
+    // reason.
+    bool holds_input(const size_t address) const
+    {
+        return address < states.size() && states.at(address).hold_input;
+    }
     static inline const std::unordered_map<std::string, std::string> attributes{
         {"threshold", "(int) Positive even signed 24-bit threshold; comparison uses >=."},
         {"initial_voltage", "(int) Signed 24-bit initial voltage, restored on reset."},
@@ -487,6 +493,9 @@ private:
         // which then drives the membrane in place of the input. From window_stop on the
         // register is left as it is and the input drives the membrane directly. The register
         // saturates at signed 24 bits, or stops the run in strict mode, and reset clears it.
+        // A value held from its arrival also drives the updates before window_start, so the
+        // held delivery equals the delivery at every update only for a value that arrives at
+        // window_start.
         bool hold_input{false};
         int32_t held_current{0};
     };

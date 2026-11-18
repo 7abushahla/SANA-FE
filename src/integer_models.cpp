@@ -296,7 +296,7 @@ void sanafe::GatedInt24IfModel::set_attribute_neuron(const size_t address,
                 ? std::get<bool>(param.value)
                 : int32_attr(0, 1, "IF strict flag (bool or 0/1)") != 0;
     }
-    // Checked after every attribute, so the refusal holds in either order of setting.
+    // Checked after every attribute.
     if (state.graded_source && state.hold_input)
     {
         throw std::invalid_argument("A graded source does not take hold_input");

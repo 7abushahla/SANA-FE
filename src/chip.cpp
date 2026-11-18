@@ -788,9 +788,10 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
     //  soma runs on the message path. There a graded source would run twice
     //  per step, or only when a message reaches it, and its value would not
     //  reach its messages. A strict neuron there would stop on the message
-    //  path, where its group and offset are not named. Every neuron passes
-    //  here in each step before any message is processed, so both are refused
-    //  before the soma of either runs.
+    //  path, where its group and offset are not named. A neuron with
+    //  hold_input there would add to its register once per arriving message.
+    //  Every neuron passes here in each step before any message is processed,
+    //  so all three are refused before the soma of any runs.
     if (c.pipeline_config.buffer_position >= buffer_inside_soma_unit)
     {
         const auto *gated = dynamic_cast<const GatedInt24IfModel *>(n.soma_hw);
@@ -808,6 +809,14 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
                     std::to_string(n.offset) +
                     "]: A strict neuron requires the time-step buffer before "
                     "the dendrite unit, inside it or before the soma unit");
+        }
+        if ((gated != nullptr) &&
+                gated->holds_input(n.mapped_soma_hw_address))
+        {
+            throw std::invalid_argument(n.parent_group_name + "[" +
+                    std::to_string(n.offset) +
+                    "]: A neuron with hold_input requires the time-step buffer "
+                    "before the dendrite unit, inside it or before the soma unit");
         }
     }
 
