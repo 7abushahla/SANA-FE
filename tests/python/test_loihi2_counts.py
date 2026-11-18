@@ -692,11 +692,16 @@ def test_the_manifest_of_a_dense_lif_chain_is_refused_by_both_count_functions():
         message_trace_counts(manifest, traces, message_bits=BITS)
 
 
-@pytest.mark.parametrize("name", ["weights_per_read", "message_bits"])
-@pytest.mark.parametrize("bad", [4.9, True, "8", 0, -1, [4.9], [True], ["8"]])
+_BAD_SCALARS = [4.9, True, "8", 0, -1]
+# weights_per_read may also be given per layer, message_bits is a single value.
+_BAD_COUNT_ARGUMENTS = (
+    [("weights_per_read", bad) for bad in _BAD_SCALARS + [[4.9], [True], ["8"]]]
+    + [("message_bits", bad) for bad in _BAD_SCALARS]
+)
+
+
+@pytest.mark.parametrize("name,bad", _BAD_COUNT_ARGUMENTS)
 def test_weights_per_read_and_message_bits_must_be_positive_integers(name, bad):
-    if name == "message_bits" and isinstance(bad, list):
-        pytest.skip("message_bits is a single value")
     kwargs = {"weights_per_read": 4, "message_bits": 8}
     kwargs[name] = bad
     traces = {"spikes": [np.zeros((3, 2)), np.zeros((3, 2))], "trace": None}
