@@ -24,11 +24,16 @@ Conventions
   order a layer in Lava's tensor order (width, height, channels) before it is
   sliced over the cores (``neuron_positions``). That tensor order is documented
   (Lava documentation, module ``lava.proc.conv``, orders WHC and NWHC, and
-  ``src/lava/proc/conv/utils.py`` and ``process.py``). The contiguous, uniform
-  division over cores in that order is an assumption. The Loihi 2 toolchain is
-  not open and no public source states it. Pierro et al., arXiv:2602.04717,
-  Section 3.1, make the same assumption and note that the toolchain does not
-  require it. The indices above do not change with it.
+  ``src/lava/proc/conv/utils.py`` and ``process.py``). The compiler log of the
+  two PilotNet benchmark notebooks of lava-dl (the table "Per core distribution")
+  shows each convolution cut along its width in whole columns, with the full
+  height and every channel on a core and the remainder on the last core, and a
+  power of two of columns in every printed row. No document states the rule
+  that picks the number of columns and the Loihi 2 toolchain is not open, so
+  that a layer of another network is cut this way is an assumption. Pierro et
+  al., arXiv:2602.04717, Section 3.1, adopt a uniform division in the natural
+  order of the neuron dimensions as a simplifying assumption. The indices above
+  do not change with it.
 * The input layer is a LIF layer like the others, driven only by its bias, as
   netx builds it (its input port is not connected). ``input_bias`` is written
   into its bias mantissa, with the layer's bias exponent, on both sides. It must
@@ -315,9 +320,11 @@ def neuron_positions(shape, kind, order):
     ``reader`` keeps the flattened (channels, height, width) index. ``lava`` gives
     the index in Lava's flattened (width, height, channels) order, (x * H + y) * C
     + c, for input and convolution layers. That tensor order is documented in the
-    Lava convolution module. That the toolchain slices a layer contiguously in it
-    is an assumption (Pierro et al., arXiv:2602.04717, Section 3.1, make the same
-    one). A dense layer has one order.
+    Lava convolution module. The compiler log of the PilotNet benchmark notebooks
+    of lava-dl shows each convolution cut in this order into whole columns, with
+    the remainder on the last core. No document states the rule that picks the
+    number of columns and the toolchain is not open, so that another network is
+    cut this way is an assumption. A dense layer has one order.
     """
     if order not in ORDERS:
         raise ValueError(f"order {order!r} is not one of {ORDERS}")
