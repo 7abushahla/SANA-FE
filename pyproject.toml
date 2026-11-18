@@ -19,6 +19,8 @@ data = ["pandas"]
 viz = ["pandas", "matplotlib", "numpy"]
 all = ["pandas", "matplotlib", "numpy"]
 studio = ["pandas", "numpy", "pyyaml>=6.0", "starlette>=1.7", "uvicorn>=0.54", "websockets>=16.1"]
+# sanafe.netx, the reader of lava-dl's netx files, and the tests marked thesis.
+netx = ["h5py", "numpy"]
 
 [project.urls]
 Homepage = "https://github.com/SLAM-Lab/SANA-FE"
@@ -32,6 +34,11 @@ packages = { find = {} }
 
 [tool.setuptools.package-data]
 sanafe = ["examples/*.yaml", "examples/dvs_challenge.npz", "studio/web/*.html", "studio/web/*.css", "studio/web/js/*.js"]
+
+[tool.pytest.ini_options]
+markers = [
+    "thesis: needs the Thesis repository around the fork (the lava-dl checkout fetched by SANA-FE-thesis/calibration/deployments/pilotnet_lif/fetch.py, the Lava and mixed-horizon-snn submodules), found at SANAFE_THESIS_ROOT or the fork's parent folder. A checkout of the fork alone runs pytest -m \"not thesis\".",
+]
 
 [tool.cibuildwheel]
 skip = ["*-win32", "*_i686"]

@@ -11,7 +11,6 @@ of ``analyze_binary_chain`` for every rate scenario of the rates file. Nothing
 here skips. Lava's integer IF extension, h5py and the rates file must be present.
 """
 import json
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -29,8 +28,9 @@ from sanafe.loihi2_counts import (builder_partition, core_step_counts, expanded_
 from sanafe.loihi2_runtime import RuntimeRates, analyze_binary_chain, max_affine_runtime
 from sanafe.netx import read_netx
 
-REPO = Path(__file__).resolve().parents[3]
-RATES = REPO / "mixed-horizon-snn" / "rates" / "loihi2_scenarios.json"
+from thesis_tree import RATES
+
+pytestmark = pytest.mark.thesis
 READS = (1, 4, 8)
 BITS = 32
 
@@ -458,7 +458,7 @@ def test_workload_from_counts_gives_the_modeled_time_of_analyze_binary_chain(if_
     manifest, result, _ = if_chain_turning
     assert RATES.is_file(), (f"{RATES} is missing. The test reads the rate scenarios of the "
                              "thesis route (mixed-horizon-snn), so the fork must sit inside the "
-                             "Thesis repository.")
+                             "Thesis repository or SANAFE_THESIS_ROOT must name it.")
     scenarios = {name: s for name, s in json.loads(RATES.read_text()).items()
                  if not name.startswith("_")}
     assert len(scenarios) == 5

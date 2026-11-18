@@ -48,8 +48,9 @@ layer's spikes by Lava's ``Extractor`` (an InPort on ``s_out``). Both hand whole
 arrays to this process through a channel. The run proceeds in chunks of at most
 16 steps. A step that delivers nothing for ``stall_seconds`` ends the run with
 ``TimeoutError``. A chunk that fails for any reason is not stopped through
-Lava's ``stop()``, which has no time limit. Lava's child processes are
-terminated instead.
+Lava's ``stop()``, which has no time limit. Every child process that this
+Python process started through ``multiprocessing`` is terminated instead, which
+includes Lava's runtime processes and any other such child.
 """
 import threading
 import time
@@ -268,9 +269,10 @@ def core_order(order):
     of ``_core_order`` in mixed-horizon-snn/mhsnn/loihi2/export.py, reimplemented
     here so that the fork does not import that repository. ``packed_reversed``
     has the sequence of ``packed``. It differs only in that the layers take their
-    cores in reverse layer order (see ``_placement``), as in the published run of
-    PilotNet, which put the readout on the first cores and the input layer on the
-    last.
+    cores in reverse layer order (see ``_placement``), the core order that the
+    ledger record of the published PilotNet run infers from its memory plots
+    (readout on the first cores, input layer on the last). That order is an
+    inference, not a printed fact.
     """
     tiles, per_tile = 32, 4
     if order in ("packed", "packed_reversed"):
@@ -625,6 +627,7 @@ def _receive(wires, extractors, steps, stall_seconds):
 
 
 def _terminate_lava_children():
+    """Terminate every multiprocessing child of this process, not only Lava's."""
     import multiprocessing
     for child in multiprocessing.active_children():
         child.terminate()
@@ -686,8 +689,9 @@ def lava_run(network, input_bias, steps, *, builder, path=None, chunk=16, stall_
             # A chunk failed between run and wait (a stall, an error in a tap, or an
             # error of the run itself). stop() would send commands to a runtime that may
             # still be stepping or may be stuck, and it waits for replies without a time
-            # limit, so it is not attempted. Lava's child processes are terminated
-            # instead, which cannot block. The exception propagates.
+            # limit, so it is not attempted. Every multiprocessing child of this process,
+            # Lava's runtime among them, is terminated instead, which cannot block. The
+            # exception propagates.
             _terminate_lava_children()
         else:
             # Every chunk completed with wait(), so the runtime is idle and stop() is

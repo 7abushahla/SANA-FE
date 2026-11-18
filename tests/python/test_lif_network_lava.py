@@ -10,7 +10,6 @@ tolerance. The tests need Lava, h5py and the git-ignored lava-dl checkout. They
 fail, and never skip, when the checkout is absent.
 """
 import sys
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -21,9 +20,9 @@ from sanafe.netx import NetxLayer, NetxNetwork, read_netx
 from sanafe.lif_network import (conv_synapses, core_order, lava_run, netx_to_sanafe,
                                 sanafe_run, slice_sizes)
 
-REPO = Path(__file__).resolve().parents[3]
-LAVA_DL_SRC = REPO / "data" / "calibration" / "lava-dl" / "src"
-FETCH = "SANA-FE-thesis/calibration/deployments/pilotnet_lif/fetch.py"
+from thesis_tree import FETCH, LAVA_DL_SRC
+
+pytestmark = pytest.mark.thesis
 STEPS = 48
 
 

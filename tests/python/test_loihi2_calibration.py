@@ -252,6 +252,14 @@ class TestReport(Base):
         self.assertEqual(out['scales']['time']['status'], 'inherited')
         self.assertEqual(out['power_dynamic_w'], 0.0)
 
+    def test_no_bracket_leaves_the_report_unchanged(self):
+        cal = self.load(document([per_chip(0.15)]))
+        self.assertIsNone(cal.dynamic.low)
+        self.assertIsNone(cal.dynamic.high)
+        out = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74)
+        self.assertNotIn('by_energy_scale', out)
+        self.assertEqual(out['scales']['dynamic'], {'value': 1.0, 'status': 'inherited'})
+
     def test_inputs_validated(self):
         cal = self.load(document())
         good = dict(sim_time_s=1e-3, dynamic_energy_j=1e-3, chips=1, cores=1)
@@ -263,6 +271,84 @@ class TestReport(Base):
                          ('samples', True), ('chips', 0), ('cores', -1)):
             with self.assertRaises(ValueError, msg=key):
                 report(cal, **{**good, key: bad})
+
+
+def bracketed(low=0.4, carried=0.6, high=0.7, rules=None):
+    doc = document(rules or [per_chip(0.15)])
+    doc['dynamic'] = {'energy_scale': carried, 'energy_scale_low': low, 'energy_scale_high': high,
+                      'status': 'anchored', 'provenance': copy.deepcopy(PROVENANCE)}
+    return doc
+
+
+class TestEnergyScaleBracket(Base):
+    def test_bracket_loads(self):
+        cal = self.load(bracketed())
+        self.assertEqual((cal.dynamic.low, cal.dynamic.scale, cal.dynamic.high), (0.4, 0.6, 0.7))
+
+    def test_bracket_needs_all_three_values(self):
+        for missing in ('energy_scale_low', 'energy_scale_high'):
+            doc = bracketed()
+            del doc['dynamic'][missing]
+            self.refused(doc, missing)
+
+    def test_bracket_must_be_ordered(self):
+        self.refused(bracketed(low=0.65), 'energy_scale_low')
+        self.refused(bracketed(high=0.55), 'energy_scale_high')
+        self.load(bracketed(low=0.6, carried=0.6, high=0.6))
+
+    def test_bracket_values_must_be_positive_finite_numbers(self):
+        for key in ('energy_scale_low', 'energy_scale_high'):
+            for bad in (0.0, -0.5, float('nan'), float('inf'), True, '0.5'):
+                doc = bracketed()
+                doc['dynamic'][key] = bad
+                self.refused(doc, key)
+
+    def test_bracket_needs_an_anchored_or_fitted_scale(self):
+        doc = bracketed(low=0.9, carried=1.0, high=1.1)
+        doc['dynamic']['status'] = 'inherited'
+        doc['dynamic']['provenance'] = copy.deepcopy(EMPTY)
+        self.refused(doc, 'inherited')
+
+    def test_time_takes_no_bracket(self):
+        doc = document()
+        doc['time']['latency_scale_low'] = 0.5
+        self.refused(doc, 'latency_scale_low')
+        doc = document()
+        doc['time']['energy_scale_low'] = 0.5
+        self.refused(doc, 'energy_scale_low')
+
+    def test_report_at_the_three_scales(self):
+        cal = self.load(bracketed())
+        out = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74)
+        by = out['by_energy_scale']
+        self.assertEqual(list(by), ['low', 'carried', 'high'])
+        for name, scale in (('low', 0.4), ('carried', 0.6), ('high', 0.7)):
+            self.assertEqual(by[name]['energy_scale'], scale)
+            self.assertAlmostEqual(by[name]['energy_dynamic_j'], scale * 1e-3)
+            self.assertAlmostEqual(by[name]['power_dynamic_w'], scale * 0.5)
+            self.assertAlmostEqual(by[name]['power_static_w'], 0.15)
+            self.assertAlmostEqual(by[name]['power_total_w'], 0.15 + scale * 0.5)
+            self.assertAlmostEqual(by[name]['energy_inference_j'], (0.15 + scale * 0.5) * 2e-3)
+            self.assertEqual(by[name]['by_rule']['per_chip']['power_total_w'],
+                             by[name]['power_total_w'])
+        for key in ('energy_dynamic_j', 'power_dynamic_w', 'power_total_w', 'energy_inference_j'):
+            self.assertEqual(out[key], by['carried'][key])
+        self.assertEqual(out['scales']['dynamic'],
+                         {'value': 0.6, 'status': 'anchored', 'low': 0.4, 'high': 0.7})
+
+    def test_report_at_the_three_scales_with_two_rules(self):
+        cal = self.load(bracketed(rules=[per_chip(0.15), per_core(0.0008)]))
+        out = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74,
+                     host_time_s=0.1)
+        for name, scale in (('low', 0.4), ('carried', 0.6), ('high', 0.7)):
+            level = out['by_energy_scale'][name]
+            self.assertNotIn('power_total_w', level)
+            core = level['by_rule']['per_core']
+            self.assertAlmostEqual(core['power_static_w'], 0.0592)
+            self.assertAlmostEqual(core['power_total_w'], 0.0592 + scale * 0.5)
+            self.assertAlmostEqual(core['energy_total_j'],
+                                   (0.0592 + scale * 0.5) * 2e-3 + 0.0592 * 0.1)
+        self.assertEqual(out['by_rule'], out['by_energy_scale']['carried']['by_rule'])
 
 
 if __name__ == '__main__':

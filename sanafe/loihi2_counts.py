@@ -59,9 +59,11 @@ Synaptic operation (SynOp), ``synops``.
     (``m["spikes"]``). That equals ``nonzero`` for ``netx_to_sanafe``, which does
     not emit zero weights, and ``expanded`` for the IF chain exporter, which does.
     The two implementations therefore differ, and ``nonzero`` follows
-    ``analyze_binary_chain``. The runtime model supports it. The SynMem read
-    microbenchmark runs a dense-packed identity matrix with "few SynOps and
-    O(N^2) reads", so a stored zero weight is read but is not a SynOp.
+    ``analyze_binary_chain``. The runtime model's microbenchmarks are consistent
+    with it, which is an inference from their description and not a statement of
+    the paper. The SynMem read microbenchmark runs a dense-packed identity matrix
+    with "few SynOps and O(N^2) reads", which suggests that a stored zero weight
+    is read but is not a SynOp.
 
 Synaptic memory read (SynMem read), ``synmem_reads`` and ``synmem_access_histograms``.
     A message arriving at a destination core is one access. Its entries are the
@@ -84,11 +86,14 @@ Synaptic memory read (SynMem read), ``synmem_reads`` and ``synmem_access_histogr
     hypothesis with the two conventions of the SynOps. ``expanded`` stores every
     expanded entry (the dense storage of ``analyze_binary_chain``), ``nonzero``
     stores only the synapses ``netx_to_sanafe`` emits. For a convolution the
-    entries of one access are one weight per output channel on the core and
-    kernel tap that lands inside the output, the same number whether the kernel
-    is stored once and shared or stored per synapse. Sharing changes the storage
-    (``validate_group_resources``), not the number of entries read. Whether
-    shared kernel words pack differently is the weights-per-read hypothesis.
+    entries of one access are, by this module's read model, one weight per
+    output channel on the core and kernel tap that lands inside the output, and
+    the model counts the same number whether the kernel is stored once and
+    shared or stored per synapse, so that sharing changes the storage
+    (``validate_group_resources``) and not the number of entries read. This read
+    model of a convolution is the thesis's extension of the runtime model, which
+    was validated on dense and identity layers only. Whether shared kernel words
+    pack differently is the weights-per-read hypothesis.
     The runtime model's SynMem read microbenchmark (dense-packed 8-bit identity
     weights) scales the reads with the stored entries, not with the SynOps.
 

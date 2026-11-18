@@ -38,6 +38,13 @@ architecture file. Example of the schema (YAML)::
 More than one static rule means that the data cannot decide between them.
 Then no single static power is returned unless a rule is named, because one
 number would hide the disagreement.
+
+The dynamic energy scale may be a bracket. Then ``dynamic`` also carries
+``energy_scale_low`` and ``energy_scale_high``, both or neither, with
+low <= energy_scale <= high and a status of anchored or fitted, and the
+provenance note says what each value rests on. ``report`` then gives every
+quantity that depends on the scale at all three values (``by_energy_scale``).
+The time section takes no bracket.
 """
 from dataclasses import dataclass
 import math
@@ -56,6 +63,8 @@ RULE_FIELDS = {
 TOP_KEYS = {'schema', 'represents', 'readings', 'static', 'time', 'dynamic', 'transfer'}
 TRANSFER_KEYS = ('coefficient', 'from', 'to', 'assumption')
 RULE_QUANTITIES = ('power_static_w', 'power_total_w', 'energy_inference_j', 'energy_total_j')
+BRACKET_KEYS = ('energy_scale_low', 'energy_scale_high')
+SCALE_LEVELS = ('low', 'carried', 'high')
 
 
 @dataclass(frozen=True)
@@ -72,6 +81,8 @@ class Anchor:
     scale: float
     status: str
     provenance: dict
+    low: float = None
+    high: float = None
 
 
 @dataclass(frozen=True)
@@ -145,15 +156,32 @@ def _rule(entry, index):
                       status, provenance)
 
 
-def _anchor(section, scale_key, where):
+def _anchor(section, scale_key, where, bracket_keys=()):
     _mapping(section, where)
-    _check_keys(section, {scale_key, 'status', 'provenance'}, where)
+    present = [key for key in bracket_keys if key in section]
+    if present and len(present) != len(bracket_keys):
+        missing = [key for key in bracket_keys if key not in section]
+        raise ValueError(f'{where} carries {present} and is missing {missing}, a bracket '
+                         'needs both ends')
+    _check_keys(section, {scale_key, 'status', 'provenance', *present}, where)
     scale = _number(section[scale_key], f'{where}.{scale_key}', positive=True)
     status, provenance = _status_and_provenance(section, where)
     if scale != 1.0 and status == 'inherited':
         raise ValueError(f'{where}.{scale_key} is {scale} and needs a status of '
                          "'anchored' or 'fitted'")
-    return Anchor(scale, status, provenance)
+    if not present:
+        return Anchor(scale, status, provenance)
+    low_key, high_key = bracket_keys
+    low = _number(section[low_key], f'{where}.{low_key}', positive=True)
+    high = _number(section[high_key], f'{where}.{high_key}', positive=True)
+    if status == 'inherited':
+        raise ValueError(f'{where} carries a bracket and has status inherited, a bracket '
+                         "needs a status of 'anchored' or 'fitted'")
+    if low > scale:
+        raise ValueError(f'{where}.{low_key} is {low}, above {scale_key} {scale}')
+    if high < scale:
+        raise ValueError(f'{where}.{high_key} is {high}, below {scale_key} {scale}')
+    return Anchor(scale, status, provenance, low, high)
 
 
 def _transfer(entry):
@@ -193,7 +221,7 @@ def load_calibration(path):
     return Calibration(
         represents=doc['represents'], readings=readings, rules=rules,
         time=_anchor(doc['time'], 'latency_scale', 'time'),
-        dynamic=_anchor(doc['dynamic'], 'energy_scale', 'dynamic'),
+        dynamic=_anchor(doc['dynamic'], 'energy_scale', 'dynamic', BRACKET_KEYS),
         transfer=tuple(_transfer(entry) for entry in doc['transfer']))
 
 
@@ -242,6 +270,11 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
     The single-valued quantities are at the top level. The four rule-dependent
     quantities are under `by_rule`, and also at the top level when the file
     carries exactly one rule.
+
+    When the energy scale is a bracket, `by_energy_scale` gives, under `low`,
+    `carried` and `high`, the scale, the dynamic energy and power and the
+    rule-dependent quantities at that scale, laid out as at the top level. The
+    top level holds the carried scale.
     """
     sim_time_s = _number(sim_time_s, 'sim_time_s', positive=True)
     dynamic_energy_j = _number(dynamic_energy_j, 'dynamic_energy_j')
@@ -251,34 +284,49 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
     cores = _integer(cores, 'cores', 0)
 
     time_s = sim_time_s * calibration.time.scale / samples
-    energy_j = dynamic_energy_j * calibration.dynamic.scale / samples
-    power_dynamic = energy_j / time_s
-    by_rule = {}
-    for rule in calibration.rules:
-        static = _power(rule, chips, cores)
-        total = static + power_dynamic
-        inference = total * time_s
-        by_rule[rule.name] = {'power_static_w': static, 'power_total_w': total,
-                              'energy_inference_j': inference,
-                              'energy_total_j': inference + static * host_time_s}
+
+    def at_scale(scale):
+        energy_j = dynamic_energy_j * scale / samples
+        power_dynamic = energy_j / time_s
+        by_rule = {}
+        for rule in calibration.rules:
+            static = _power(rule, chips, cores)
+            total = static + power_dynamic
+            inference = total * time_s
+            by_rule[rule.name] = {'power_static_w': static, 'power_total_w': total,
+                                  'energy_inference_j': inference,
+                                  'energy_total_j': inference + static * host_time_s}
+        level = {'power_dynamic_w': power_dynamic, 'energy_dynamic_j': energy_j,
+                 'by_rule': by_rule}
+        if len(by_rule) == 1:
+            level.update(next(iter(by_rule.values())))
+        return level
+
+    dynamic = calibration.dynamic
+    carried = at_scale(dynamic.scale)
+    scales_dynamic = {'value': dynamic.scale, 'status': dynamic.status}
     out = {
         'inference_time_s': time_s,
-        'power_dynamic_w': power_dynamic,
-        'energy_dynamic_j': energy_j,
+        'power_dynamic_w': carried['power_dynamic_w'],
+        'energy_dynamic_j': carried['energy_dynamic_j'],
         'samples': samples,
         'chips': chips,
         'cores': cores,
         'host_time_s': host_time_s,
-        'by_rule': by_rule,
+        'by_rule': carried['by_rule'],
         'scales': {
             'time': {'value': calibration.time.scale, 'status': calibration.time.status},
-            'dynamic': {'value': calibration.dynamic.scale,
-                        'status': calibration.dynamic.status},
+            'dynamic': scales_dynamic,
         },
         'readings': calibration.readings,
         'represents': calibration.represents,
         'transfer': [dict(entry) for entry in calibration.transfer],
     }
-    if len(by_rule) == 1:
-        out.update(next(iter(by_rule.values())))
+    if len(carried['by_rule']) == 1:
+        out.update(next(iter(carried['by_rule'].values())))
+    if dynamic.low is not None:
+        scales_dynamic.update(low=dynamic.low, high=dynamic.high)
+        out['by_energy_scale'] = {
+            name: {'energy_scale': scale, **(carried if name == 'carried' else at_scale(scale))}
+            for name, scale in zip(SCALE_LEVELS, (dynamic.low, dynamic.scale, dynamic.high))}
     return out

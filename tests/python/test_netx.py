@@ -7,7 +7,6 @@ from the git-ignored checkout and is used by these tests only.
 
 import json
 import sys
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -15,13 +14,9 @@ import pytest
 
 from sanafe.netx import NetxLayer, NetxNetwork, read_netx
 
-REPO = Path(__file__).resolve().parents[3]
-FACTS_DIR = REPO / "SANA-FE-thesis" / "calibration" / "deployments" / "pilotnet_lif"
-LAVA_DL_SRC = REPO / "data" / "calibration" / "lava-dl" / "src"
-PILOTNET = (
-    REPO / "data" / "calibration" / "lava-dl" / "tutorials" / "lava" / "lib" / "dl"
-    / "netx" / "pilotnet_snn" / "network.net"
-)
+from thesis_tree import FACTS_DIR, LAVA_DL_SRC, PILOTNET
+
+pytestmark = pytest.mark.thesis
 
 
 def _neuron(group, kind="LOIHI", **override):
