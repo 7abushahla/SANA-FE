@@ -49,8 +49,10 @@ MESSAGE_IN_ASSUMPTION = (
     'The time a destination core spends receiving one message is taken to be the time one '
     '32-bit message occupies a link at the measured effective bandwidth. This identifies a '
     'link measurement with a per-message cost of the simulator\'s receive stage. It is an '
-    'assumption and not a measurement of that stage. It was checked on one published '
-    'deployment only.')
+    'assumption and not a measurement of that stage. It was compared with one published '
+    'deployment only, the deployment whose time prompted the change, so the comparison is not '
+    'a held-out test. That deployment excludes the first chip\'s value and does not identify '
+    'this one.')
 
 
 def candidate_cost_provenance():
@@ -175,8 +177,8 @@ def candidate_profile():
                           'multiple 8-bit synapses and change workload',
         'timing': 'fitted Loihi 1 latencies scaled by Intel-stated Loihi 2 factors '
                   '(neuron 2x, synapse 5x, spike 10x, barrier to a 200 ns chip-wide '
-                  'floor); the message receive latency derived from the Loihi 2 link bandwidth; '
-                  'hop and message-out latencies inherited; not calibrated for Loihi 2',
+                  'floor), the message receive latency derived from the Loihi 2 link bandwidth, '
+                  'and the hop and message-out latencies inherited, not calibrated for Loihi 2',
         'energy': 'inherited Loihi 1 costs; no public Loihi 2 datum; not calibrated for Loihi 2',
         'cost_provenance': candidate_cost_provenance(),
         'provenance': {

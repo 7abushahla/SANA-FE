@@ -59,7 +59,8 @@ class TestServer(unittest.TestCase):
         self.assertEqual(session['network']['occupied'], ['0.0', '16.0', '31.0'])
         self.assertEqual(session['horizon'], 6)
         self.assertEqual(session['badge'],
-                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors, '
+                         'receive latency from a Loihi 2 link measurement · '
                          'energy inherited from Loihi 1 · not hardware')
         self.assertEqual(session['state']['state'], 'idle')
         fetched = self.client.get(f"/api/sessions/{session['id']}").json()

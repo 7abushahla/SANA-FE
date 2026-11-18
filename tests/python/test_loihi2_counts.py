@@ -20,7 +20,7 @@ from lava.proc.dense.process import Dense
 from lava.proc.qcfs import QCFSIFFixed
 
 import sanafe.lava as bridge
-from sanafe.lif_network import netx_to_sanafe, sanafe_run
+from sanafe.lif_network import check_lif_architecture, netx_to_sanafe, sanafe_run
 from sanafe.loihi2 import load_loihi2_candidate
 from sanafe.loihi2_counts import (builder_partition, core_step_counts, expanded_connectivity,
                                   message_trace_counts, neuron_positions, spikes_from_trace,
@@ -458,9 +458,11 @@ LAVA_REMAINDER = {"name": "lava remainder",
                   "layers": [{"order": "lava", "sizes": s} for s in
                              ([64, 62], [24, 24, 24, 12], [21, 21, 6], [4, 4, 2])]}
 # The builder's manifest and saved netlist for _conv_network, recorded from the builder as
-# it was before it accepted a partition. The default must reproduce them byte for byte.
-# The manifest is hashed without the record of the architecture profile it embeds, which
-# belongs to the profile and changes whenever a cost of the profile does.
+# it was before it accepted a partition. The default must reproduce the netlist byte for
+# byte, and the manifest byte for byte apart from the record of the architecture profile it
+# embeds, which belongs to the profile and changes whenever a cost of the profile does. That
+# record is hashed out of the manifest and checked instead against the fingerprint of the
+# packaged profile, computed with the function the builder itself uses.
 PROFILE_KEYS = ("architecture_profile", "architecture_sha256")
 DEFAULT_SHA256 = {
     "spread": ("f000647a906bb1df04fe4a6f807e412f703174f7cc8bc3b0c2ad9be30105ceee",
@@ -488,9 +490,11 @@ def _digests(net, manifest, path):
 def test_the_default_partition_leaves_the_builder_unchanged(tmp_path):
     network = _conv_network(tmp_path)
     arch = load_loihi2_candidate()
+    fingerprint = check_lif_architecture(load_loihi2_candidate())
     for order, expected in DEFAULT_SHA256.items():
         net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order=order)
         assert _digests(net, manifest, tmp_path / f"default_{order}.net") == expected, order
+        assert manifest["architecture_sha256"] == fingerprint, order
         assert "partition" not in manifest
         net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order=order,
                                        partition=None)

@@ -19,6 +19,26 @@ class TestLoihi2Profile(unittest.TestCase):
         self.assertEqual(load_arch(str(repository)).configuration(),
                          load_loihi2_candidate().configuration())
 
+    def test_the_link_bandwidth_agrees_wherever_it_is_stated(self):
+        """The link bandwidth of Fig. 4(d) of Timcheck et al. is held in MESSAGE_IN_DERIVATION.
+        The calibration file, written from the ledger, and the schema example in the docstring of
+        loihi2_calibration state it too, and every statement must agree."""
+        import re
+        import yaml
+        import sanafe.loihi2_calibration as calibration
+        from sanafe.loihi2 import MESSAGE_IN_DERIVATION, candidate_cost_provenance
+        primary = MESSAGE_IN_DERIVATION['link_bits_per_second']
+        alternative = MESSAGE_IN_DERIVATION['alternative_link_bits_per_second']
+        example = [float(x) for x in re.findall(r'link_bits_per_s: ([0-9.e+]+)', calibration.__doc__)]
+        self.assertEqual(example, [primary, alternative])
+        readings = yaml.safe_load((files('sanafe.examples') / 'loihi2_calibration.yaml').read_text())['readings']
+        self.assertEqual(readings['link_bits_per_s'], primary)
+        self.assertEqual(readings['alternative']['link_bits_per_s'], alternative)
+        entry = candidate_cost_provenance()['latency_message_in']
+        self.assertEqual((entry['link_bits_per_second'], entry['alternative_link_bits_per_second']),
+                         (primary, alternative))
+        self.assertAlmostEqual(entry['seconds'], MESSAGE_IN_DERIVATION['message_bits'] / primary, places=18)
+
     def test_unit_scale_weight_audit_is_not_a_physical_mapping_certificate(self):
         report = audit_unit_scale_signed8_weights([[[127, -128, 255, -256, 0]]])
         self.assertFalse(report['physical_mapping_verified'])

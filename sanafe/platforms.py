@@ -232,15 +232,17 @@ PLATFORMS = (
                  'per-layer windows (modeled). A third soma unit runs the fixed-point leaky '
                  'integrate-and-fire rule of Lava for published LIF networks. Graded spikes '
                  'and microcode are not modeled.'),
-        cost_summary=('latencies scaled from Loihi 1 by Intel-stated factors · energy '
-                      'inherited from Loihi 1'),
+        cost_summary=('latencies scaled from Loihi 1 by Intel-stated factors, receive latency '
+                      'from a Loihi 2 link measurement · energy inherited from Loihi 1'),
         costs=_loihi2_costs(), time_word='scaled', energy_word='inherited',
-        validation=('No Loihi 2 measurement. Latencies are the fitted Loihi 1 values scaled '
-                    'by Intel\'s stated factors (neuron update 2x, synaptic operation 5x, '
-                    'spike generation 10x, chip-wide step floor 200 ns). The message receive '
-                    'latency is derived from the published Loihi 2 link bandwidth. Energies, '
-                    'hop costs and the message send costs are the Loihi 1 values. Scaled estimates, not calibrated '
-                    'predictions.'),
+        validation=('One coefficient derives from a Loihi 2 measurement. The message receive '
+                    'latency is derived from the published Loihi 2 link bandwidth and was compared '
+                    'with one published deployment only, the one whose time prompted it, so not in a '
+                    'held-out test. The other latencies are the fitted Loihi 1 values scaled by '
+                    'Intel\'s stated factors (neuron update 2x, synaptic operation 5x, spike '
+                    'generation 10x, chip-wide step floor 200 ns). Energies, hop costs and the '
+                    'message send costs are the Loihi 1 values. Scaled and derived estimates, not '
+                    'calibrated predictions.'),
         not_modeled=('graded (integer-payload) spikes', 'programmable neuron microcode',
                      'learning engines', 'the two physical mesh fabrics',
                      'embedded processors and host input/output', 'static power',

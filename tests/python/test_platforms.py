@@ -116,7 +116,8 @@ class TestRegistry(unittest.TestCase):
 
     def test_badges(self):
         self.assertEqual(P.badge(P.get('loihi2')),
-                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors · '
+                         'Intel Loihi 2 candidate · latencies scaled from Loihi 1 by Intel-stated factors, '
+                         'receive latency from a Loihi 2 link measurement · '
                          'energy inherited from Loihi 1 · not hardware')
         self.assertEqual(P.badge(P.get('loihi')),
                          'Intel Loihi 1 · costs fitted on Nahuku (TCAD 2025, within 11.7% energy and '
