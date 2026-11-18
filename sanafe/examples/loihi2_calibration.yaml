@@ -19,42 +19,55 @@ readings:
     status_in_prose: not fitted, consistent with the one deployment used to diagnose it (no held-out test)
     status_on_other_networks: from a timing model compared with one other deployment (PilotNet LIF, a
       leaky integrate-and-fire network, not held out) and not fitted
-    estimator: B, the simulator's own time, evidence partition, profile as it stands
-    modeled_us: 154.054
-    relative_spread_of_three_runs: 0.000383338
+    estimator: B, the simulator's own time, printed partition, profile as it stands
+    partition: printed
+    partition_is: the division the compiler printed for the published runs, the input layer and every
+      convolution in whole columns of Lava's order with the remainder on the last core, and the dense
+      layer of 100, which the printout labels with no slice shape, in eleven slices of 9 and one of 1,
+      the division its printed neuron and synapse counts fit and the one the per-core plots select
+    modeled_us: 154.762
+    relative_spread_of_three_runs: 0.000244625
     modeled_over_measured:
-      lavadl2022pilotnetlif-76c8fbb: 1.02417
-      lavadl2022pilotnetlif-b9e3691: 1.0079
-      lavadl2022pilotnetlif-baa23ad: 1.01986
+      lavadl2022pilotnetlif-76c8fbb: 1.02889
+      lavadl2022pilotnetlif-b9e3691: 1.01254
+      lavadl2022pilotnetlif-baa23ad: 1.02455
     readings_of_the_link_measurement_modeled_over_measured:
-    - 0.957991
-    - 1.02956
+    - 0.963223
+    - 1.03485
     receive_cost_ns: 3.536
     receive_cost_status: derived
     latency_scale_not_carried:
-      lavadl2022pilotnetlif-76c8fbb: 0.976398
-      lavadl2022pilotnetlif-b9e3691: 0.992157
-      lavadl2022pilotnetlif-baa23ad: 0.980528
+      lavadl2022pilotnetlif-76c8fbb: 0.971925
+      lavadl2022pilotnetlif-b9e3691: 0.987613
+      lavadl2022pilotnetlif-baa23ad: 0.976036
     latency_scale_not_carried_status: not carried
     builder_partition_modeled_over_measured:
-    - 1.71637
-    - 2.03051
-    statement: Under the evidence partition and with the receive cost derived from the runtime model's
-      link bandwidth, the simulator's own time per timestep on PilotNet LIF is 154.1 µs, the mean of three
-      runs whose means differ by 0.04 percent, which lies 0.8 to 2.4 percent above the three published
-      runs. Its label is "not fitted, consistent with the one deployment used to diagnose it (no held-out
-      test)". No coefficient was fitted to the measured time. The receive cost comes from an independent
-      published Loihi 2 measurement, the effective link bandwidth recorded in timcheck2026runtime-v2.
+    - 1.71947
+    - 2.03596
+    evidence_partition_modeled_over_measured:
+      lavadl2022pilotnetlif-76c8fbb: 1.02489
+      lavadl2022pilotnetlif-b9e3691: 1.00861
+      lavadl2022pilotnetlif-baa23ad: 1.02057
+    dense_near_equal_modeled_over_measured:
+      lavadl2022pilotnetlif-76c8fbb: 1.02954
+      lavadl2022pilotnetlif-b9e3691: 1.01318
+      lavadl2022pilotnetlif-baa23ad: 1.0252
+    statement: Under the partition the compiler printed and with the receive cost derived from the runtime
+      model's link bandwidth, the simulator's own time per timestep on PilotNet LIF is 154.8 µs, the mean
+      of three runs whose means differ by 0.02 percent, which lies 1.3 to 2.9 percent above the three
+      published runs. Its label is "not fitted, consistent with the one deployment used to diagnose it
+      (no held-out test)". No coefficient was fitted to the measured time. The receive cost comes from
+      an independent published Loihi 2 measurement, the effective link bandwidth recorded in timcheck2026runtime-v2.
       The agreement is not an independent validation. The receive cost was singled out by an ablation
       on this same deployment, and the choice among the three readings of the measurement that were run
       (a 32-bit message over the binary reading of the bandwidth, a 32-bit message over the decimal reading
       and an 8-bit message over the binary reading) was made with this comparison in view. The three readings
-      give 0.958 to 1.030 times the measured time. The deployment excludes the first chip's 16 ns, which
-      gives 1.25 to 1.27 times the measured time, but does not identify the receive cost. With every message
-      and hop latency set to zero the simulator still lies within 6 percent of the measurement (0.941
-      to 0.956 times), and a line through the rows that differ only in the receive cost (2.907 µs per
-      ns, 143.82 µs at zero) puts every receive cost from 0.5 to 4.9 ns within 5 percent of all three
-      runs, and equality with them at 2.27 to 3.11 ns. The deployment was used to diagnose the model and
+      give 0.963 to 1.035 times the measured time. The deployment excludes the first chip's 16 ns, which
+      gives 1.24 to 1.26 times the measured time, but does not identify the receive cost. With every message
+      and hop latency set to zero the simulator still lies within 6 percent of the measurement (0.947
+      to 0.962 times), and a line through the rows that differ only in the receive cost (2.825 µs per
+      ns, 144.80 µs at zero) puts every receive cost from 0.1 to 4.7 ns within 5 percent of all three
+      runs, and equality with them at 1.99 to 2.85 ns. The deployment was used to diagnose the model and
       cannot also count as a held-out test of it, and the examination of the timing model stopped when
       the agreement was reached. The coefficients not examined after it (the neuron update, the synaptic
       operation and the barrier, scaled from the first chip by Intel's factors, and the hop and send latencies,
@@ -62,16 +75,18 @@ readings:
       receive stage's cost per message is an assumption. The comparison rests on one deployment, one network
       family (a leaky integrate-and-fire network from lava-dl) and sparse activity. A time of the simulator
       on any other network is therefore labeled "from a timing model compared with one other deployment
-      (PilotNet LIF, a leaky integrate-and-fire network, not held out) and not fitted". The evidence partition
-      is selected by the per-core plots on two convolutions (on one when only their pattern across cores
-      is used) and taken by consistency and Lava's own order on the other layers. With the notebook's
-      camera frame as input the simulator gives 0.928 to 0.943 times the measured time, below it, and
-      the published runs most likely ran without the frame. The simulator has no synaptic memory read
-      term, while estimator A has one and no receive term, so the upper limit on the read cost belongs
-      to estimator A only. The hop latencies and the send latency remain inherited from the first Loihi
-      chip. With every message and hop latency zero the time falls by 6.6 percent, and with the send latency
-      alone zero by 0.1 percent. Under the builder partition, which the per-core plots contradict, the
-      same profile gives 1.96 to 1.99 times the measured time.
+      (PilotNet LIF, a leaky integrate-and-fire network, not held out) and not fitted". The division of
+      the input layer and the five convolutions over their cores is the one the compiler printed for this
+      deployment. The dense layer of 100 is not resolved by the printout, and near-equal slices on it
+      change the time by +0.06 percent. The division the per-core plots select gives 1.009 to 1.025 times
+      the measured time. With the notebook's camera frame as input the simulator gives 1.055 to 1.072
+      times the measured time, above it, and the published runs most likely ran without the frame. The
+      simulator has no synaptic memory read term, while estimator A has one and no receive term, so the
+      upper limit on the read cost belongs to estimator A only. The hop latencies and the send latency
+      remain inherited from the first Loihi chip. With every message and hop latency zero the time falls
+      by 6.5 percent, and with the send latency alone zero by 0.1 percent. Under the builder partition,
+      which the printout and the per-core plots contradict, the same profile gives 1.96 to 2.00 times
+      the measured time.
   neuron_update_ns: 6.27
   link_bits_per_s: 9050000000.0
   synop_ns: 0.612
@@ -93,15 +108,15 @@ readings:
       and destination core, primary workload (the network driven by its stored biases, an inference from
       the per-core plots)
     expanded:
-      upper_limit: 0.682178
+      upper_limit: 0.681712
       grid_value_eight_per_read: 0.57375
-      with_validation_overshoot: 0.787128
+      with_validation_overshoot: 0.786591
       four_per_read_assumed: 1.1475
       four_per_read_at_or_below_upper_limit: false
     nonzero:
-      upper_limit: 0.880141
+      upper_limit: 0.879048
       grid_value_eight_per_read: 0.57375
-      with_validation_overshoot: 1.01555
+      with_validation_overshoot: 1.01429
       four_per_read_assumed: 1.1475
       four_per_read_at_or_below_upper_limit: false
     largest_validation_overshoot: 1.15385
@@ -111,7 +126,7 @@ readings:
         under two conditions. First, it holds under the primary workload, the network driven by its stored
         biases, which is an inference from the per-core plots. Under the frame, four per read lies at
         or below the upper limit (nonzero yes, expanded yes). Second, it needs the read term to overshoot
-        the measurement by 1.30 (nonzero storage) and 1.68 (expanded storage), against a largest overshoot
+        the measurement by 1.31 (nonzero storage) and 1.68 (expanded storage), against a largest overshoot
         of 1.15 on the runtime model's three dense read-bound validation points, and the model was never
         validated on a convolution.
     rows:
@@ -131,16 +146,23 @@ readings:
       the time per read are not separately identifiable.
   dynamic_energy_scale:
     low_builder_partition: 0.490994
+    high_printed_partition: 0.682154
     high_evidence_partition: 0.681578
-    applied_to_lava_order_counts: 0.681578
-    carried_for_reader_order_records: 0.59657
+    high_evidence_partition_is: the high end under the division the per-core plots select, the value carried
+      before the printed partition was read. A labeled reading, not carried
+    high_dense_near_equal: 0.682094
+    high_dense_near_equal_is: the high end with near-equal slices on the dense layer of 100, which the
+      printout labels with no slice shape. A sensitivity, not carried
+    applied_to_lava_order_counts: 0.682154
+    carried_for_reader_order_records: 0.59689
     carried_for_reader_order_records_by_cut_set:
-      none: 0.594191
-      '3': 0.594474
-      all: 0.600731
+      none: 0.594504
+      '3': 0.594787
+      all: 0.601063
     carried_for_reader_order_records_is: the high end times (1 - s (1 - r)), computed for the earlier
       records of the thesis network, made in the reader order, with s their network share. It applies
       to records under the reader order only
+    network_energy_ratio_printed_over_builder: 0.107137
     network_energy_ratio_evidence_over_builder: 0.109078
     thesis_network_shares:
       none:
@@ -194,6 +216,9 @@ readings:
       with the profile's energies per event. The network share is the remainder of the simulator's dynamic
       energy, and it holds the energy of the messages computed alone. The records do not hold the simulator's
       energy by event class
+    printed_partition_over_storage_and_rule:
+    - 0.54493
+    - 0.686245
     evidence_partition_over_storage_and_rule:
     - 0.544562
     - 0.686252
@@ -202,11 +227,11 @@ readings:
       is read and is not a SynOp.
     spread_of_published_dynamic_power: 1.91406
     layout_assumption: The scale carried is the high end because the counts it is applied to are taken
-      in Lava's neuron order, the layout under which the high end was anchored and which the per-core
-      plots of PilotNet LIF select. The range from the low end to the high end is a range of the scale
-      between the two partitions of PilotNet LIF. The sensitivity of the thesis network to the layout
-      is a pair per cut set in results/fit_thesis_network.json, the new records at the high end if Lava's
-      layout is the chip's and the earlier records at the low end if the builder's layout is the chip's
+      in Lava's neuron order, the layout under which the high end was anchored and which the compiler
+      printed for PilotNet LIF. The range from the low end to the high end is a range of the scale between
+      the two partitions of PilotNet LIF. The sensitivity of the thesis network to the layout is a pair
+      per cut set in results/fit_thesis_network.json, the new records at the high end if Lava's layout
+      is the chip's and the earlier records at the low end if the builder's layout is the chip's
   static_band_w:
     cores_59:
     - 0.049977
@@ -216,15 +241,15 @@ readings:
     - 0.173967
   source_results:
     SANA-FE-thesis/calibration/results/fit_static_power.json: ac850b9507f38e5dd9fc756c2bb8810bf055ba887e133d4ae534459b4418f93b
-    SANA-FE-thesis/calibration/results/fit_time.json: 6780908c38cfc3a026ae8db9477c8c1cf3f87be40b7b951517f07408bbc303f5
-    SANA-FE-thesis/calibration/results/fit_dynamic.json: 3a23018cc256546f0e21fad9396ad7b2699368cc7ba0f7492cf97dc5e576610a
+    SANA-FE-thesis/calibration/results/fit_time.json: 7abbb1f219c9e0733a3ccce0e7ba2214752f976a74e40876cb1611da77fe686f
+    SANA-FE-thesis/calibration/results/fit_dynamic.json: 95f534d7bf346ec6b4812e67add197f4eaacb6aedf654e5ca380b056f4fa0418
   written_from:
     commits:
-      thesis_inputs: d56692d7c99c15a31dd6d6987b494a4a4d75deff
-      sanafe_fork: f19aa0af94112fd3d2ef0fef89ac3c5a6d5e1534
-      mixed_horizon: 6a60a235acca43e2fd998319373f6a6a68e7352b
+      thesis_inputs: cdccb4058b7b385e59e574b7bdd9ce745eb206b2
+      sanafe_fork: 434c9eabe023ac34e819779a6791608bf28a7dd5
+      mixed_horizon: c68e9e5507832b78369d06e58e7c2b4000c10e01
     tree_clean: true
-    ledger_records_sha256: a9143c2b54926351b97932b438f22b63a3458899e9345644afcfac392608cebf
+    ledger_records_sha256: 13cd6304ca3618ca3e29b93472eb565d69598a7fbc9d9fbe3a2a6c6e1645a24a
     failures: []
 static:
   rules:
@@ -268,20 +293,20 @@ time:
       is not fitted, not held out, in prose not fitted, consistent with the one deployment used to diagnose
       it (no held-out test). A time on any other network is from a timing model compared with one other
       deployment (PilotNet LIF, a leaky integrate-and-fire network, not held out) and not fitted. Under
-      the evidence partition, with the receive cost derived from the runtime model's link bandwidth, the
-      simulator's own time on PilotNet LIF is 1.008 to 1.024 times the three measured times. That agreement
-      is not a held-out test, since the deployment singled out the receive cost and does not identify
-      it, and readings.time_per_timestep states it with its limits. The latency scale that would close
-      the remaining difference is reported there and not carried. Estimator A moves no rate, since the
-      tolerance of the rates does not close its gap to the measured time, and its structural result, an
-      upper limit on the effective read cost per stored weight set by one deployment, is not expressible
-      as a latency scale and is carried in readings.effective_read_cost_per_stored_weight_ns and in results/fit_time.json.
-      Under the builder partition the simulator gives 1.72 to 2.03 times the measured time on the zero
-      input over three placements.
+      the partition the compiler printed, with the receive cost derived from the runtime model's link
+      bandwidth, the simulator's own time on PilotNet LIF is 1.013 to 1.029 times the three measured times.
+      That agreement is not a held-out test, since the deployment singled out the receive cost and does
+      not identify it, and readings.time_per_timestep states it with its limits. The latency scale that
+      would close the remaining difference is reported there and not carried. Estimator A moves no rate,
+      since the tolerance of the rates does not close its gap to the measured time, and its structural
+      result, an upper limit on the effective read cost per stored weight set by one deployment, is not
+      expressible as a latency scale and is carried in readings.effective_read_cost_per_stored_weight_ns
+      and in results/fit_time.json. Under the builder partition the simulator gives 1.72 to 2.04 times
+      the measured time on the zero input over three placements.
 dynamic:
-  energy_scale: 0.681578
+  energy_scale: 0.682154
   energy_scale_low: 0.490994
-  energy_scale_high: 0.681578
+  energy_scale_high: 0.682154
   status: anchored
   provenance:
     sources: 1
@@ -293,7 +318,7 @@ dynamic:
     note: The scale, 0.682, holds only for counts taken in Lava's neuron order. Counts taken in the reader
       order, the default of the exporter of mixed-horizon-snn and of the fork's builder, must use readings.dynamic_energy_scale.carried_for_reader_order_records,
       the high end times (1 - s (1 - r)) with s their network share under the builder's layout and r =
-      0.109 the ratio of network energy, evidence over builder, on PilotNet, as results/fit_dynamic.json
+      0.107 the ratio of network energy, printed over builder, on PilotNet, as results/fit_dynamic.json
       documents. For the earlier records of the thesis network, with s = 0.140, that value is 0.597. The
       scale anchors the dynamic energy per inference, the published dynamic power times the measured time
       per timestep over the modeled dynamic energy per timestep, averaged over the two later runs of one
@@ -301,16 +326,18 @@ dynamic:
       was compared with one deployment only, and a static energy grows in proportion to that time. The
       low end, 0.491, rests on the simulator's own PilotNet run under the builder partition and holds
       for a network with PilotNet's excess message energy. The high end, 0.682, rests on the same event
-      energies on the counts of the evidence partition, which the simulator's own run under that partition
-      reproduces, and holds for a network with no excess messages. Applying it to the new records of the
-      thesis network assumes that the thesis network would be laid out on the chip in Lava's order, and
-      the anchor rests on the inference that the published runs ran without their input. It raises their
-      scaled dynamic energy by 14 percent over the reader-order value. In Lava's neuron order the network
-      share of the thesis network is 0.026, estimated by the same method from the counts of the new records.
-      The range from the low end to the high end is a range of the scale between the two partitions of
-      PilotNet LIF. Every event energy is inherited from the first Loihi chip and scaled, not fitted.
-      The published dynamic power of the three runs differs by a factor of 1.91, a floor on what any model
-      can match.
+      energies on the counts of the partition the compiler printed, which the simulator's own run under
+      that partition reproduces, and holds for a network with no excess messages. Under the partition
+      the per-core plots select it was 0.6816, the value carried before the printed partition was read,
+      kept as a reading. Near-equal slices on the dense layer of 100, which the printout labels with no
+      slice shape, give 0.6821. Applying it to the new records of the thesis network assumes that the
+      thesis network would be laid out on the chip in Lava's order, and the anchor rests on the inference
+      that the published runs ran without their input. It raises their scaled dynamic energy by 14 percent
+      over the reader-order value. In Lava's neuron order the network share of the thesis network is 0.026,
+      estimated by the same method from the counts of the new records. The range from the low end to the
+      high end is a range of the scale between the two partitions of PilotNet LIF. Every event energy
+      is inherited from the first Loihi chip and scaled, not fitted. The published dynamic power of the
+      three runs differs by a factor of 1.91, a floor on what any model can match.
 transfer:
 - coefficient: dynamic.energy_scale, synaptic and network events
   from: cuba_lif_int24 (Lava's LIF, the PilotNet LIF deployment)
@@ -327,7 +354,7 @@ transfer:
   - integrate_fire_int24_gated
   assumption: A single scale on the total cannot be split by event class, so it is applied to the soma
     event energies of the soft-reset IF units only as a stated assumption. The soma events carry a share
-    of 0.140 of the anchored energy of PilotNet LIF, and an estimated 0.16 to 0.24 of the simulated dynamic
+    of 0.141 of the anchored energy of PilotNet LIF, and an estimated 0.16 to 0.24 of the simulated dynamic
     energy of the new records of the thesis network (in Lava's neuron order) and 0.14 to 0.21 of the earlier
     records. Leaving the soma energy unscaled would raise the calibrated dynamic energy of the new records
     by 8 to 11 percent at the high end, and of the earlier records by 10 to 14 percent at their reader-order
