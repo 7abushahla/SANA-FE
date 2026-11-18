@@ -15,6 +15,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -403,6 +404,14 @@ private:
     std::vector<State> states;
 };
 
+// Raised only by the strict mode of GatedInt24IfModel, when an input or a membrane leaves the
+// signed 24-bit range. Python sees it as OverflowError.
+class StrictRangeError : public std::overflow_error
+{
+public:
+    using std::overflow_error::overflow_error;
+};
+
 // Loihi 2 route candidate program: integrates every update, adds its window bias once and its
 // per-check bias at each check, and compares the threshold only on strided steps of its window.
 // A modeled neuron program with the semantics of an integer block rule, not Intel microcode.
@@ -417,6 +426,8 @@ public:
             long int timestep) override;
     void reset() override;
     double get_potential(size_t address) override { return states.at(address).voltage; }
+    // The extremes of a strict neuron that is not a graded source, and nothing otherwise.
+    std::map<std::string, double> get_neuron_traces(size_t address) override;
     // Whether the neuron at this address holds graded_values. Not virtual, so the interface
     // that plugins compile against does not change.
     bool is_graded_source(const size_t address) const
@@ -433,6 +444,7 @@ public:
         {"stride", "(int) Check every stride-th update of the window, from its start."},
         {"currents", "(list[int]) Signed 24-bit external current per update, then zero."},
         {"graded_values", "(list[int]) Signed 32-bit value sent per update, then zero. Sets the neuron as a graded source. Refused where the time-step buffer is inside the soma unit or before the axon-out unit, since the soma runs on the message path there."},
+        {"strict", "(bool) Stop the run when the input or the membrane leaves signed 24 bits, and record their extremes as neuron traces."},
     };
 private:
     struct State
@@ -454,6 +466,16 @@ private:
         bool graded_source{false};
         std::vector<int32_t> graded_values;
         size_t graded_cursor{0};
+        // In strict mode an input or a membrane beyond signed 24 bits stops the run with a
+        // StrictRangeError, and the running extremes of both since the last reset are kept.
+        // The membrane is the voltage after input and biases, before the clamp and the
+        // threshold subtraction. Each extreme reads 0 until the first update records it.
+        bool strict{false};
+        bool extremes_recorded{false};
+        int32_t input_min{0};
+        int32_t input_max{0};
+        int32_t voltage_min{0};
+        int32_t voltage_max{0};
     };
     std::vector<State> states;
 };

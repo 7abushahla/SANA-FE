@@ -65,17 +65,20 @@ def destinations(count, places=None):
     return ("layer_0", "loihi_if_gated", [dict(DST) for _ in range(count)], places)
 
 
-def binary_network(third):
+def binary_network(third, *, strict=False):
     """A binary network of three layers on the candidate, run for six steps.
 
     ``input``: four gated neurons on (0, 0), neurons 0 and 2 driven once by a current of 2.
-    ``layer_0``: three gated neurons on (0, 1), (0, 1) and ``third``, with a window [1, 4).
+    ``layer_0``: three gated neurons on (0, 1), (0, 1) and ``third``, with a window [1, 4),
+    in strict mode when ``strict`` is set.
     ``layer_1``: two ungated IF neurons on (2, 0). Every pair of adjacent layers is connected.
     """
     driven = dict(threshold=2, initial_voltage=0, window_start=0, window_stop=1, currents=[2])
     silent = dict(threshold=2, initial_voltage=0, window_start=0, window_stop=1, currents=[0])
     hidden = dict(threshold=6, initial_voltage=3, window_start=1, window_stop=4, stride=1,
                   bias_per_check=1)
+    if strict:
+        hidden["strict"] = True
     output = dict(threshold=4, initial_voltage=0)
     w0 = np.random.default_rng(0).integers(-5, 9, (4, 3))
     w1 = np.random.default_rng(1).integers(-3, 7, (3, 2))
@@ -303,3 +306,74 @@ def test_a_source_is_refused_where_its_soma_runs_on_the_message_path(
     chip, _ = make_chip(groups, edges, arch=arch)
     with pytest.raises(ValueError, match=r"input\[0\]: A graded source requires"):
         run(chip, 3)
+
+
+EXTREMES = ("input_min", "input_max", "voltage_min", "voltage_max")
+# One update takes the membrane to 8388610, beyond signed 24 bits, before any threshold check.
+BEYOND = dict(threshold=8388606, initial_voltage=8388600, window_start=5, window_stop=6,
+              currents=[10])
+
+
+def one_neuron(attrs, name="layer_0"):
+    return (name, "loihi_if_gated", [attrs], [(0, 1)])
+
+
+def test_strict_stops_when_the_membrane_leaves_24_bits():
+    chip, _ = make_chip([one_neuron(dict(BEYOND, strict=True))], [])
+    with pytest.raises(OverflowError, match=r"layer_0\[0\]: strict mode: membrane 8388610 "
+                                            r"leaves the signed 24-bit range"):
+        run(chip, 1)
+    chip, _ = make_chip([one_neuron(dict(BEYOND))], [])
+    non_strict = run(chip, 1)
+    # The same neuron without strict saturates.
+    assert non_strict["potential_trace"] == [[8388607]]
+
+
+def test_strict_stops_when_the_input_leaves_24_bits():
+    # The input of 2^23 reaches the neuron as a graded value of 2^23 on a weight of 1.
+    def chip_with(strict):
+        target = one_neuron(dict(DST, strict=True) if strict else dict(DST))
+        chip, _ = make_chip([sources([[8388608]]), target], [("input", 0, "layer_0", 0, 1)])
+        return chip
+    with pytest.raises(OverflowError, match=r"input 8388608"):
+        run(chip_with(True), 2)
+    # Without strict the input is refused as before.
+    with pytest.raises(ValueError, match="signed 24"):
+        run(chip_with(False), 2)
+
+
+def test_strict_names_the_group_and_offset():
+    inside = dict(threshold=6, initial_voltage=0, window_start=0, currents=[10], strict=True)
+    group = ("layer_3", "loihi_if_gated", [dict(inside), dict(inside), dict(BEYOND, strict=True)],
+             [(0, 1)] * 3)
+    chip, _ = make_chip([group], [])
+    with pytest.raises(OverflowError, match=r"^layer_3\[2\]: "):
+        run(chip, 1)
+
+
+def test_extremes_are_recorded_before_the_reset_and_cleared_by_it():
+    attrs = dict(threshold=6, initial_voltage=0, window_start=0, currents=[3, -5, 10, 0],
+                 strict=True)
+    chip, _ = make_chip([one_neuron(attrs)], [])
+    # v = 3, -2, 8 (a spike, leaving 2), 2
+    out = run(chip, 4, neuron_trace=True)
+    assert out["potential_trace"] == [[3], [-2], [2], [2]]
+    last = {k: out["neuron_trace"][k][-1] for k in EXTREMES}
+    assert last == {"input_min": [-5], "input_max": [10], "voltage_min": [-2], "voltage_max": [8]}
+    chip.reset()
+    again = run(chip, 1, neuron_trace=True)
+    assert [again["neuron_trace"][k][-1] for k in EXTREMES] == [[3]] * 4
+
+
+def test_a_neuron_without_strict_reports_no_trace():
+    chip, _ = make_chip([sources([[4]]), destinations(1)], [("input", 0, "layer_0", 0, 3)])
+    assert run(chip, 2, neuron_trace=True)["neuron_trace"] == {}
+
+
+def test_strict_inside_24_bits_changes_nothing():
+    plain = binary_network((0, 2))
+    strict = binary_network((0, 2), strict=True)
+    assert strict["potential_trace"] == plain["potential_trace"]
+    assert spikes_of(strict) == spikes_of(plain)
+    # Strict mode adds no cost, so the whole run still matches the pinned digest.
+    assert digest_of(full_payload(strict)) == BINARY_DIGEST

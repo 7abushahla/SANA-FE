@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "models.hpp"
@@ -282,6 +284,21 @@ void sanafe::GatedInt24IfModel::set_attribute_neuron(const size_t address,
     {
         state.stride = int32_attr(1, std::numeric_limits<int32_t>::max(), "IF stride");
     }
+    else if (name == "strict")
+    {
+        state.strict = std::holds_alternative<bool>(param.value)
+                ? std::get<bool>(param.value)
+                : int32_attr(0, 1, "IF strict flag (bool or 0/1)") != 0;
+    }
+}
+
+namespace
+{
+std::string strict_message(const char *quantity, const int64_t value)
+{
+    return std::string("strict mode: ") + quantity + " " + std::to_string(value) +
+            " leaves the signed 24-bit range";
+}
 }
 
 sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
@@ -324,8 +341,25 @@ sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
         ++state.cursor;
     }
     // Synaptic and external current together form one signed 24-bit input per update.
-    const int64_t input = checked_integer(current.value_or(0.0) + static_cast<double>(external),
-            voltage_min, voltage_max, "IF signed 24-bit input current");
+    int64_t input = 0;
+    if (state.strict)
+    {
+        // Formed in 64 bits from a synaptic input of at most signed 32 bits, the most the
+        // integer accumulator passes on, so the sum is exact. Checked before it is used.
+        const int64_t synaptic = checked_integer(current.value_or(0.0),
+                std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(),
+                "IF signed 32-bit synaptic input");
+        input = synaptic + external;
+        if (input < voltage_min || input > voltage_max)
+        {
+            throw sanafe::StrictRangeError(strict_message("input", input));
+        }
+    }
+    else
+    {
+        input = checked_integer(current.value_or(0.0) + static_cast<double>(external),
+                voltage_min, voltage_max, "IF signed 24-bit input current");
+    }
     const auto u = static_cast<int64_t>(state.updates_seen++);
     int64_t v = static_cast<int64_t>(state.voltage) + input;
     if (u == state.window_start)
@@ -337,6 +371,31 @@ sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
     if (check)
     {
         v += state.bias_per_check;
+    }
+    if (state.strict)
+    {
+        // The membrane is checked before the clamp and the threshold subtraction. Both
+        // extremes are recorded only once both checks pass, so a stopping value is never
+        // recorded.
+        if (v < voltage_min || v > voltage_max)
+        {
+            throw sanafe::StrictRangeError(strict_message("membrane", v));
+        }
+        const auto in = static_cast<int32_t>(input);
+        const auto mem = static_cast<int32_t>(v);
+        if (!state.extremes_recorded)
+        {
+            state.input_min = state.input_max = in;
+            state.voltage_min = state.voltage_max = mem;
+            state.extremes_recorded = true;
+        }
+        else
+        {
+            state.input_min = std::min(state.input_min, in);
+            state.input_max = std::max(state.input_max, in);
+            state.voltage_min = std::min(state.voltage_min, mem);
+            state.voltage_max = std::max(state.voltage_max, mem);
+        }
     }
     state.voltage = static_cast<int32_t>(std::clamp(v, voltage_min, voltage_max));
     const bool spike = check && state.voltage >= state.threshold;
@@ -355,7 +414,30 @@ void sanafe::GatedInt24IfModel::reset()
         state.cursor = 0;
         state.updates_seen = 0;
         state.graded_cursor = 0;
+        state.extremes_recorded = false;
+        state.input_min = 0;
+        state.input_max = 0;
+        state.voltage_min = 0;
+        state.voltage_max = 0;
     }
+}
+
+std::map<std::string, double> sanafe::GatedInt24IfModel::get_neuron_traces(
+        const size_t address)
+{
+    if (address >= states.size())
+    {
+        return {};
+    }
+    const State &state = states.at(address);
+    if (!state.strict || state.graded_source)
+    {
+        return {};
+    }
+    return {{"input_min", static_cast<double>(state.input_min)},
+            {"input_max", static_cast<double>(state.input_max)},
+            {"voltage_min", static_cast<double>(state.voltage_min)},
+            {"voltage_max", static_cast<double>(state.voltage_max)}};
 }
 
 namespace

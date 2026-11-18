@@ -41,7 +41,7 @@
 #include "core.hpp"
 #include "mapped.hpp"
 #include "message.hpp"
-#include "models.hpp" // For the graded source check of GatedInt24IfModel
+#include "models.hpp" // For GatedInt24IfModel and StrictRangeError
 #include "network.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -810,8 +810,18 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
         c.timestep_buffer.at(n.mapped_offset_within_core) = PipelineResult{};
     }
     const std::optional<MappedConnection *> no_con{std::nullopt};
-    const PipelineResult pipeline_output = execute_pipeline(
-            n.neuron_processing_pipeline, ts, n, no_con, input);
+    PipelineResult pipeline_output{};
+    try
+    {
+        pipeline_output = execute_pipeline(
+                n.neuron_processing_pipeline, ts, n, no_con, input);
+    }
+    catch (const StrictRangeError &error)
+    {
+        // Name the group and the neuron of a strict stop.
+        throw StrictRangeError(n.parent_group_name + "[" +
+                std::to_string(n.offset) + "]: " + error.what());
+    }
     n.core->next_message_generation_delay +=
             pipeline_output.latency.value_or(0.0);
     TRACE2(CHIP, "nid:%s.%zu +%e:%e\n", n.parent_group_name.c_str(), n.offset,
