@@ -234,6 +234,19 @@ void sanafe::GatedInt24IfModel::set_attribute_neuron(const size_t address,
         state.currents = std::move(values);
         state.cursor = 0;
     }
+    else if (name == "graded_values")
+    {
+        std::vector<int32_t> values;
+        for (const auto &value : std::get<std::vector<ModelAttribute>>(param.value))
+        {
+            values.push_back(static_cast<int32_t>(checked_integer(
+                    static_cast<double>(value), std::numeric_limits<int32_t>::min(),
+                    std::numeric_limits<int32_t>::max(), "IF signed 32-bit graded value")));
+        }
+        state.graded_values = std::move(values);
+        state.graded_cursor = 0;
+        state.graded_source = true;
+    }
     else if (name == "threshold")
     {
         const int32_t threshold = int32_attr(1, voltage_max, "IF threshold");
@@ -279,6 +292,27 @@ sanafe::PipelineResult sanafe::GatedInt24IfModel::update(const size_t address,
         states.resize(address + 1);
     }
     State &state = states.at(address);
+    if (state.graded_source)
+    {
+        // A graded source sends one value per update and integrates nothing. It ignores the
+        // threshold, the window, both biases and the external currents, and its voltage stays
+        // at its initial value.
+        if (current.has_value() && current.value() != 0.0)
+        {
+            throw std::invalid_argument("A graded source takes no synaptic input");
+        }
+        const int32_t value = state.graded_cursor < state.graded_values.size()
+                ? state.graded_values.at(state.graded_cursor) : 0;
+        if (state.graded_cursor < state.graded_values.size())
+        {
+            ++state.graded_cursor;
+        }
+        if (value == 0)
+        {
+            return {std::nullopt, updated, std::nullopt, std::nullopt};
+        }
+        return {static_cast<double>(value), fired, std::nullopt, std::nullopt};
+    }
     if (state.window_stop <= state.window_start)
     {
         throw std::invalid_argument("IF window requires window_start < window_stop");
@@ -320,6 +354,7 @@ void sanafe::GatedInt24IfModel::reset()
         state.voltage = state.initial;
         state.cursor = 0;
         state.updates_seen = 0;
+        state.graded_cursor = 0;
     }
 }
 

@@ -7,7 +7,9 @@
 #define MESSAGE_HEADER_INCLUDED_
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 
 #include "fwd.hpp"
@@ -48,6 +50,10 @@ struct Message
     size_t dest_axon_id{0UL};
     bool placeholder{true};
     bool in_noc{false};
+    // The value of a graded message, which multiplies the weight at every
+    //  synapse the message reaches. Empty for a binary message. It is not
+    //  written to the message trace.
+    std::optional<int32_t> graded_value{std::nullopt};
 
     explicit Message();
     explicit Message(long int id, const SpikingChip &hw, const MappedNeuron &n,

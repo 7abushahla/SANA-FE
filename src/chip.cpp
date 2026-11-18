@@ -9,6 +9,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -798,7 +800,9 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
             n.core->next_message_generation_delay);
     if (n.status == fired)
     {
-        pipeline_process_axon_out(ts, n);
+        // A soma that sends a graded spike returns its value as the current of
+        //  its output. A binary spike leaves the current empty.
+        pipeline_process_axon_out(ts, n, pipeline_output.current);
     }
 }
 
@@ -809,8 +813,14 @@ double sanafe::SpikingChip::process_message(
 
     assert(static_cast<size_t>(m.dest_axon_id) < core.axons_in.size());
     const AxonInModel &axon_in = core.axons_in.at(m.dest_axon_id);
-    const PipelineResult
-            empty_input{}; // Empty/default struct used as dummy input
+    // A binary message enters the pipeline with an empty input. A graded
+    //  message enters with its value as the current, which the synapse unit
+    //  multiplies into its output.
+    PipelineResult message_input{};
+    if (m.graded_value.has_value())
+    {
+        message_input.current = static_cast<double>(m.graded_value.value());
+    }
 
     for (const size_t synapse_address : axon_in.synapse_addresses)
     {
@@ -822,7 +832,7 @@ double sanafe::SpikingChip::process_message(
         MappedNeuron &n = *(con.post_neuron);
 
         const PipelineResult pipeline_output = execute_pipeline(
-                con.message_processing_pipeline, ts, n, &con, empty_input);
+                con.message_processing_pipeline, ts, n, &con, message_input);
         core.timestep_buffer.at(n.mapped_offset_within_core) = pipeline_output;
         message_processing_latency += pipeline_output.latency.value_or(0.0);
     }
@@ -867,11 +877,26 @@ double sanafe::SpikingChip::pipeline_process_axon_in(
 }
 
 sanafe::PipelineResult sanafe::SpikingChip::pipeline_process_axon_out(
-        Timestep &ts, MappedNeuron &n)
+        Timestep &ts, MappedNeuron &n, const std::optional<double> value)
 {
     PipelineResult axon_result{};
     axon_result.latency = 0.0;
     axon_result.energy = 0.0;
+
+    std::optional<int32_t> graded_value{std::nullopt};
+    if (value.has_value())
+    {
+        const double v = value.value();
+        if (!std::isfinite(v) || std::trunc(v) != v || v == 0.0 ||
+                v < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+                v > static_cast<double>(std::numeric_limits<int32_t>::max()))
+        {
+            throw std::invalid_argument(
+                    "A graded spike value must be a nonzero signed 32-bit "
+                    "integer");
+        }
+        graded_value = static_cast<int32_t>(v);
+    }
 
     TRACE1(CHIP, "nid:%s.%zu sending spike message to %zu axons out\n",
             n.parent_group_name.c_str(), n.id, n.axon_out_addresses.size());
@@ -881,6 +906,8 @@ sanafe::PipelineResult sanafe::SpikingChip::pipeline_process_axon_out(
         //  even when creating messages on multiple threads
         const long int id = total_messages_sent.fetch_add(1);
         Message m(id, *this, axon_address, n, ts.timestep);
+        // Every message of a graded spike carries its value
+        m.graded_value = graded_value;
         // Add axon access cost to message latency and energy
         AxonOutUnit &axon_out_hw = *(n.axon_out_hw);
         axon_out_hw.energy += axon_out_hw.energy_access;

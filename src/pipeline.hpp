@@ -460,7 +460,7 @@ inline void sanafe::PipelineUnit::process_soma_output(MappedNeuron &n,
 
 inline sanafe::PipelineResult sanafe::PipelineUnit::process_synapse_input(
         const Timestep &ts, const MappedNeuron & /*n*/,
-        std::optional<MappedConnection *> con, const PipelineResult & /*input*/)
+        std::optional<MappedConnection *> con, const PipelineResult &input)
 {
     bool read = false;
     size_t synapse_address = 0UL;
@@ -477,6 +477,12 @@ inline sanafe::PipelineResult sanafe::PipelineUnit::process_synapse_input(
         read = true;
     }
     PipelineResult output = update(synapse_address, read, ts.timestep);
+    // A graded message carries its value as the input current, which
+    //  multiplies the synaptic output. A binary message has no input current.
+    if (input.current.has_value() && output.current.has_value())
+    {
+        output.current = output.current.value() * input.current.value();
+    }
     ++spikes_processed;
 
     return output;

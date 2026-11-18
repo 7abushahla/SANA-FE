@@ -195,7 +195,8 @@ private:
     static double process_message(Timestep &ts, Core &c, Message &m);
     static PipelineResult execute_pipeline(const std::vector<PipelineUnit *> &pipeline, Timestep &ts, MappedNeuron &n, std::optional<MappedConnection *> con, const PipelineResult &input);
     static double pipeline_process_axon_in(Core &core, const Message &m);
-    PipelineResult pipeline_process_axon_out(Timestep &ts, MappedNeuron &n);
+    PipelineResult pipeline_process_axon_out(Timestep &ts, MappedNeuron &n,
+            std::optional<double> value);
 
     // Spike/potential/message traces
     void sim_sort_and_record_messages(const Timestep &ts);

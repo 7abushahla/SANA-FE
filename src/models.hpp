@@ -426,6 +426,7 @@ public:
         {"window_stop", "(int) Exclusive zero-based update index ending the window."},
         {"stride", "(int) Check every stride-th update of the window, from its start."},
         {"currents", "(list[int]) Signed 24-bit external current per update, then zero."},
+        {"graded_values", "(list[int]) Signed 32-bit value sent per update, then zero. Sets the neuron as a graded source. Not supported with the time-step buffer before the axon-out unit, where the soma runs only when a message arrives and its value does not reach the messages."},
     };
 private:
     struct State
@@ -441,6 +442,10 @@ private:
         std::vector<int32_t> currents;
         size_t cursor{0};
         size_t updates_seen{0};
+        // A graded source sends graded_values[u] at its update u, then zero.
+        bool graded_source{false};
+        std::vector<int32_t> graded_values;
+        size_t graded_cursor{0};
     };
     std::vector<State> states;
 };
