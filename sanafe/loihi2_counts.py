@@ -162,12 +162,14 @@ labels ``("core_to_router", tile, core)``, ``("router_to_core", tile, core)`` an
 ``("mesh", x1, y1, x2, y2)``, sorted, the union of the links that carry a message
 under either convention in any step.
 """
+import copy
 from collections import Counter
 
 import numpy as np
 
 from sanafe.lif_network import (ORDERS, _conv_geometry, _neuron_layers,  # noqa: F401 (ORDERS)
-                                conv_synapses, neuron_positions)
+                                check_partition_layer, check_partition_layers, conv_synapses,
+                                neuron_positions)
 from sanafe.loihi2_runtime import _positive_integer, _route_links
 
 CONVENTIONS = ("nonzero", "expanded")
@@ -361,7 +363,7 @@ def builder_partition(manifest):
     otherwise reader order under the name ``builder``.
     """
     if manifest.get("partition") is not None:
-        return manifest["partition"]
+        return copy.deepcopy(manifest["partition"])
     return {"name": "builder",
             "layers": [{"order": "reader",
                         "sizes": [int(s["stop"]) - int(s["start"]) for s in layer["slices"]]}
@@ -386,18 +388,12 @@ def _slice_indices(manifest, structure, partition):
         return out
     if manifest.get("execution_profile") != _LIF_PROFILE:
         raise ValueError("a partition other than the builder's needs a LIF manifest")
-    layers = partition["layers"]
-    if len(layers) != len(structure["sizes"]):
-        raise ValueError("the partition needs one entry per layer")
+    layers = check_partition_layers(partition, len(structure["sizes"]))
     for k, spec in enumerate(layers):
-        sizes = [int(v) for v in spec["sizes"]]
-        if (len(sizes) != len(structure["slices"][k]) or any(v < 1 for v in sizes) or
-                sum(sizes) != structure["sizes"][k]):
-            raise ValueError(f"layer {k}: the partition needs one positive slice size per core "
-                             f"({len(structure['slices'][k])}) summing to "
-                             f"{structure['sizes'][k]}")
+        order, sizes = check_partition_layer(k, spec, structure["sizes"][k],
+                                             len(structure["slices"][k]))
         pos = neuron_positions(manifest["layer_shapes"][k], manifest["layer_kinds"][k],
-                               spec["order"])
+                               order)
         out.append(np.searchsorted(np.cumsum(sizes), pos, side="right").astype(np.int64))
     return out
 
@@ -424,7 +420,8 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
     """
     _refuse_dense_lif_chain(manifest)
     per_read = ([_positive_integer(weights_per_read, "weights_per_read")]
-                if np.isscalar(weights_per_read)
+                if np.isscalar(weights_per_read) or (isinstance(weights_per_read, np.ndarray)
+                                                     and weights_per_read.ndim == 0)
                 else [_positive_integer(v, "weights_per_read") for v in weights_per_read])
     if not per_read:
         raise ValueError("weights_per_read must be positive integers")
@@ -458,7 +455,12 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
 
     pair_tables = [_pairs(conn, column_of[conn["src"]], column_of[conn["dst"]], n_cores)
                    for conn in structure["connectivity"]]
-    if manifest.get("execution_profile") == _LIF_PROFILE and partition is None:
+    # The check holds whenever the resolved partition is the one the manifest records, whether
+    # the caller left it out or stated it.
+    if manifest.get("execution_profile") == _LIF_PROFILE and (
+            partition is None or all(
+                np.array_equal(a, b) for a, b in
+                zip(slice_of, _slice_indices(manifest, structure, None)))):
         _check_manifest_fanout(manifest, structure, pair_tables, slice_of)
     # Sources with at least one entry under each convention, for the per-spike rule.
     has_entry = [{"nonzero": np.bincount(conn["source"][conn["weight"] != 0],
@@ -546,7 +548,7 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
         "execution_profile": manifest["execution_profile"],
         "partition": (builder_partition(manifest) if partition is None and
                       manifest.get("execution_profile") == _LIF_PROFILE
-                      else partition if partition is not None
+                      else copy.deepcopy(partition) if partition is not None
                       else {"name": "builder", "layers": "one core per layer"}),
         "message_rule": "SANA-FE's, one message per spiking source neuron and destination core "
                         "holding at least one of its entries (messages_out, messages_in, links), "

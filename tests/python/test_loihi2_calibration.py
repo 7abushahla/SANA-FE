@@ -351,10 +351,6 @@ class TestEnergyScaleBracket(Base):
         self.assertEqual(out['by_rule'], out['by_energy_scale']['carried']['by_rule'])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class TestReportConvention(Base):
     """Time, energy and host time are totals over the run, each divided by `samples`."""
 
@@ -382,3 +378,7 @@ class TestReportConvention(Base):
         self.assertEqual(out['by_energy_scale']['carried']['by_rule'], before)
         again = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74)
         self.assertEqual(again['readings'], readings)
+
+
+if __name__ == '__main__':
+    unittest.main()

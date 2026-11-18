@@ -322,30 +322,67 @@ def neuron_positions(shape, kind, order):
     return ((xx * h + yy) * c + cc).reshape(-1).astype(np.int64)
 
 
+def check_partition_layers(partition, n_layers):
+    """The layer entries of a stated ``partition``, after checking its form.
+
+    A partition is a mapping with a ``layers`` list holding one mapping per layer
+    with a neuron, each with an ``order`` and a ``sizes`` list. Every refusal is a
+    ``ValueError``, and one that concerns a layer starts with ``layer {k}:``.
+    """
+    if not isinstance(partition, dict) or "layers" not in partition:
+        raise ValueError("a partition is a mapping with a 'layers' list")
+    layers = partition["layers"]
+    if isinstance(layers, (str, bytes, dict)) or not hasattr(layers, "__len__"):
+        raise ValueError("the partition's 'layers' must be a list")
+    layers = list(layers)
+    if len(layers) != n_layers:
+        raise ValueError(f"the partition needs one entry per layer with a neuron "
+                         f"({n_layers}), got {len(layers)}")
+    for k, spec in enumerate(layers):
+        if not isinstance(spec, dict):
+            raise ValueError(f"layer {k}: the entry must be a mapping with 'order' and 'sizes'")
+        for key in ("order", "sizes"):
+            if key not in spec:
+                raise ValueError(f"layer {k}: the entry has no {key!r}")
+    return layers
+
+
+def check_partition_layer(k, spec, size, cores):
+    """The (order, slice sizes) of layer ``k`` of a stated partition.
+
+    The order is one of ``ORDERS`` and the sizes are one positive integer per
+    core (``cores``) of the layer, summing to its ``size``. The builder and
+    ``sanafe.loihi2_counts`` both call this, so they refuse the same partitions
+    with the same messages.
+    """
+    if spec["order"] not in ORDERS:
+        raise ValueError(f"layer {k}: order {spec['order']!r} is not one of {ORDERS}")
+    raw = spec["sizes"]
+    if (isinstance(raw, (str, bytes, dict)) or not hasattr(raw, "__len__")
+            or (isinstance(raw, np.ndarray) and raw.ndim != 1)):
+        raise ValueError(f"layer {k}: the slice sizes must be a list of integers")
+    # The range is wide so that zero and negative sizes get the message about positive sizes.
+    sizes = [_scalar_integer(v, f"layer {k}: slice size", -_INT32_MAX, _INT32_MAX) for v in raw]
+    if len(sizes) != cores or any(v < 1 for v in sizes) or sum(sizes) != size:
+        raise ValueError(f"layer {k}: the partition needs one positive slice size per core "
+                         f"({cores}) summing to {size}")
+    return spec["order"], sizes
+
+
 def _partition_layers(entries, counts, partition):
     """Per layer, the (order, slice sizes) of ``partition``, or of the default when it is None.
 
     The default is reader order with the near-equal slices of ``slice_sizes``. A
     stated partition needs one entry per layer with a neuron, each with an order
     of ``ORDERS`` and one positive slice size per core of that layer, summing to
-    the layer's size. These are the rules of ``sanafe.loihi2_counts``.
+    the layer's size. These are the rules of ``sanafe.loihi2_counts``, which
+    calls the same checks.
     """
     if partition is None:
         return [("reader", slice_sizes(entry["size"], n)) for entry, n in zip(entries, counts)]
-    layers = list(partition["layers"])
-    if len(layers) != len(entries):
-        raise ValueError(f"the partition needs one entry per layer with a neuron "
-                         f"({len(entries)}), got {len(layers)}")
-    out = []
-    for k, (spec, entry, n) in enumerate(zip(layers, entries, counts)):
-        if spec["order"] not in ORDERS:
-            raise ValueError(f"layer {k}: order {spec['order']!r} is not one of {ORDERS}")
-        sizes = [_scalar_integer(v, "slice size", 0, _INT32_MAX) for v in spec["sizes"]]
-        if len(sizes) != n or any(v < 1 for v in sizes) or sum(sizes) != entry["size"]:
-            raise ValueError(f"layer {k}: the partition needs one positive slice size per core "
-                             f"({n}) summing to {entry['size']}")
-        out.append((spec["order"], sizes))
-    return out
+    layers = check_partition_layers(partition, len(entries))
+    return [check_partition_layer(k, spec, entry["size"], n)
+            for k, (spec, entry, n) in enumerate(zip(layers, entries, counts))]
 
 
 def _placement(entries, layer_cores, order, partition=None):

@@ -574,11 +574,115 @@ def test_a_partition_is_refused_unless_it_covers_every_core_of_every_layer(tmp_p
                                            layers[3]]})
     with pytest.raises(ValueError, match="layer 0: order 'width' is not one of"):
         build({"name": "order", "layers": [{"order": "width", "sizes": [64, 62]}, *layers[1:]]})
-    # A dense layer has one order, so both names give the same placement, as in the counts.
-    _, a = build({"name": "dense lava", "layers": layers})
-    _, b = build({"name": "dense reader", "layers": [*layers[:3],
-                                                     {"order": "reader", "sizes": [4, 4, 2]}]})
-    assert [p["slices"] for p in a["placement"]] == [p["slices"] for p in b["placement"]]
+    # A dense layer has one order, so both names place every neuron on the same core. The
+    # slices hold only tile, core, start and stop, so the comparison is of the per-neuron cores.
+    net_a, a = build({"name": "dense lava", "layers": layers})
+    net_b, b = build({"name": "dense reader", "layers": [*layers[:3],
+                                                         {"order": "reader", "sizes": [4, 4, 2]}]})
+    name = a["group_names"][3]
+    assert b["group_names"][3] == name
+    cores_a = [tuple(net_a.groups[name][i].mapped_core) for i in range(10)]
+    cores_b = [tuple(net_b.groups[name][i].mapped_core) for i in range(10)]
+    assert cores_a == cores_b
+    assert len(set(cores_a)) == 3
+
+
+def _bad_layers(index, replacement):
+    layers = [dict(layer) for layer in LAVA_REMAINDER["layers"]]
+    layers[index] = replacement
+    return {"name": "bad", "layers": layers}
+
+
+_REFUSED_PARTITIONS = [
+    (lambda: {"name": "long", "layers": [*LAVA_REMAINDER["layers"], LAVA_REMAINDER["layers"][0]]},
+     "one entry per layer"),
+    (lambda: _bad_layers(1, {"order": "lava", "sizes": [24, 24, 36, 0]}),
+     r"layer 1: the partition needs one positive slice size"),
+    (lambda: _bad_layers(1, {"order": "lava", "sizes": [24, 24, 48, -12]}),
+     r"layer 1: the partition needs one positive slice size"),
+    (lambda: _bad_layers(0, {"order": "lava", "sizes": [64.7, 61.3]}),
+     r"layer 0: slice size must be an integer"),
+    (lambda: _bad_layers(0, {"order": "lava", "sizes": [True, 125]}),
+     r"layer 0: slice size must be an integer"),
+    (lambda: _bad_layers(2, {"order": "lava", "sizes": ["21", 21, 6]}),
+     r"layer 2: slice size must be an integer"),
+    (lambda: _bad_layers(2, {"order": "lava", "sizes": 48}),
+     r"layer 2: the slice sizes must be a list"),
+    (lambda: _bad_layers(2, {"order": "lava"}), r"layer 2: the entry has no 'sizes'"),
+    (lambda: _bad_layers(2, {"sizes": [21, 21, 6]}), r"layer 2: the entry has no 'order'"),
+    (lambda: _bad_layers(2, [21, 21, 6]), r"layer 2: the entry must be a mapping"),
+    (lambda: {"name": "no layers"}, "a partition is a mapping with a 'layers' list"),
+    (lambda: [{"order": "lava", "sizes": [64, 62]}], "a partition is a mapping"),
+    (lambda: {"name": "scalar", "layers": 4}, "'layers' must be a list"),
+]
+
+
+@pytest.mark.parametrize("make,message", _REFUSED_PARTITIONS)
+def test_every_refusal_of_a_stated_partition_is_a_value_error_naming_its_layer(
+        tmp_path, make, message):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread")
+    steps = [np.zeros((3, n), dtype=np.int64) for n in manifest["layer_sizes"]]
+    with pytest.raises(ValueError, match=message) as built:
+        netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, partition=make())
+    # The counts refuse the same partition with the same message.
+    with pytest.raises(ValueError, match=message) as counted:
+        _counts(manifest, {"spikes": steps, "trace": None},
+                connectivity=expanded_connectivity(network), partition=make())
+    assert str(built.value) == str(counted.value)
+
+
+def test_the_neuron_positions_of_a_multichannel_layer_equal_lavas_order():
+    # Shape (C=2, H=2, W=3). The reader index of (c, y, x) is (c * 2 + y) * 3 + x, so the
+    # reader indices laid out by (c, y, x) are the array below.
+    reader_index_array = np.arange(12).reshape(2, 2, 3)
+    # Lava's index of (c, y, x) is (x * H + y) * C + c. This array is written out by hand,
+    # one entry per reader index, from that formula.
+    literal = np.array([0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11])
+    positions = neuron_positions((2, 2, 3), "conv", "lava")
+    assert np.array_equal(positions, literal)
+    # Second, independent formula. Transposing to (W, H, C) and flattening lists the reader
+    # indices in Lava's order, which is the inverse permutation of the positions.
+    in_lava_order = np.transpose(reader_index_array, (2, 1, 0)).reshape(-1)
+    assert np.array_equal(positions[in_lava_order], np.arange(12))
+    assert np.array_equal(neuron_positions((2, 2, 3), "conv", "reader"), np.arange(12))
+    assert np.array_equal(neuron_positions((2, 2, 3), "dense", "lava"), np.arange(12))
+
+
+def test_the_partition_returned_by_the_counts_and_the_builder_is_a_copy(tmp_path):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread",
+                                   partition=LAVA_REMAINDER)
+    recorded = json.loads(json.dumps(manifest["partition"]))
+    run = sanafe_run(net, manifest, arch, 6, extra_traces=False)
+    own = _counts(manifest, run, connectivity=expanded_connectivity(network))
+    stated = _counts(manifest, run, connectivity=expanded_connectivity(network),
+                     partition=manifest["partition"])
+    for returned in (builder_partition(manifest), own["partition"], stated["partition"]):
+        returned["layers"][0]["sizes"][0] += 1
+        returned["name"] = "changed"
+    assert manifest["partition"] == recorded
+
+
+@pytest.mark.parametrize("stated", [False, True])
+def test_the_fan_out_check_runs_when_the_manifests_own_partition_is_stated(tmp_path, stated):
+    network = _conv_network(tmp_path)
+    arch = load_loihi2_candidate()
+    net, manifest = netx_to_sanafe(network, _conv_bias(), arch, CONV_CORES, order="spread",
+                                   partition=LAVA_REMAINDER)
+    run = sanafe_run(net, manifest, arch, 6, extra_traces=False)
+    connectivity = expanded_connectivity(network)
+    kwargs = {"partition": builder_partition(manifest)} if stated else {}
+    _counts(manifest, run, connectivity=connectivity, **kwargs)
+    corrupted = json.loads(json.dumps(manifest))
+    corrupted["connections"][0]["synapses_per_dst_core"][0] += 1
+    with pytest.raises(ValueError, match="per-core fan-out differs"):
+        _counts(corrupted, run, connectivity=connectivity, **kwargs)
+    # Another partition is not the manifest's, so its counts are not checked against it.
+    _counts(corrupted, run, connectivity=connectivity, partition=LAVA_REMAINDER | {
+        "layers": [{"order": "reader", "sizes": s["sizes"]} for s in LAVA_REMAINDER["layers"]]})
 
 
 def test_the_spikes_do_not_depend_on_the_partition(tmp_path):
@@ -705,7 +809,8 @@ def test_the_manifest_of_a_dense_lif_chain_is_refused_by_both_count_functions():
 _BAD_SCALARS = [4.9, True, "8", 0, -1]
 # weights_per_read may also be given per layer, message_bits is a single value.
 _BAD_COUNT_ARGUMENTS = (
-    [("weights_per_read", bad) for bad in _BAD_SCALARS + [[4.9], [True], ["8"]]]
+    [("weights_per_read", bad) for bad in
+     _BAD_SCALARS + [[4.9], [True], ["8"], np.array(4), np.array(4.5)]]
     + [("message_bits", bad) for bad in _BAD_SCALARS]
 )
 
