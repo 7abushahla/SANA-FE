@@ -459,10 +459,13 @@ LAVA_REMAINDER = {"name": "lava remainder",
                              ([64, 62], [24, 24, 24, 12], [21, 21, 6], [4, 4, 2])]}
 # The builder's manifest and saved netlist for _conv_network, recorded from the builder as
 # it was before it accepted a partition. The default must reproduce them byte for byte.
+# The manifest is hashed without the record of the architecture profile it embeds, which
+# belongs to the profile and changes whenever a cost of the profile does.
+PROFILE_KEYS = ("architecture_profile", "architecture_sha256")
 DEFAULT_SHA256 = {
-    "spread": ("1859f2f1df3e36a62cf11c3a21222a66c62d84a801bbfcc0439e34fbebb7fad6",
+    "spread": ("f000647a906bb1df04fe4a6f807e412f703174f7cc8bc3b0c2ad9be30105ceee",
                "6ca042f85977488567a7aa638570fb60647ee328515c5e7d6ba9e272cdffccf1"),
-    "packed_reversed": ("e487df005a2a15ab0b753411bccc917b068016627edea99048de42c1abfa1f56",
+    "packed_reversed": ("96949a20936e90236e6648c28b7e7000b2fdd45640e59946028a3b5dc485a53f",
                         "816244f178ecd0385e66920cb8e1b547137007a16cdcd0f6e5993451b56afbaa"),
 }
 
@@ -472,10 +475,13 @@ def _conv_bias():
 
 
 def _digests(net, manifest, path):
-    """sha256 of the manifest (JSON, sorted keys) and of the network saved as a netlist."""
+    """sha256 of the manifest without the profile's record (JSON, sorted keys) and of the
+    network saved as a netlist."""
     import hashlib
     net.save(str(path), use_netlist_format=True)
-    return (hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
+    assert all(key in manifest for key in PROFILE_KEYS)
+    own = {key: value for key, value in manifest.items() if key not in PROFILE_KEYS}
+    return (hashlib.sha256(json.dumps(own, sort_keys=True).encode()).hexdigest(),
             hashlib.sha256(path.read_bytes()).hexdigest())
 
 
