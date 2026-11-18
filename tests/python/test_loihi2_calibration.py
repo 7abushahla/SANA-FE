@@ -353,3 +353,32 @@ class TestEnergyScaleBracket(Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestReportConvention(Base):
+    """Time, energy and host time are totals over the run, each divided by `samples`."""
+
+    def test_host_time_is_divided_by_samples_like_the_other_totals(self):
+        cal = self.load(document([per_chip(0.15)]))
+        one = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=4,
+                     samples=1, host_time_s=0.1)
+        many = report(cal, sim_time_s=2e-3 * 10, dynamic_energy_j=1e-3 * 10, chips=1, cores=4,
+                      samples=10, host_time_s=0.1 * 10)
+        self.assertAlmostEqual(many['host_time_s'], 0.1)
+        for key in ('inference_time_s', 'energy_dynamic_j', 'energy_total_j',
+                    'energy_inference_j', 'host_time_s'):
+            self.assertAlmostEqual(many[key], one[key], msg=key)
+        self.assertAlmostEqual(many['energy_total_j'], many['energy_inference_j'] + 0.15 * 0.1)
+
+    def test_a_report_shares_no_mutable_part_with_the_calibration_or_itself(self):
+        cal = self.load(bracketed(rules=[per_chip(0.15)]))
+        out = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74)
+        readings = copy.deepcopy(cal.readings)
+        out['readings']['injected'] = 1
+        self.assertEqual(cal.readings, readings)
+        self.assertIsNot(out['by_rule'], out['by_energy_scale']['carried']['by_rule'])
+        before = copy.deepcopy(out['by_energy_scale']['carried']['by_rule'])
+        out['by_rule']['per_chip']['power_total_w'] = -1.0
+        self.assertEqual(out['by_energy_scale']['carried']['by_rule'], before)
+        again = report(cal, sim_time_s=2e-3, dynamic_energy_j=1e-3, chips=1, cores=74)
+        self.assertEqual(again['readings'], readings)

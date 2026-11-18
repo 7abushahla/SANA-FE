@@ -561,3 +561,23 @@ def test_conv_weights_outside_eight_bits_refused(tmp_path):
         w[1, 2, 1, 1] = bad
         with pytest.raises(ValueError, match="8-bit"):
             read_netx(_conv_file(tmp_path, f"bad{bad}.net", weight=w))
+
+
+@pytest.mark.parametrize("bad", [0, -4, 2.5, True, "16"])
+def test_reset_interval_must_be_a_positive_integer(tmp_path, bad):
+    path = _dense_file(tmp_path, [[1, 2]])
+    with pytest.raises(ValueError, match="reset_interval"):
+        read_netx(path, reset_interval=bad)
+
+
+@pytest.mark.parametrize("bad", [2.5, True, "3", None])
+def test_reset_offset_must_be_an_integer(tmp_path, bad):
+    path = _dense_file(tmp_path, [[1, 2]])
+    with pytest.raises(ValueError, match="reset_offset"):
+        read_netx(path, reset_interval=16, reset_offset=bad)
+
+
+def test_a_negative_reset_offset_wraps_modulo_the_interval_as_in_lava(tmp_path):
+    path = _dense_file(tmp_path, [[1, 2]])
+    net = read_netx(path, reset_interval=5, reset_offset=-3)
+    assert [l.resets_at for l in net.layers if l.neuron is not None][0] == (-3 + 1) % 5

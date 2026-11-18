@@ -49,6 +49,7 @@ Conventions of the returned objects
 """
 
 from dataclasses import dataclass, field
+from numbers import Integral
 from typing import Any, Dict, List, Optional, Tuple
 
 import h5py
@@ -288,6 +289,13 @@ def read_netx(path, reset_interval: Optional[int] = None,
     ``hdf5.py`` line 485) and every further layer with a neuron receives one more
     (lines 497, 522, 550). Flatten layers do not advance it.
     """
+    if reset_interval is not None and (isinstance(reset_interval, bool) or
+                                       not isinstance(reset_interval, Integral) or
+                                       reset_interval < 1):
+        raise ValueError("reset_interval must be None or a positive integer")
+    # Lava keeps the offset modulo the interval, so any integer is a valid offset.
+    if isinstance(reset_offset, bool) or not isinstance(reset_offset, Integral):
+        raise ValueError("reset_offset must be an integer")
     layers: List[NetxLayer] = []
     next_offset = reset_offset + 1
     with h5py.File(path, "r") as f:

@@ -17,7 +17,7 @@ import sanafe
 from sanafe.lava_lif import (ACTIVATION_BOUND, lava_lif_trace, lif_chain_to_sanafe,
                              sanafe_lif_trace)
 from sanafe.loihi2 import load_loihi2_candidate
-from test_integer_models import TestIfAgainstLeakFreeLif, if_trace
+import test_integer_models
 
 
 @unittest.skipUnless(HAVE_LAVA, 'requires Lava')
@@ -155,7 +155,8 @@ def large_theta_cases():
 
 @unittest.skipUnless(HAVE_LAVA, 'requires Lava')
 class TestLeakFreeMappingOnLava(unittest.TestCase):
-    """Lava's own LIF under the leak-free mapping of TestIfAgainstLeakFreeLif, against the soft-reset IF.
+    """Lava's own LIF under the leak-free mapping of TestIfAgainstLeakFreeLif in test_integer_models,
+    against the soft-reset IF.
 
     The mapping is du = 4095, dv = 0, vth = theta - 1, initial_v = 32 theta and bias exponent 6.
     Its domain is theta at most 131,072 (17-bit vth), bias in [-4096, 4095] (13-bit mantissa)
@@ -170,13 +171,13 @@ class TestLeakFreeMappingOnLava(unittest.TestCase):
         rng = np.random.default_rng(2)
         negative_before_spike = late_first_spike = exact_landing = runs = fired = 0
         lowest = 0
-        for theta, bias, draw in TestIfAgainstLeakFreeLif.cases() + large_theta_cases():
+        for theta, bias, draw in test_integer_models.TestIfAgainstLeakFreeLif.cases() + large_theta_cases():
             a = np.stack([draw(rng, theta) for _ in range(self.NEURONS)], axis=1)
             lava = lava_lif_trace(a, du=4095, dv=0, vth=theta - 1, bias_mant=bias, bias_exp=6,
                                   initial_v=32 * theta)
             for column in range(self.NEURONS):
                 column_a = a[:, column].tolist()
-                s_if, v_if = if_trace({'threshold': theta, 'initial_voltage': theta // 2,
+                s_if, v_if = test_integer_models.if_trace({'threshold': theta, 'initial_voltage': theta // 2,
                                        'bias': bias, 'currents': column_a}, 200)
                 k = s_if.index(1) if 1 in s_if else 200
                 with self.subTest(theta=theta, bias=bias, column=column):

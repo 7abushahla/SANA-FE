@@ -46,6 +46,7 @@ provenance note says what each value rests on. ``report`` then gives every
 quantity that depends on the scale at all three values (``by_energy_scale``).
 The time section takes no bracket.
 """
+import copy
 from dataclasses import dataclass
 import math
 from numbers import Integral, Real
@@ -258,14 +259,18 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
            host_time_s=0.0):
     """Turn a modeled time and dynamic energy into the reported terms.
 
-    `sim_time_s` and `dynamic_energy_j` are the modeled totals over `samples`
-    inferences, as the simulator reports them, before any scale. The inference
+    `sim_time_s`, `dynamic_energy_j` and `host_time_s` are totals over the run
+    of `samples` inferences, and each is divided by `samples`. `sim_time_s` and
+    `dynamic_energy_j` are as the simulator reports them, before any scale. The
+    inference
     time is `sim_time_s` times the latency scale, divided by `samples`. The
     dynamic energy of one inference is `dynamic_energy_j` times the energy
     scale, divided by `samples`. Dynamic power is that energy over the
     inference time. For each static rule, total power is static plus dynamic
     power, inference energy is total power times inference time, and total
-    energy adds static power times `host_time_s`.
+    energy adds static power times the host time of one inference,
+    `host_time_s` divided by `samples`, which is also the `host_time_s` of the
+    report.
 
     The single-valued quantities are at the top level. The four rule-dependent
     quantities are under `by_rule`, and also at the top level when the file
@@ -280,6 +285,7 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
     dynamic_energy_j = _number(dynamic_energy_j, 'dynamic_energy_j')
     host_time_s = _number(host_time_s, 'host_time_s')
     samples = _integer(samples, 'samples', 1)
+    host_time_s = host_time_s / samples
     chips = _integer(chips, 'chips', 1)
     cores = _integer(cores, 'cores', 0)
 
@@ -313,20 +319,21 @@ def report(calibration, *, sim_time_s, dynamic_energy_j, chips, cores, samples=1
         'chips': chips,
         'cores': cores,
         'host_time_s': host_time_s,
-        'by_rule': carried['by_rule'],
+        'by_rule': copy.deepcopy(carried['by_rule']),
         'scales': {
             'time': {'value': calibration.time.scale, 'status': calibration.time.status},
             'dynamic': scales_dynamic,
         },
-        'readings': calibration.readings,
+        'readings': copy.deepcopy(calibration.readings),
         'represents': calibration.represents,
-        'transfer': [dict(entry) for entry in calibration.transfer],
+        'transfer': copy.deepcopy([dict(entry) for entry in calibration.transfer]),
     }
     if len(carried['by_rule']) == 1:
         out.update(next(iter(carried['by_rule'].values())))
     if dynamic.low is not None:
         scales_dynamic.update(low=dynamic.low, high=dynamic.high)
         out['by_energy_scale'] = {
-            name: {'energy_scale': scale, **(carried if name == 'carried' else at_scale(scale))}
+            name: {'energy_scale': scale,
+                   **copy.deepcopy(carried if name == 'carried' else at_scale(scale))}
             for name, scale in zip(SCALE_LEVELS, (dynamic.low, dynamic.scale, dynamic.high))}
     return out

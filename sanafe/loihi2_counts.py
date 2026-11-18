@@ -168,7 +168,7 @@ import numpy as np
 
 from sanafe.lif_network import (ORDERS, _conv_geometry, _neuron_layers,  # noqa: F401 (ORDERS)
                                 conv_synapses, neuron_positions)
-from sanafe.loihi2_runtime import _route_links
+from sanafe.loihi2_runtime import _positive_integer, _route_links
 
 CONVENTIONS = ("nonzero", "expanded")
 _IF_PROFILES = ("qcfs-if-int24-binary-v1", "qcfs-if-int24-binary-windowed-v1")
@@ -207,6 +207,15 @@ def expanded_connectivity(network):
         out.append({"src": k - 1, "dst": k, "source": source.astype(np.int64),
                     "target": target.astype(np.int64), "weight": weight.astype(np.int64)})
     return out
+
+
+def _refuse_dense_lif_chain(manifest):
+    # lif_chain_to_sanafe stamps the profile id of the netx LIF manifests on a manifest with
+    # another layout (``placements`` and ``effective_weights``, no ``placement`` table).
+    if manifest.get("execution_profile") == _LIF_PROFILE and "placement" not in manifest:
+        raise ValueError("the manifest of a LIF chain built by lif_chain_to_sanafe is not "
+                         "supported by these count functions (it has no 'placement' key, "
+                         "which the manifest of netx_to_sanafe carries)")
 
 
 def _structure(manifest, connectivity):
@@ -276,7 +285,10 @@ def spikes_from_trace(manifest, result):
 
 def _spikes_and_result(manifest, traces):
     # A simulator result also has a key "spikes", its total of synaptic events.
+    # A result that was run without a spike trace holds None under "spike_trace".
     if "spike_trace" in traces:
+        if traces["spike_trace"] is None:
+            raise ValueError("the run was not logged, so it holds no spikes")
         spikes, result = spikes_from_trace(manifest, traces), traces
     elif "spikes" in traces:
         spikes, result = traces["spikes"], traces.get("trace")
@@ -410,13 +422,13 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
     int64 arrays, ``[steps, cores]`` per count and ``[steps, links]`` per link
     count, with the partition and the message rule recorded.
     """
-    per_read = ([int(weights_per_read)] if np.isscalar(weights_per_read)
-                else [int(v) for v in weights_per_read])
-    if not per_read or any(v < 1 for v in per_read):
+    _refuse_dense_lif_chain(manifest)
+    per_read = ([_positive_integer(weights_per_read, "weights_per_read")]
+                if np.isscalar(weights_per_read)
+                else [_positive_integer(v, "weights_per_read") for v in weights_per_read])
+    if not per_read:
         raise ValueError("weights_per_read must be positive integers")
-    message_bits = int(message_bits)
-    if message_bits < 1:
-        raise ValueError("message_bits must be a positive integer")
+    message_bits = _positive_integer(message_bits, "message_bits")
     structure = _structure(manifest, connectivity)
     spikes, result, steps = _spikes_and_result(manifest, traces)
     sizes, height = structure["sizes"], structure["height"]
@@ -574,6 +586,7 @@ def message_trace_counts(manifest, result, *, message_bits):
     of one access, and it loads the links of ``_links_of``. These equal the
     counts of ``core_step_counts`` under the convention the builder emitted.
     """
+    _refuse_dense_lif_chain(manifest)
     if manifest.get("execution_profile") == _LIF_PROFILE:
         cores = sorted({(int(s["tile"]), int(s["core"])) for layer in manifest["placement"]
                         for s in layer["slices"]})
@@ -581,7 +594,9 @@ def message_trace_counts(manifest, result, *, message_bits):
         cores = sorted({(int(p[0]), int(p[1])) for p in manifest["placements"]})
     height = int(manifest["architecture_profile"]["topology"]["height"])
     column = {place: i for i, place in enumerate(cores)}
-    trace = result["message_trace"]
+    trace = result.get("message_trace")
+    if trace is None:
+        raise ValueError("the run was not logged, so it holds no message trace")
     steps = len(trace)
     shape = (steps, len(cores))
     out_, in_, syn = (np.zeros(shape, dtype=np.int64) for _ in range(3))

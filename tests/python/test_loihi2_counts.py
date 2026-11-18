@@ -662,3 +662,56 @@ def test_workload_from_counts_gives_the_modeled_time_of_analyze_binary_chain(if_
         assert modeled == expected, name
         assert any(step["synmem_reads_assumed"] > 0 and step["terms_seconds"]["link"] > 0
                    for step in modeled["steps"]), name
+
+
+# ---------------------------------------------------------------------------
+# Refusals of malformed arguments and manifests
+
+
+def _tiny_if_manifest():
+    return {"execution_profile": "qcfs-if-int24-binary-v1", "layer_sizes": [2, 2],
+            "placements": [[0, 0], [0, 1]], "effective_weights": [[[1, 0], [0, 1]]],
+            "architecture_profile": {"topology": {"width": 1, "height": 1}}}
+
+
+def _dense_lif_chain_manifest():
+    # The layout of lif_chain_to_sanafe, which carries the profile id of the LIF manifests of
+    # netx_to_sanafe but holds placements and effective weights, not a placement table.
+    manifest = _tiny_if_manifest()
+    manifest["execution_profile"] = "lava-lif-int24-v1"
+    return manifest
+
+
+def test_the_manifest_of_a_dense_lif_chain_is_refused_by_both_count_functions():
+    manifest = _dense_lif_chain_manifest()
+    traces = {"spikes": [np.zeros((3, 2)), np.zeros((3, 2))], "trace": None,
+              "spike_trace": [[], [], []], "message_trace": [[], [], []]}
+    with pytest.raises(ValueError, match="lif_chain_to_sanafe.*not supported.*'placement'"):
+        _counts(manifest, traces, connectivity=[])
+    with pytest.raises(ValueError, match="lif_chain_to_sanafe.*not supported.*'placement'"):
+        message_trace_counts(manifest, traces, message_bits=BITS)
+
+
+@pytest.mark.parametrize("name", ["weights_per_read", "message_bits"])
+@pytest.mark.parametrize("bad", [4.9, True, "8", 0, -1, [4.9], [True], ["8"]])
+def test_weights_per_read_and_message_bits_must_be_positive_integers(name, bad):
+    if name == "message_bits" and isinstance(bad, list):
+        pytest.skip("message_bits is a single value")
+    kwargs = {"weights_per_read": 4, "message_bits": 8}
+    kwargs[name] = bad
+    traces = {"spikes": [np.zeros((3, 2)), np.zeros((3, 2))], "trace": None}
+    with pytest.raises(ValueError, match=name):
+        core_step_counts(_tiny_if_manifest(), traces, **kwargs)
+
+
+def test_a_run_without_a_requested_trace_is_refused_with_a_message():
+    # A simulator result always has both keys, set to None when the trace was not requested.
+    result = {"spike_trace": None, "message_trace": None, "spikes": 0}
+    with pytest.raises(ValueError, match="not logged"):
+        _counts(_tiny_if_manifest(), result)
+    with pytest.raises(ValueError, match="not logged"):
+        message_trace_counts(_tiny_if_manifest(), result, message_bits=BITS)
+    with pytest.raises(ValueError, match="not logged"):
+        _counts(_tiny_if_manifest(), {"spikes": None, "trace": None})
+    with pytest.raises(ValueError, match="not logged"):
+        message_trace_counts(_tiny_if_manifest(), {"spikes": 0}, message_bits=BITS)
