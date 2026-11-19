@@ -20,8 +20,6 @@ and v are 64 times the held current and the membrane.
 import numpy as np
 import pytest
 
-pytest.importorskip("lava.proc.qcfs")
-
 from lava.magma.core.run_conditions import RunSteps
 from lava.magma.core.run_configs import Loihi1SimCfg, Loihi2SimCfg
 from lava.proc.conv.process import Conv
@@ -34,6 +32,8 @@ from lava.proc.qcfs import QCFSIFGated
 from lava.utils.weightutils import clip_weights, determine_sign_mode, truncate_weights
 
 from test_graded_messages import DST, make_chip, run, sources
+
+pytestmark = pytest.mark.thesis
 
 
 def lava_run(port, process, values, steps, run_cfg, names):
