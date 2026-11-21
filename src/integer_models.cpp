@@ -604,3 +604,225 @@ void sanafe::CubaLifInt24Model::reset()
         state.updates_seen = 0;
     }
 }
+
+namespace
+{
+constexpr int64_t int32_min = std::numeric_limits<int32_t>::min();
+constexpr int64_t int32_max = std::numeric_limits<int32_t>::max();
+
+// Returns the value of a sigma-delta state or intermediate, or stops where Lava's int32
+// arithmetic would wrap.
+int64_t checked_state(const char *name, const int64_t value)
+{
+    if (value < int32_min || value > int32_max)
+    {
+        throw std::overflow_error(std::string("sigma-delta state ") + name + " " +
+                std::to_string(value) + " leaves signed 32 bits");
+    }
+    return value;
+}
+
+int64_t magnitude(const int64_t value)
+{
+    return value < 0 ? -value : value;
+}
+
+// value / divisor rounded toward negative infinity, as np.right_shift rounds, for a positive
+// divisor. No negative operand is shifted, since C++17 leaves that implementation-defined.
+int64_t floor_divide(const int64_t value, const int64_t divisor)
+{
+    return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+}
+}
+
+void sanafe::SigmaDeltaInt32Model::set_attribute_neuron(const size_t address,
+        const std::string &name, const ModelAttribute &param)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    const auto integer_attr = [&](const int64_t lo, const int64_t hi, const char *what) {
+        return checked_integer(static_cast<double>(param), lo, hi, what);
+    };
+    if (name == "vth")
+    {
+        state.vth = integer_attr(0, int32_max, "Sigma-delta vth");
+        state.vth_set = true;
+    }
+    else if (name == "bias")
+    {
+        state.bias = integer_attr(int32_min, int32_max, "Sigma-delta signed 32-bit bias");
+    }
+    else if (name == "state_exp")
+    {
+        state.state_exp = integer_attr(0, 30, "Sigma-delta state_exp");
+    }
+    else if (name == "corrected")
+    {
+        state.corrected = std::holds_alternative<bool>(param.value)
+                ? std::get<bool>(param.value)
+                : integer_attr(0, 1, "Sigma-delta corrected flag (bool or 0/1)") != 0;
+    }
+    else if (name == "currents")
+    {
+        std::vector<int32_t> values;
+        for (const auto &value : std::get<std::vector<ModelAttribute>>(param.value))
+        {
+            values.push_back(static_cast<int32_t>(checked_integer(static_cast<double>(value),
+                    int32_min, int32_max, "Sigma-delta signed 32-bit external input")));
+        }
+        state.currents = std::move(values);
+        state.cursor = 0;
+    }
+}
+
+sanafe::PipelineResult sanafe::SigmaDeltaInt32Model::update(const size_t address,
+        const std::optional<double> current, const long int /*timestep*/)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    if (!state.vth_set)
+    {
+        throw std::invalid_argument("A sigma-delta neuron requires vth");
+    }
+    const int64_t synaptic = checked_integer(current.value_or(0.0), int32_min, int32_max,
+            "Sigma-delta signed 32-bit synaptic input");
+    const int64_t external = state.cursor < state.currents.size()
+            ? state.currents.at(state.cursor) : 0;
+    if (state.cursor < state.currents.size())
+    {
+        ++state.cursor;
+    }
+    // The rules of PySigmaDeltaModelFixed.run_spk and PySigmaDeltaModelFixedCorrected.run_spk,
+    // in this order, in 64 bits. Every state is committed only after every check has passed.
+    const int64_t input = checked_state("input", synaptic + external);
+    const int64_t sigma = checked_state("sigma", state.sigma + input);
+    const int64_t act_new = std::max<int64_t>(checked_state("activation", sigma + state.bias), 0);
+    const int64_t divisor = int64_t{1} << state.state_exp;
+    int64_t act = act_new;
+    int64_t residue = state.residue;
+    int64_t sent = 0;
+    if (state.corrected)
+    {
+        const int64_t delta = checked_state("delta", act_new - state.act);
+        const int64_t scaled = magnitude(delta) >= state.vth ? delta : 0;
+        sent = floor_divide(scaled, divisor);
+        // The residue is left as it is.
+        act = checked_state("act", state.act + sent * divisor);
+    }
+    else
+    {
+        const int64_t delta = checked_state("delta", act_new - state.act + state.residue);
+        const int64_t scaled = magnitude(delta) >= state.vth ? delta : 0;
+        residue = delta - scaled;
+        sent = floor_divide(scaled, divisor);
+    }
+    state.input = input;
+    state.sigma = sigma;
+    state.act = act;
+    state.residue = residue;
+    state.sent = sent;
+    state.max_abs_input = std::max(state.max_abs_input, magnitude(input));
+    state.max_abs_sigma = std::max(state.max_abs_sigma, magnitude(sigma));
+    state.max_abs_act = std::max(state.max_abs_act, magnitude(act));
+    state.max_abs_residue = std::max(state.max_abs_residue, magnitude(residue));
+    state.max_abs_sent = std::max(state.max_abs_sent, magnitude(sent));
+    if (sent == 0)
+    {
+        return {std::nullopt, updated, std::nullopt, std::nullopt};
+    }
+    return {static_cast<double>(sent), fired, std::nullopt, std::nullopt};
+}
+
+void sanafe::SigmaDeltaInt32Model::reset()
+{
+    for (State &state : states)
+    {
+        state.cursor = 0;
+        state.sigma = 0;
+        state.act = 0;
+        state.residue = 0;
+        state.sent = 0;
+        state.input = 0;
+        state.max_abs_sigma = 0;
+        state.max_abs_act = 0;
+        state.max_abs_residue = 0;
+        state.max_abs_sent = 0;
+        state.max_abs_input = 0;
+    }
+}
+
+double sanafe::SigmaDeltaInt32Model::get_potential(const size_t address)
+{
+    return address < states.size() ? static_cast<double>(states.at(address).sigma) : 0.0;
+}
+
+std::map<std::string, double> sanafe::SigmaDeltaInt32Model::get_neuron_traces(
+        const size_t address)
+{
+    static const State empty{};
+    const State &state = address < states.size() ? states.at(address) : empty;
+    // Every value is within 2^31 in magnitude, so a double holds it exactly.
+    return {{"sigma", static_cast<double>(state.sigma)},
+            {"act", static_cast<double>(state.act)},
+            {"residue", static_cast<double>(state.residue)},
+            {"sent", static_cast<double>(state.sent)},
+            {"input", static_cast<double>(state.input)},
+            {"max_abs_sigma", static_cast<double>(state.max_abs_sigma)},
+            {"max_abs_act", static_cast<double>(state.max_abs_act)},
+            {"max_abs_residue", static_cast<double>(state.max_abs_residue)},
+            {"max_abs_sent", static_cast<double>(state.max_abs_sent)},
+            {"max_abs_input", static_cast<double>(state.max_abs_input)}};
+}
+
+sanafe::PipelineResult sanafe::SigmaInt32Model::update(const size_t address,
+        const std::optional<double> current, const long int /*timestep*/)
+{
+    if (states.size() <= address)
+    {
+        states.resize(address + 1);
+    }
+    State &state = states.at(address);
+    // The rule of PySigmaModelFixed: sigma = sigma + a_in, then sigma is sent.
+    const int64_t input = checked_integer(current.value_or(0.0), int32_min, int32_max,
+            "Sigma signed 32-bit synaptic input");
+    const int64_t sigma = checked_state("sigma", state.sigma + input);
+    state.input = input;
+    state.sigma = sigma;
+    state.sent = sigma;
+    state.max_abs_input = std::max(state.max_abs_input, magnitude(input));
+    state.max_abs_sigma = std::max(state.max_abs_sigma, magnitude(sigma));
+    state.max_abs_sent = std::max(state.max_abs_sent, magnitude(sigma));
+    if (sigma == 0)
+    {
+        return {std::nullopt, updated, std::nullopt, std::nullopt};
+    }
+    return {static_cast<double>(sigma), fired, std::nullopt, std::nullopt};
+}
+
+void sanafe::SigmaInt32Model::reset()
+{
+    states.assign(states.size(), State{});
+}
+
+double sanafe::SigmaInt32Model::get_potential(const size_t address)
+{
+    return address < states.size() ? static_cast<double>(states.at(address).sigma) : 0.0;
+}
+
+std::map<std::string, double> sanafe::SigmaInt32Model::get_neuron_traces(const size_t address)
+{
+    static const State empty{};
+    const State &state = address < states.size() ? states.at(address) : empty;
+    return {{"sigma", static_cast<double>(state.sigma)},
+            {"sent", static_cast<double>(state.sent)},
+            {"input", static_cast<double>(state.input)},
+            {"max_abs_sigma", static_cast<double>(state.max_abs_sigma)},
+            {"max_abs_sent", static_cast<double>(state.max_abs_sent)},
+            {"max_abs_input", static_cast<double>(state.max_abs_input)}};
+}

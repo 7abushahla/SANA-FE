@@ -549,6 +549,87 @@ private:
     std::vector<State> states;
 };
 
+// Sigma-delta neuron with the integer arithmetic of Lava's fixed-point sigma-delta models
+// (lava/proc/sdn/models.py: PySigmaDeltaModelFixed, or PySigmaDeltaModelFixedCorrected when
+// corrected is set), with the ReLU activation and without cumulative error. Each update
+// returns the sent value as a graded spike when it is nonzero and sends nothing otherwise.
+// Every state is signed 32 bits. Where Lava's int32 arithmetic would wrap, the update stops
+// with std::overflow_error. It assumes the time-step buffer before the soma unit, which sums
+// every input of a step.
+class SigmaDeltaInt32Model : public SomaUnit
+{
+public:
+    SigmaDeltaInt32Model() { register_attributes(attributes); }
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t address, const std::string &name,
+            const ModelAttribute &param) override;
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override;
+    // The states after the last update, the sent value, the input, and the largest magnitude
+    // of each since the last reset.
+    std::map<std::string, double> get_neuron_traces(size_t address) override;
+    static inline const std::unordered_map<std::string, std::string> attributes{
+        {"vth", "(int) Threshold in [0, 2^31 - 1], scaled as Lava's process scales it. A change is sent when its magnitude is >= vth. Required."},
+        {"bias", "(int) Signed 32-bit bias added to sigma before the ReLU, scaled as vth is."},
+        {"state_exp", "(int) Exponent in [0, 30]. The sent value is the change divided by 2^state_exp, rounded toward negative infinity."},
+        {"corrected", "(bool) Use the rule of Lava's PySigmaDeltaModelFixedCorrected, which carries the remainder of the shift, instead of PySigmaDeltaModelFixed."},
+        {"currents", "(list[int]) Signed 32-bit external input per update, added to the synaptic input, then zero."},
+    };
+private:
+    struct State
+    {
+        int64_t vth{0};
+        bool vth_set{false};
+        int64_t bias{0};
+        int64_t state_exp{0};
+        bool corrected{false};
+        std::vector<int32_t> currents;
+        size_t cursor{0};
+        int64_t sigma{0};
+        int64_t act{0};
+        int64_t residue{0};
+        int64_t sent{0};
+        int64_t input{0};
+        int64_t max_abs_sigma{0};
+        int64_t max_abs_act{0};
+        int64_t max_abs_residue{0};
+        int64_t max_abs_sent{0};
+        int64_t max_abs_input{0};
+    };
+    std::vector<State> states;
+};
+
+// Sigma neuron with the integer arithmetic of Lava's PySigmaModelFixed
+// (lava/proc/sdn/models.py): it adds its input to sigma and sends sigma at every update, as a
+// graded spike when sigma is nonzero. Sigma is signed 32 bits and the update stops with
+// std::overflow_error where Lava's int32 arithmetic would wrap. It has no attribute and
+// assumes the time-step buffer before the soma unit.
+class SigmaInt32Model : public SomaUnit
+{
+public:
+    SigmaInt32Model() = default;
+    void set_attribute_hw(const std::string &, const ModelAttribute &) override {}
+    void set_attribute_neuron(size_t, const std::string &, const ModelAttribute &) override {}
+    PipelineResult update(size_t address, std::optional<double> current,
+            long int timestep) override;
+    void reset() override;
+    double get_potential(size_t address) override;
+    std::map<std::string, double> get_neuron_traces(size_t address) override;
+private:
+    struct State
+    {
+        int64_t sigma{0};
+        int64_t sent{0};
+        int64_t input{0};
+        int64_t max_abs_sigma{0};
+        int64_t max_abs_sent{0};
+        int64_t max_abs_input{0};
+    };
+    std::vector<State> states;
+};
+
 // A numerical reference model, not a hardware-specific neuron ISA.
 class Float32IfModel : public SomaUnit
 {

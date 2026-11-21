@@ -1065,6 +1065,14 @@ std::shared_ptr<sanafe::PipelineUnit> sanafe::model_get_pipeline_unit(
     {
         return std::make_shared<CubaLifInt24Model>();
     }
+    if (model_name == "sigma_delta_int32")
+    {
+        return std::make_shared<SigmaDeltaInt32Model>();
+    }
+    if (model_name == "sigma_int32")
+    {
+        return std::make_shared<SigmaInt32Model>();
+    }
     if (model_name == "current_based")
     {
         return std::shared_ptr<PipelineUnit>(new CurrentBasedSynapseModel());
@@ -1117,6 +1125,8 @@ const sanafe::ModelMap &sanafe::get_builtin_models()
                     {"integrate_fire_int24", &Int24IfModel::attributes},
                     {"integrate_fire_int24_gated", &GatedInt24IfModel::attributes},
                     {"cuba_lif_int24", &CubaLifInt24Model::attributes},
+                    {"sigma_delta_int32", &SigmaDeltaInt32Model::attributes},
+                    {"sigma_int32", nullptr},
                     {"accumulator", nullptr},
                     {"accumulator_with_delay", nullptr},
                     {"taps", &MultiTapModel1D::multitap_attributes},
