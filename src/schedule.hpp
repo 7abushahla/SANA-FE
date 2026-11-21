@@ -172,6 +172,9 @@ class NocInfo
 {
 public:
     std::vector<MessageFifo> messages_received;
+    // Per destination core, true while the received timestamps along
+    //  messages_received[core] are nondecreasing in insertion order
+    std::vector<bool> received_in_order;
     size_t noc_width_in_tiles;
     size_t noc_height_in_tiles;
     size_t core_count;

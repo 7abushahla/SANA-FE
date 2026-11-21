@@ -59,6 +59,7 @@ sanafe::NocInfo::NocInfo(const Scheduler &scheduler)
         , max_cores_per_tile(scheduler.max_cores_per_tile)
 {
     messages_received = std::vector<sanafe::MessageFifo>(core_count);
+    received_in_order = std::vector<bool>(core_count, true);
     core_finished_receiving = std::vector<double>(core_count);
 }
 
@@ -358,7 +359,17 @@ void sanafe::schedule_handle_message(
     // Now, push the message into the right receiving queue. Calculate the
     //  network delay and when the message is received
     m.in_noc = true;
-    noc.messages_received[dest_core].push_back(m);
+    MessageFifo &received = noc.messages_received[dest_core];
+    if (received.empty())
+    {
+        noc.received_in_order[dest_core] = true;
+    }
+    else if (!(m.received_timestamp >= received.back().received_timestamp))
+    {
+        // Received before the core's last message, or NaN
+        noc.received_in_order[dest_core] = false;
+    }
+    received.push_back(m);
     noc_update_message_tracking(m, noc, true);
 }
 
@@ -384,14 +395,22 @@ double sanafe::schedule_push_next_message(
 
 void sanafe::noc_update_all_tracked_messages(const double t, NocInfo &noc)
 {
-    // Update the tracked state of the NoC at a given time, t
-    for (auto &q : noc.messages_received)
+    // Remove every message fully received by time t from the tracked NoC
+    //  state, in ascending core order and in insertion order within a core.
+    //  While processing delays are finite and nonnegative, a core's received
+    //  timestamps never decrease in insertion order, so its leaving messages
+    //  are a prefix of its list and only that prefix is visited. A core whose
+    //  list was ever out of order (a negative or NaN delay) keeps the scan of
+    //  its whole list, so the removals and their order never rest on that
+    //  argument.
+    for (size_t core = 0; core < noc.messages_received.size(); ++core)
     {
-        // Go through all messages in the NoC and check to see if that
-        //  message has been fully received by time t. If so, remove it
-        //  from the NoC.
-        // Use remove_if to identify messages that should be removed
-        q.remove_if([&](Message &m) -> bool {
+        MessageFifo &q = noc.messages_received[core];
+        if (q.empty())
+        {
+            continue;
+        }
+        auto leaves = [&](Message &m) -> bool {
             if (m.in_noc && (t >= m.received_timestamp))
             {
                 m.in_noc = false;
@@ -400,7 +419,18 @@ void sanafe::noc_update_all_tracked_messages(const double t, NocInfo &noc)
                 return true; // Remove this message
             }
             return false; // Keep this message
-        });
+        };
+        if (noc.received_in_order[core])
+        {
+            while (!q.empty() && leaves(q.front()))
+            {
+                q.pop_front();
+            }
+        }
+        else
+        {
+            q.remove_if(leaves);
+        }
     }
 }
 
