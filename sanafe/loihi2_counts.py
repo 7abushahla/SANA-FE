@@ -424,16 +424,16 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
                      partition=None):
     """Per-step, per-core counts under the manifest's placement (see the module docstring).
 
-    ``manifest`` is from ``netx_to_sanafe`` or from the IF chain exporter.
-    ``traces`` is the output of ``sanafe_run`` (``{'spikes': [...], 'trace': ...}``)
-    or a simulator result with a spike trace. The spikes may come from a run
-    under another placement, since spikes do not depend on placement. When a
-    perf trace is present, its neuron updates and its synaptic events per step
-    must equal the counts (``verified_against_perf_trace``), and the synaptic
-    events are compared under the convention the builder emitted. A LIF
-    manifest needs ``connectivity`` (``expanded_connectivity`` of its network),
-    and under the builder's partition its per-core fan-out must equal the
-    manifest's. ``partition`` is ``None`` for the builder's partition, or
+    ``manifest`` is from ``netx_to_sanafe``, from ``sdnn_to_sanafe`` or from the IF
+    chain exporter. ``traces`` is the output of ``sanafe_run`` or ``sdnn_sanafe_run``
+    (``{'spikes': [...], 'trace': ...}``) or a simulator result with a spike trace.
+    The spikes may come from a run under another placement, since spikes do not
+    depend on placement. When a perf trace is present, its neuron updates and its
+    synaptic events per step must equal the counts (``verified_against_perf_trace``),
+    and the synaptic events are compared under the convention the builder emitted.
+    A LIF or sigma-delta manifest needs ``connectivity`` (``expanded_connectivity``
+    of its network), and under the builder's partition its per-core fan-out must
+    equal the manifest's. ``partition`` is ``None`` for the builder's partition, or
     ``{"name": ..., "layers": [{"order": "reader" or "lava", "sizes": [...]}]}``
     with one slice size per core of the manifest's placement (see the module
     docstring). ``weights_per_read`` is one integer or several. Returns a dict of

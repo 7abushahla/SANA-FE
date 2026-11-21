@@ -20,7 +20,7 @@ import pytest
 from sanafe.lava_sdnn import COST_ASSUMPTIONS, load_loihi2_sdnn_candidate
 from sanafe.loihi2 import load_loihi2_candidate
 from sanafe.loihi2_counts import core_step_counts, expanded_connectivity
-from sanafe.sdnn_network import (MODELS, compare_sdnn, fits, read_sdnn, sdnn_lava_run,
+from sanafe.sdnn_network import (MODELS, _stack, compare_sdnn, fits, read_sdnn, sdnn_lava_run,
                                  sdnn_sanafe_run, sdnn_to_sanafe)
 
 from sdnn_fixture import FIXTURE_CORES, fixture_frames, write_sdnn_file
@@ -121,15 +121,55 @@ def test_the_reader_refuses_what_it_does_not_implement(tmp_path, what, message):
         read_sdnn(path)
 
 
+def _lava_dense_weights(synapse):
+    """The weights Lava's fixed-point ``Dense`` multiplies by, after the clip to 8 bits and the
+    truncation to ``num_weight_bits`` of its first step (``proc/dense/models.py`` 81-90)."""
+    from lava.utils.weightutils import clip_weights, determine_sign_mode, truncate_weights
+
+    weights = np.asarray(synapse.weights.init).astype(np.int64)
+    mode = determine_sign_mode(weights)
+    clipped = clip_weights(weights, mode, num_bits=8)
+    bits = int(synapse.proc_params["num_weight_bits"])
+    return np.asarray(truncate_weights(clipped, mode, bits)).astype(np.int64)
+
+
 def test_the_reader_agrees_with_netx_on_the_released_network():
     from lava.lib.dl import netx
+    from lava.magma.core.process.ports.ports import ReshapePort, TransposePort
 
-    layers = [layer for layer in read_sdnn(PILOTNET_SDNN).layers if layer.kind != "flatten"]
+    network = read_sdnn(PILOTNET_SDNN)
+    layers = [layer for layer in network.layers if layer.kind != "flatten"]
     built = netx.hdf5.Network(net_config=str(PILOTNET_SDNN), skip_layers=1)
     assert len(built.layers) == len(layers) - 1 == 9
+    assert tuple(built.inp.shape) == tuple(reversed(layers[0].shape))
     for k, (block, layer) in enumerate(zip(built.layers, layers[1:]), start=1):
         shape = tuple(reversed(layer.shape)) if len(layer.shape) == 3 else tuple(layer.shape)
         assert tuple(block.shape) == shape, k
+        synapse, params = block.synapse, block.synapse.proc_params
+        assert int(params["num_message_bits"]) == layer.neuron["message_bits"] == 16, k
+        assert int(params["weight_exp"]) == layer.weight_exp, k
+        assert int(params["num_weight_bits"]) == layer.weight_bits, k
+        if layer.kind == "conv":
+            # netx flips the kernel and transposes it to Lava's (out, x, y, in) true convolution
+            # (hdf5.py 411-412). Undone, it is the reader's (out, in, h, w) cross-correlation.
+            kernel = np.asarray(synapse.weight.init).transpose(0, 3, 2, 1)[:, :, ::-1, ::-1]
+            assert np.array_equal(kernel, layer.weights), k
+            # Lava's stride and padding are in (x, y) order, the reader's in (height, width).
+            assert tuple(int(v) for v in params["stride"]) == tuple(reversed(layer.stride)), k
+            assert tuple(int(v) for v in params["padding"]) == tuple(reversed(layer.padding)), k
+        else:
+            # Lava's Dense shifts the summed input by weight_exp. The shift is exact, and equals
+            # the reader's effective weights, when every applied weight is a multiple of the
+            # shift.
+            applied = _lava_dense_weights(synapse)
+            assert np.array_equal(applied, np.asarray(synapse.weights.init)), k
+            exp = int(params["weight_exp"])
+            if exp < 0:
+                assert np.all(applied % (1 << -exp) == 0), k
+                applied = applied >> -exp
+            else:
+                applied = applied << exp
+            assert np.array_equal(applied, layer.effective_weights()), k
         if layer.neuron["sigma_output"]:
             assert type(block.neuron).__name__ == "Sigma" and k == 9
             continue
@@ -138,6 +178,17 @@ def test_the_reader_agrees_with_netx_on_the_released_network():
         # A convolution's bias is per channel, the last axis of Lava's (x, y, c) order.
         expected = np.broadcast_to(layer.neuron["bias_scale"] * layer.bias, shape)
         assert np.array_equal(np.broadcast_to(block.neuron.bias.init, shape), expected), k
+    # The first dense layer reads the last convolution through out.transpose([2, 1, 0])
+    # .flatten() (hdf5.py 552-556), which turns Lava's (x, y, c) order into the reader's
+    # (c, h, w) order, the column order of the reader's dense weights.
+    first_dense = next(k for k, layer in enumerate(layers[1:]) if layer.kind == "dense")
+    (reshape,) = built.layers[first_dense].inp.in_connections
+    (transpose,) = reshape.in_connections
+    assert isinstance(reshape, ReshapePort) and tuple(reshape.shape) == (2560,)
+    assert isinstance(transpose, TransposePort) and tuple(transpose.axes) == (2, 1, 0)
+    assert transpose.in_connections == [built.layers[first_dense - 1].out]
+    assert network.layers[first_dense + 1].kind == "flatten"
+    assert layers[first_dense + 1].weights.shape[1] == 2560
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +207,9 @@ def test_the_builder_states_sources_partition_and_assumptions(tmp_path):
     assert len({(s["tile"], s["core"]) for l in man["placement"] for s in l["slices"]}) == 6
     assert man["layer_sizes"] == [160, 96, 128, 6, 1] and man["sigma_output_layer"] == 4
     assert man["model"] == "fixed" and man["hardware_validated"] is False
+    assert man["resources_validated"] is False
+    assert man["allocation_status"] == ("default Allocation() of the candidate profile, not "
+                                        "derived from this placement")
 
 
 def test_a_manifest_without_construction_equals_the_built_one(tmp_path):
@@ -178,6 +232,37 @@ def test_the_builder_refuses_source_values_of_another_width(tmp_path):
     with pytest.raises(ValueError, match="source_values"):
         sdnn_to_sanafe(network, source_values()[:, 1:], load_loihi2_sdnn_candidate(),
                        FIXTURE_CORES)
+
+
+def test_the_builder_refuses_a_weight_beyond_signed_16_bits(tmp_path):
+    network = read_sdnn(write_sdnn_file(tmp_path / "f.net"))
+    arch = load_loihi2_sdnn_candidate()
+    network.layers[2].weights[0, 0, 1, 1] = (1 << 15) - 1
+    sdnn_to_sanafe(network, source_values(), arch, FIXTURE_CORES, build=False)
+    network.layers[2].weights[0, 0, 1, 1] = 1 << 15
+    with pytest.raises(ValueError, match="effective weights outside declared range"):
+        sdnn_to_sanafe(network, source_values(), arch, FIXTURE_CORES, build=False)
+
+
+def test_the_builder_refuses_a_scaled_bias_beyond_signed_32_bits(tmp_path):
+    network = read_sdnn(write_sdnn_file(tmp_path / "f.net"))
+    arch = load_loihi2_sdnn_candidate()
+    network.layers[4].bias[0] = -(1 << 19)            # times 4096 is -2**31, inside
+    sdnn_to_sanafe(network, source_values(), arch, FIXTURE_CORES, build=False)
+    network.layers[4].bias[0] = 1 << 19               # times 4096 is 2**31, outside
+    with pytest.raises(ValueError, match="layer 4: scaled bias outside declared range"):
+        sdnn_to_sanafe(network, source_values(), arch, FIXTURE_CORES, build=False)
+
+
+def test_the_builder_refuses_a_source_value_beyond_signed_32_bits(tmp_path):
+    network = read_sdnn(write_sdnn_file(tmp_path / "f.net"))
+    arch = load_loihi2_sdnn_candidate()
+    values = source_values()
+    values[3, 17] = -(1 << 31)
+    sdnn_to_sanafe(network, values, arch, FIXTURE_CORES, build=False)
+    values[3, 17] = 1 << 31
+    with pytest.raises(ValueError, match="source_values outside declared range"):
+        sdnn_to_sanafe(network, values, arch, FIXTURE_CORES, build=False)
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +345,25 @@ def test_the_fits_read_the_extremes_against_24_and_16_bits():
                  "input": 1 << 23},
                 {"sigma": 1 << 23, "sent": 3, "input": (1 << 23) - 1}]
     assert fits(extremes) == [
-        {"states_fit_24": None, "sent_fits_16": True, "input_fits_24": None},
-        {"states_fit_24": True, "sent_fits_16": False, "input_fits_24": False},
-        {"states_fit_24": False, "sent_fits_16": True, "input_fits_24": True}]
+        {"states_fit_24": None, "sent_fits_16": True, "sent_fits_24": True,
+         "input_fits_24": None},
+        {"states_fit_24": True, "sent_fits_16": False, "sent_fits_24": True,
+         "input_fits_24": False},
+        {"states_fit_24": False, "sent_fits_16": True, "sent_fits_24": True,
+         "input_fits_24": True}]
+    # A sigma_output layer sends its sigma, which the tutorial decodes as 24 bits.
+    output = fits([{"sigma": (1 << 23) - 1, "sent": (1 << 23) - 1, "input": 5},
+                   {"sigma": 1 << 23, "sent": 1 << 23, "input": 5}])
+    assert [(f["sent_fits_16"], f["sent_fits_24"]) for f in output] == [(False, True),
+                                                                        (False, False)]
+
+
+def test_the_stack_of_chunks_equals_their_concatenation_and_releases_them():
+    rng = np.random.default_rng(2)
+    parts = [rng.integers(-9, 9, size=(n, 5)).astype(np.int32) for n in (3, 1, 4)]
+    expected = np.concatenate(parts, axis=0)
+    stacked = _stack(parts)
+    assert parts == [] and stacked.dtype == np.int32 and np.array_equal(stacked, expected)
 
 
 def test_counts_of_an_sdnn_manifest_agree_with_the_perf_trace(synthetic):

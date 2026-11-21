@@ -183,13 +183,15 @@ def read_sdnn(path) -> NetxNetwork:
     Returns a ``NetxNetwork`` with the conventions of ``sanafe.netx``. Every layer with a
     neuron gets ``neuron = {"type": "SDNN", "vth_mant", "spike_exp": 6, "state_exp": 6,
     "vth": vth_mant << 12, "bias_scale": 4096, "message_bits": 16, "activation": "relu",
-    "sigma_output": bool}``, the values netx gives (``hdf5.py`` 154-174). The input layer
-    keeps its neuron and its ``transform`` (``{"weight": 64, "bias": 0}`` when the file
-    stores none). ``bias`` holds the file's integers, unscaled. A ``ValueError`` refuses a
-    neuron type other than ``SDNN``, an activation other than ``relu``, a ``sigma_output``
-    on any layer but the last, a stored ``messageBits`` other than 16, a bias on the
-    ``sigma_output`` layer, an input layer without a neuron, and everything ``sanafe.netx``
-    refuses.
+    "sigma_output": bool}``. netx gives ``vth = vThMant``, ``spike_exp`` and ``state_exp`` 6
+    and 16 message bits (``hdf5.py`` 154-174), and Lava's ``SigmaDelta`` multiplies the
+    threshold and the bias by ``2**(spike_exp + state_exp)`` (``proc/sdn/process.py``
+    179-180), which ``vth`` and ``bias_scale`` record. The input layer keeps its neuron and
+    its ``transform`` (``{"weight": 64, "bias": 0}`` when the file stores none). ``bias``
+    holds the file's integers, unscaled. A ``ValueError`` refuses a neuron type other than
+    ``SDNN``, an activation other than ``relu``, a ``sigma_output`` on any layer but the
+    last, a stored ``messageBits`` other than 16, a bias on the ``sigma_output`` layer, an
+    input layer without a neuron, and everything ``sanafe.netx`` refuses.
     """
     layers = []
     with h5py.File(path, "r") as f:
@@ -349,6 +351,11 @@ def sdnn_to_sanafe(network, source_values, arch, layer_cores, *, order="packed_r
         "schema_version": 1,
         "execution_profile": SDNN_EXECUTION_PROFILE,
         "architecture_profile": sdnn_architecture_profile(asdict(Allocation())),
+        # The allocation in the profile is the candidate's default byte layout. No resource
+        # check was run on this placement.
+        "allocation_status": ("default Allocation() of the candidate profile, not derived "
+                              "from this placement"),
+        "resources_validated": False,
         "architecture_sha256": fingerprint,
         "hardware_validated": False,
         "input_transfer_cost_included": False,
@@ -418,6 +425,24 @@ def sdnn_to_sanafe(network, source_values, arch, layer_cores, *, order="packed_r
 
 # ---------------------------------------------------------------------------
 # The simulator
+
+
+def _stack(parts):
+    """The arrays of ``parts`` stacked along the first axis.
+
+    Each part is removed from the list as it is copied, so that the peak memory is the result
+    and one part, not twice the result.
+    """
+    rows = sum(part.shape[0] for part in parts)
+    out = np.empty((rows, *parts[0].shape[1:]), dtype=parts[0].dtype)
+    parts.reverse()
+    start = 0
+    while parts:
+        part = parts.pop()
+        out[start:start + part.shape[0]] = part
+        start += part.shape[0]
+        del part
+    return out
 
 
 def _layer_states(manifest):
@@ -543,7 +568,7 @@ def sdnn_sanafe_run(net, manifest, arch, steps, *, keep="all", chunk=8,
                 "wall_seconds": wall}
     layers = [{"sent": source_values}]
     for k in range(1, len(sizes)):
-        layers.append({key: np.concatenate(held[k][key], axis=0) for key in states[k]})
+        layers.append({key: _stack(held[k][key]) for key in states[k]})
     return {"layers": layers, "spikes": [layer["sent"] != 0 for layer in layers],
             "extremes": extremes, "trace": trace, "wall_seconds": wall}
 
@@ -615,8 +640,10 @@ def sdnn_lava_run(path, frames, steps, *, model="fixed", keep="all", chunk=16,
     holding ``sent``, the encoder's values, row ``t`` the value sent at step ``t + 1``. Under
     ``keep="all"`` every state is int32, the input being the change of ``sigma`` from the
     previous step. Under ``keep="nonzero"`` each layer holds only ``sent != 0`` as bool.
-    ``extremes`` has the layout of ``sdnn_sanafe_run``. ``models`` names the process model
-    class each layer ran, the encoder's for layer 0.
+    ``extremes`` has the layout of ``sdnn_sanafe_run``. Lava's input is read after its
+    ``Conv`` has wrapped the sum to 24 bits, so only the extremes of ``sdnn_sanafe_run`` show
+    a sum beyond 24 bits, and ``fits`` on Lava's extremes alone cannot. ``models`` names the
+    process model class each layer ran, the encoder's for layer 0.
     """
     from lava.magma.core.run_conditions import RunSteps
     from lava.magma.core.run_configs import Loihi2SimCfg
@@ -712,7 +739,7 @@ def sdnn_lava_run(path, frames, steps, *, model="fixed", keep="all", chunk=16,
     if any(m is None for m in models):
         raise RuntimeError("the run configuration did not select a model for every layer")
     order = ("sent",) if keep == "nonzero" else (*SDNN_STATES,)
-    layers = [{state: np.concatenate(layer[state], axis=0) for state in order if state in layer}
+    layers = [{state: _stack(layer[state]) for state in order if state in layer}
               for layer in held]
     return {"layers": layers, "extremes": extremes.values, "models": models}
 
@@ -761,11 +788,18 @@ def fits(extremes):
     """Per layer, whether the extremes fit the widths of Loihi 2's documented formats.
 
     ``states_fit_24`` holds when ``sigma``, ``act`` and ``residue`` are at most 2^23 - 1 in
-    magnitude, ``sent_fits_16`` when ``sent`` is at most 2^15 - 1 and ``input_fits_24`` when
-    the input is at most 2^23 - 1. A magnitude of exactly 2^(b - 1) is counted as not fitting,
-    although the negative value -2^(b - 1) fits b signed bits, a conservative reading forced by
-    the extremes holding magnitudes only. An entry is ``None`` when the layer has none of its
-    states.
+    magnitude, ``sent_fits_16`` when ``sent`` is at most 2^15 - 1, ``sent_fits_24`` when
+    ``sent`` is at most 2^23 - 1 and ``input_fits_24`` when the input is at most 2^23 - 1. A
+    magnitude of exactly 2^(b - 1) is counted as not fitting, although the negative value
+    -2^(b - 1) fits b signed bits, a conservative reading forced by the extremes holding
+    magnitudes only. An entry is ``None`` when the layer has none of its states.
+
+    A ``sigma_output`` layer sends its sigma, which the tutorial's fixed-point decoder reads as
+    a signed 24-bit integer (``utils.py`` 189-199 of the PilotNet SDNN tutorial). Its
+    ``sent_fits_16`` is false by construction whenever sigma exceeds 16 bits, and its sent
+    value is read against 24 bits in ``sent_fits_24``. Lava's ``Conv`` wraps a sum beyond 24
+    bits before Lava's input is read, so only the simulator's extremes show such a sum in
+    ``input_fits_24``.
     """
     def check(layer, states, bits):
         found = [layer[s] for s in states if s in layer]
@@ -773,4 +807,5 @@ def fits(extremes):
 
     return [{"states_fit_24": check(layer, ("sigma", "act", "residue"), 24),
              "sent_fits_16": check(layer, ("sent",), 16),
+             "sent_fits_24": check(layer, ("sent",), 24),
              "input_fits_24": check(layer, ("input",), 24)} for layer in extremes]
