@@ -1450,12 +1450,16 @@ void sanafe::SpikingChip::sim_create_neuron_axons(MappedNeuron &pre_neuron)
             pre_neuron.parent_group_name.c_str(), pre_neuron.id);
 }
 
-std::set<sanafe::Core *> sanafe::SpikingChip::sim_get_post_synaptic_cores(
-        const MappedNeuron &neuron)
+std::set<sanafe::Core *, sanafe::CoreIdLess>
+sanafe::SpikingChip::sim_get_post_synaptic_cores(const MappedNeuron &neuron)
 {
-    // Get the set of cores that this neuron broadcasts
+    // Get the set of cores that this neuron broadcasts, ordered by global core
+    // id. Ids ascend with (tile, offset) for cores created tile by tile, the
+    // order upstream used before commit a851812. The order fixes the order of
+    // the neuron's axons, messages, message ids and generation delays, so a
+    // run repeats between constructions of a chip.
     TRACE1(CHIP, "Counting connections for neuron nid:%zu\n", neuron.id);
-    std::set<Core *> cores_out;
+    std::set<Core *, CoreIdLess> cores_out;
     for (const MappedConnection &curr_connection : neuron.connections_out)
     {
         const MappedNeuron &post_neuron = *(curr_connection.post_neuron);

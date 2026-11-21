@@ -6,7 +6,6 @@ of a binary run.
 """
 import hashlib
 import json
-import math
 from importlib.resources import files
 
 import numpy as np
@@ -114,62 +113,64 @@ def full_payload(out):
     }
 
 
-# Message fields that are reproducible when a neuron sends to cores on several tiles, and the
-# fields that are not. The first six order the messages of a step.
-STABLE_MESSAGE_FIELDS = (
+MESSAGE_FIELDS = (
     "src_neuron_group_id", "src_neuron_offset", "dest_tile_id", "dest_core_offset",
     "placeholder", "spikes",
     "dest_core_id", "dest_axon_hw", "dest_axon_id", "dest_x", "dest_y", "hops",
     "src_tile_id", "src_core_id", "src_core_offset", "src_x", "src_y", "timestep",
     "processing_delay", "blocking_delay",
-)
-UNSTABLE_MESSAGE_FIELDS = (
     "mid", "generation_delay", "network_delay", "send_timestamp", "received_timestamp",
     "processed_timestamp",
 )
 
-
-def reproducible_payload(out):
-    messages = [sorted([m[name] for name in STABLE_MESSAGE_FIELDS] for m in step)
-                for step in out["message_trace"]]
-    perf = {name: values for name, values in out["perf_trace"].items() if name != "sim_time"}
-    return {
-        "spike_trace": spikes_of(out),
-        "potential_trace": out["potential_trace"],
-        "message_multisets": messages,
-        "perf_trace": perf,
-        "energy": out["energy"],
-    }
-
-
 BINARY_DIGEST = "3ac3cb00d8b9771e29b6ccc542ff3a88c84cec482f76cee202c48bd3a7a96a19"
-BINARY_ACROSS_TILES_DIGEST = "c4b45396177b73d8886b896204129873087647c0b06ff5dadd98f9ac17a9a0a0"
+BINARY_ACROSS_TILES_DIGEST = "1a99292795fe57e2497891bd28eae402454ad3f384ac534462755b3cf1cf1d42"
+
+
+def fanout_network():
+    """Three gated input neurons on (0, 0), each connected to eight ``DST`` neurons of
+    ``layer_0`` on core 1 of tiles 7, 3, 5, 1, 6, 2, 4 and 0, listed in that order."""
+    driven = dict(threshold=2, initial_voltage=0, window_start=0, window_stop=1, currents=[2])
+    tiles = [7, 3, 5, 1, 6, 2, 4, 0]
+    weights = np.random.default_rng(2).integers(1, 9, (3, 8))
+    groups = [
+        ("input", "loihi_if_gated", [dict(driven) for _ in range(3)], [(0, 0)] * 3),
+        ("layer_0", "loihi_if_gated", [dict(DST) for _ in tiles], [(t, 1) for t in tiles]),
+    ]
+    edges = [("input", i, "layer_0", j, weights[i, j]) for i in range(3) for j in range(8)]
+    chip, _ = make_chip(groups, edges)
+    return run(chip, 3)
 
 
 def test_a_binary_network_is_unchanged_bit_for_bit():
-    # Every fan-out stays inside one tile, so every field of the run is reproducible.
+    # Every fan-out stays inside one tile.
     out = binary_network((0, 2))
     assert digest_of(full_payload(out)) == BINARY_DIGEST
 
 
-def test_a_binary_network_across_tiles_is_unchanged_in_every_reproducible_field():
+def test_a_binary_network_across_tiles_is_unchanged_bit_for_bit():
     """The same network with the third layer_0 neuron on (1, 0), so that each input neuron
-    sends to cores on two tiles.
-
-    The order in which a neuron's messages to different tiles are emitted is the pointer
-    order of a set of cores, which differs from one chip construction to the next on this
-    build. Left out for that reason are the message fields ``mid``, ``generation_delay``,
-    ``network_delay``, ``send_timestamp``, ``received_timestamp`` and
-    ``processed_timestamp``, the order of the messages within a step (each step is compared
-    as a sorted multiset), the perf trace's ``sim_time`` and the run's ``sim_time``. Every
-    other message field, every other perf field, the spike and potential traces and the
-    energy are pinned.
-    """
+    sends to cores on two tiles. Every field of the run is pinned, the modeled time included."""
     out = binary_network((1, 0))
-    assert set(out["message_trace"][0][0]) == (set(STABLE_MESSAGE_FIELDS)
-                                               | set(UNSTABLE_MESSAGE_FIELDS))
-    assert math.isfinite(out["sim_time"]) and out["sim_time"] > 0
-    assert digest_of(reproducible_payload(out)) == BINARY_ACROSS_TILES_DIGEST
+    assert set(out["message_trace"][0][0]) == set(MESSAGE_FIELDS)
+    assert digest_of(full_payload(out)) == BINARY_ACROSS_TILES_DIGEST
+
+
+def test_a_neuron_sends_to_its_cores_in_ascending_core_id():
+    out = fanout_network()
+    for step in out["message_trace"]:
+        real = [m for m in step if not m["placeholder"]]
+        for src in {m["src_neuron_offset"] for m in real}:
+            sent = [m for m in real if m["src_neuron_offset"] == src]
+            places = [(m["dest_tile_id"], m["dest_core_offset"]) for m in sent]
+            assert len(sent) == 8 and places == sorted(places)
+            assert [m["mid"] for m in sent] == sorted(m["mid"] for m in sent)
+
+
+def test_two_constructions_of_a_multi_tile_chip_give_the_same_run():
+    runs = [fanout_network() for _ in range(5)]
+    assert len({digest_of(full_payload(r)) for r in runs}) == 1
+    assert len({r["sim_time"] for r in runs}) == 1
 
 
 def sent_per_step(out):

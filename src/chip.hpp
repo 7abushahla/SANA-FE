@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +52,15 @@ struct TraceFlags
     bool record_neuron_state{false};
     bool record_perf{false};
     bool record_messages{false};
+};
+
+// Orders cores by global core id
+struct CoreIdLess
+{
+    bool operator()(const Core *a, const Core *b) const
+    {
+        return a->id < b->id;
+    }
 };
 
 class SpikingChip
@@ -184,7 +194,7 @@ private:
     static void sim_create_neuron_axons(MappedNeuron &pre_neuron);
     static void sim_allocate_axon(MappedNeuron &pre_neuron, Core &post_core);
     static void sim_add_connection_to_axon(MappedConnection &con, Core &post_core);
-    static std::set<Core *> sim_get_post_synaptic_cores(const MappedNeuron &neuron);
+    static std::set<Core *, CoreIdLess> sim_get_post_synaptic_cores(const MappedNeuron &neuron);
 
     // Essential time-step loop and pipeline modeling
     void process_neurons(Timestep &ts);
