@@ -549,13 +549,30 @@ private:
     std::vector<State> states;
 };
 
+// Raised by the sigma-delta and sigma somas when a state or an intermediate leaves signed
+// 32 bits. The chip prefixes the group and the offset of the neuron. Python sees it as
+// OverflowError.
+class SigmaDeltaRangeError : public std::overflow_error
+{
+public:
+    using std::overflow_error::overflow_error;
+};
+
+// Raised by the sigma-delta soma when a neuron cannot run, for instance without vth. The chip
+// prefixes the group and the offset of the neuron. Python sees it as ValueError.
+class SigmaDeltaNeuronError : public std::invalid_argument
+{
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
 // Sigma-delta neuron with the integer arithmetic of Lava's fixed-point sigma-delta models
-// (lava/proc/sdn/models.py: PySigmaDeltaModelFixed, or PySigmaDeltaModelFixedCorrected when
-// corrected is set), with the ReLU activation and without cumulative error. Each update
+// in lava/proc/sdn/models.py, PySigmaDeltaModelFixed, or PySigmaDeltaModelFixedCorrected when
+// corrected is set, with the ReLU activation and without cumulative error. Each update
 // returns the sent value as a graded spike when it is nonzero and sends nothing otherwise.
 // Every state is signed 32 bits. Where Lava's int32 arithmetic would wrap, the update stops
-// with std::overflow_error. It assumes the time-step buffer before the soma unit, which sums
-// every input of a step.
+// with SigmaDeltaRangeError. It requires the time-step buffer before the soma unit, which sums
+// every input of a step. The chip refuses it where the soma runs on the message path.
 class SigmaDeltaInt32Model : public SomaUnit
 {
 public:
@@ -601,11 +618,11 @@ private:
     std::vector<State> states;
 };
 
-// Sigma neuron with the integer arithmetic of Lava's PySigmaModelFixed
-// (lava/proc/sdn/models.py): it adds its input to sigma and sends sigma at every update, as a
-// graded spike when sigma is nonzero. Sigma is signed 32 bits and the update stops with
-// std::overflow_error where Lava's int32 arithmetic would wrap. It has no attribute and
-// assumes the time-step buffer before the soma unit.
+// Sigma neuron with the integer arithmetic of PySigmaModelFixed in lava/proc/sdn/models.py.
+// It adds its input to sigma and sends sigma at every update, as a graded spike when sigma is
+// nonzero. Sigma is signed 32 bits and the update stops with SigmaDeltaRangeError where Lava's
+// int32 arithmetic would wrap. It has no attribute. It requires the time-step buffer before
+// the soma unit, and the chip refuses it where the soma runs on the message path.
 class SigmaInt32Model : public SomaUnit
 {
 public:

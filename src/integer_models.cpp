@@ -616,7 +616,7 @@ int64_t checked_state(const char *name, const int64_t value)
 {
     if (value < int32_min || value > int32_max)
     {
-        throw std::overflow_error(std::string("sigma-delta state ") + name + " " +
+        throw sanafe::SigmaDeltaRangeError(std::string("sigma-delta state ") + name + " " +
                 std::to_string(value) + " leaves signed 32 bits");
     }
     return value;
@@ -688,7 +688,7 @@ sanafe::PipelineResult sanafe::SigmaDeltaInt32Model::update(const size_t address
     State &state = states.at(address);
     if (!state.vth_set)
     {
-        throw std::invalid_argument("A sigma-delta neuron requires vth");
+        throw sanafe::SigmaDeltaNeuronError("A sigma-delta neuron requires vth");
     }
     const int64_t synaptic = checked_integer(current.value_or(0.0), int32_min, int32_max,
             "Sigma-delta signed 32-bit synaptic input");
@@ -788,7 +788,7 @@ sanafe::PipelineResult sanafe::SigmaInt32Model::update(const size_t address,
         states.resize(address + 1);
     }
     State &state = states.at(address);
-    // The rule of PySigmaModelFixed: sigma = sigma + a_in, then sigma is sent.
+    // The rule of PySigmaModelFixed adds a_in to sigma, then sends sigma.
     const int64_t input = checked_integer(current.value_or(0.0), int32_min, int32_max,
             "Sigma signed 32-bit synaptic input");
     const int64_t sigma = checked_state("sigma", state.sigma + input);

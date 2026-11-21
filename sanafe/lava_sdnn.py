@@ -43,15 +43,19 @@ order in which the classes are defined in the module (``compiler_graphs.py`` 778
 Range
 -----
 Lava holds every state in ``np.int32``, which wraps silently. The somas compute every quantity
-in 64 bits and stop with ``OverflowError`` ("sigma-delta state <name> <value> leaves signed 32
-bits") where Lava would wrap. Over the range in which Lava does not wrap the two agree exactly.
+in 64 bits and stop with ``OverflowError`` ("<group>[<offset>]: sigma-delta state <name> <value>
+leaves signed 32 bits") where Lava would wrap. Over the range in which Lava does not wrap the
+two agree exactly. A sigma-delta neuron without ``vth`` stops at its first update with a
+``ValueError`` that names it the same way.
 
 Delivery
 --------
 A nonzero sent value leaves the soma as a graded spike, which multiplies the weight of every
 synapse it reaches. A zero value sends nothing. The somas assume the time-step buffer before
 the soma unit, where the input of a step is the sum of its synaptic products and a value sent
-at one update reaches its destinations at the next.
+at one update reaches its destinations at the next. Where the buffer is inside the soma unit or
+before the axon-out unit the soma runs on the message path, and the first step of a run refuses
+each neuron of either soma with a ``ValueError`` that names it.
 """
 from functools import lru_cache
 from importlib.resources import files
@@ -155,12 +159,14 @@ def lava_sigma_trace(a_in):
 
 def _sigma_delta_chip(a_in, *, vth, bias, state_exp, corrected=False):
     """A chip of the derived architecture with one ``sigma_delta_int32`` neuron per column of
-    ``a_in``, which receives row ``t`` at its update ``t`` as its external input."""
+    ``a_in``, which receives row ``t`` at its update ``t`` as its external input. The neurons
+    fill the cores in order, tile by tile, each core up to its capacity."""
     a = _inputs(a_in)
     steps, n = a.shape
     p = _parameters(n, vth, bias, state_exp, corrected)
     arch = load_loihi2_sdnn_candidate()
     capacity = arch.tiles[0].cores[0].max_neurons_supported
+    per_tile = len(arch.tiles[0].cores)
     net = sanafe.Network()
     group = net.create_neuron_group("layer_0", n)
     for offset, neuron in enumerate(group):
@@ -168,7 +174,7 @@ def _sigma_delta_chip(a_in, *, vth, bias, state_exp, corrected=False):
         neuron.set_attributes(soma_hw_name=SIGMA_DELTA_SOMA_UNIT, model_attributes={
             "vth": p["vth"], "bias": int(p["bias"][offset]), "state_exp": p["state_exp"],
             "corrected": p["corrected"], "currents": a[:, offset].tolist()})
-        neuron.map_to_core(arch.tiles[slot // 4].cores[slot % 4])
+        neuron.map_to_core(arch.tiles[slot // per_tile].cores[slot % per_tile])
     chip = sanafe.SpikingChip(arch)
     chip.load(net)
     return chip

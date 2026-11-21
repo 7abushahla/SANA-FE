@@ -41,7 +41,7 @@
 #include "core.hpp"
 #include "mapped.hpp"
 #include "message.hpp"
-#include "models.hpp" // For GatedInt24IfModel and StrictRangeError
+#include "models.hpp" // For GatedInt24IfModel, the sigma-delta somas and their errors
 #include "network.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -790,8 +790,10 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
     //  reach its messages. A strict neuron there would stop on the message
     //  path, where its group and offset are not named. A neuron with
     //  hold_input there would add to its register once per arriving message.
-    //  Every neuron passes here in each step before any message is processed,
-    //  so all three are refused before the soma of any runs.
+    //  A sigma-delta or sigma neuron there would update once per arriving
+    //  message, or only when a message arrives. Every neuron passes here in
+    //  each step before any message is processed, so all of them are refused
+    //  before the soma of any runs.
     if (c.pipeline_config.buffer_position >= buffer_inside_soma_unit)
     {
         const auto *gated = dynamic_cast<const GatedInt24IfModel *>(n.soma_hw);
@@ -818,6 +820,20 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
                     "]: A neuron with hold_input requires the time-step buffer "
                     "before the dendrite unit, inside it or before the soma unit");
         }
+        if (dynamic_cast<const SigmaDeltaInt32Model *>(n.soma_hw) != nullptr)
+        {
+            throw std::invalid_argument(n.parent_group_name + "[" +
+                    std::to_string(n.offset) +
+                    "]: A sigma-delta neuron requires the time-step buffer "
+                    "before the dendrite unit, inside it or before the soma unit");
+        }
+        if (dynamic_cast<const SigmaInt32Model *>(n.soma_hw) != nullptr)
+        {
+            throw std::invalid_argument(n.parent_group_name + "[" +
+                    std::to_string(n.offset) +
+                    "]: A sigma neuron requires the time-step buffer "
+                    "before the dendrite unit, inside it or before the soma unit");
+        }
     }
 
     PipelineResult input{};
@@ -838,6 +854,17 @@ void sanafe::SpikingChip::process_neuron(Timestep &ts, MappedNeuron &n)
     {
         // Name the group and the neuron of a strict stop.
         throw StrictRangeError(n.parent_group_name + "[" +
+                std::to_string(n.offset) + "]: " + error.what());
+    }
+    catch (const SigmaDeltaRangeError &error)
+    {
+        // Name the group and the neuron of a sigma-delta or sigma stop.
+        throw SigmaDeltaRangeError(n.parent_group_name + "[" +
+                std::to_string(n.offset) + "]: " + error.what());
+    }
+    catch (const SigmaDeltaNeuronError &error)
+    {
+        throw SigmaDeltaNeuronError(n.parent_group_name + "[" +
                 std::to_string(n.offset) + "]: " + error.what());
     }
     n.core->next_message_generation_delay +=

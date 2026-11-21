@@ -4,16 +4,21 @@ rules of Lava's fixed-point models, and the derived architecture that offers the
 Row ``t`` of an input array ``a_in`` is the input of update ``t``.
 """
 import hashlib
+from dataclasses import asdict
 from importlib.resources import files
 from pathlib import Path
+import tempfile
 
 import numpy as np
 import pytest
 
-from sanafe.lava_sdnn import (_sigma_delta_chip, lava_sigma_delta_trace, lava_sigma_trace,
-                              load_loihi2_sdnn_candidate, sanafe_sigma_delta_trace,
-                              sdnn_fingerprint)
-from sanafe.loihi2 import architecture_fingerprint, load_loihi2_candidate
+import sanafe
+from sanafe.lava_sdnn import (COST_ASSUMPTIONS, SDNN_EXECUTION_PROFILE, _sigma_delta_chip,
+                              check_sdnn_architecture, check_sdnn_core, lava_sigma_delta_trace,
+                              lava_sigma_trace, load_loihi2_sdnn_candidate,
+                              sanafe_sigma_delta_trace, sdnn_architecture_profile,
+                              sdnn_candidate_yaml, sdnn_fingerprint)
+from sanafe.loihi2 import Allocation, architecture_fingerprint, load_loihi2_candidate
 from test_graded_messages import DST, make_chip, run, sources
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,18 +97,20 @@ def test_the_rules_equal_lavas_transcription(corrected):
     assert np.any(lava["sent"] < 0) and np.any(lava["sent"] > 0)
 
 
-def test_graded_input_equals_the_transcription_one_update_later():
+@pytest.mark.parametrize("corrected", [False, True])
+def test_graded_input_equals_the_transcription_one_update_later(corrected):
     # The same input sent by one graded source per neuron, weight 1. Each value reaches its
     # neuron one update after it is sent, so the neuron's first update takes no input, and its
     # bias acts there. The neuron follows the rule on the input with a row of zeros in front.
     a_in, attrs = random_case()
     steps, n = a_in.shape
-    neurons = [dict(vth=attrs["vth"], bias=int(b), state_exp=attrs["state_exp"])
-               for b in attrs["bias"]]
+    neurons = [dict(vth=attrs["vth"], bias=int(b), state_exp=attrs["state_exp"],
+                    corrected=corrected) for b in attrs["bias"]]
     chip = sdnn_chip([sources(a_in.T.tolist()), ("layer_0", SD_UNIT, neurons, [(0, 1)] * n)],
                      [("input", i, "layer_0", i, 1) for i in range(n)])
     traces = run(chip, steps + 1, neuron_trace=True)["neuron_trace"]
-    delayed = lava_sigma_delta_trace(np.vstack([np.zeros((1, n), dtype=np.int64), a_in]), **attrs)
+    delayed = lava_sigma_delta_trace(np.vstack([np.zeros((1, n), dtype=np.int64), a_in]), **attrs,
+                                     corrected=corrected)
     for k in STATES:
         assert np.array_equal(np.asarray(traces[k], dtype=np.int64), delayed[k]), k
 
@@ -150,10 +157,18 @@ def test_a_sigma_neuron_without_destination_reports_its_sum():
     assert out["neuron_trace"]["sent"] == [[0], [7], [7]]
 
 
-def test_the_sigma_rule_equals_lavas_transcription():
-    a_in = [[5], [-3], [0], [-2]]
-    t = lava_sigma_trace(a_in)
-    assert t["sigma"].ravel().tolist() == t["sent"].ravel().tolist() == [5, 2, 2, 0]
+def test_the_sigma_soma_equals_lavas_transcription_one_update_later():
+    # The input of the random case, sent by one graded source per sigma neuron, weight 1.
+    a_in, _ = random_case()
+    steps, n = a_in.shape
+    chip = sdnn_chip([sources(a_in.T.tolist()), ("layer_0", SIGMA_UNIT, [{}] * n, [(0, 1)] * n)],
+                     [("input", i, "layer_0", i, 1) for i in range(n)])
+    traces = run(chip, steps + 1, neuron_trace=True)["neuron_trace"]
+    lava = lava_sigma_trace(a_in)
+    assert lava["sigma"][:4, 0].tolist() == np.cumsum(a_in[:4, 0]).tolist()
+    for k in ("sigma", "sent"):
+        ours = np.asarray(traces[k], dtype=np.int64)
+        assert not ours[0].any() and np.array_equal(ours[1:], lava[k]), k
 
 
 def test_a_sent_value_multiplies_the_weight():
@@ -163,9 +178,56 @@ def test_a_sent_value_multiplies_the_weight():
     assert column(out, 1) == [[0], [0], [-1875], [-1875]]
 
 
-def test_a_state_beyond_32_bits_stops_the_run():
-    chip = sdnn_chip([sources([[2**30, 2**30]]), sd_neuron(S)], [("input", 0, "layer_0", 0, 1)])
-    with pytest.raises(OverflowError, match="sigma 2147483648 leaves signed 32 bits"):
+@pytest.mark.parametrize("unit, attrs", [(SD_UNIT, S), (SIGMA_UNIT, {})])
+def test_a_state_beyond_32_bits_stops_the_run(unit, attrs):
+    # Neuron 1 of layer_3 receives 2**30 twice, so its sigma reaches 2**31 at its third update.
+    group = ("layer_3", unit, [dict(attrs), dict(attrs)], [(0, 1)] * 2)
+    chip = sdnn_chip([sources([[1], [2**30, 2**30]]), group],
+                     [("input", 0, "layer_3", 0, 1), ("input", 1, "layer_3", 1, 1)])
+    with pytest.raises(OverflowError, match=r"^layer_3\[1\]: sigma-delta state sigma 2147483648 "
+                                            r"leaves signed 32 bits$"):
+        run(chip, 3)
+
+
+def test_a_neuron_without_vth_is_refused_by_name():
+    group = ("layer_2", SD_UNIT, [dict(S), dict(bias=0, state_exp=6)], [(0, 1)] * 2)
+    chip = sdnn_chip([group], [])
+    with pytest.raises(ValueError, match=r"^layer_2\[1\]: A sigma-delta neuron requires vth$"):
+        run(chip, 1)
+
+
+def sdnn_with_buffer(position, inside):
+    """The derived architecture with every core's time-step buffer moved."""
+    stanza = "buffer_position: soma\n            buffer_inside_unit: false"
+    text = sdnn_candidate_yaml()
+    assert text.count(stanza) == 1
+    moved = text.replace(stanza, f"buffer_position: {position}\n"
+                                 f"            buffer_inside_unit: {str(inside).lower()}")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "loihi2_sdnn_buffer.yaml"
+        path.write_text(moved)
+        return sanafe.load_arch(str(path))
+
+
+@pytest.mark.parametrize("unit, attrs, message", [
+    (SD_UNIT, S, "A sigma-delta neuron requires"),
+    (SIGMA_UNIT, {}, "A sigma neuron requires"),
+])
+@pytest.mark.parametrize("position, inside, expected", [
+    # Before the axon-out unit the soma runs only when a message arrives.
+    ("axon_out", False, 4),
+    # Inside the soma unit the soma runs once per arriving message.
+    ("soma", True, 3),
+])
+def test_both_somas_are_refused_where_the_soma_runs_on_the_message_path(
+        position, inside, expected, unit, attrs, message):
+    arch = sdnn_with_buffer(position, inside)
+    assert int(arch.tiles[0].cores[0].buffer_position) == expected
+    feeder = dict(threshold=2, initial_voltage=0, window_start=0, currents=[2, 2, 2])
+    groups = [("feeder", "loihi_if_gated", [dict(feeder) for _ in range(5)], [(0, 0)] * 5),
+              ("layer_0", unit, [dict(attrs)], [(0, 1)])]
+    chip, _ = make_chip(groups, [("feeder", i, "layer_0", 0, 1) for i in range(5)], arch=arch)
+    with pytest.raises(ValueError, match=r"^layer_0\[0\]: " + message):
         run(chip, 3)
 
 
@@ -196,6 +258,35 @@ def test_the_two_units_cost_what_the_gated_unit_costs():
             assert costs[SD_UNIT] == costs[SIGMA_UNIT] == costs["loihi_if_gated"]
             assert units[SD_UNIT]["model"] == "sigma_delta_int32"
             assert units[SIGMA_UNIT]["model"] == "sigma_int32"
+
+
+def test_the_candidate_architecture_and_its_cores_are_refused():
+    derived = load_loihi2_sdnn_candidate()
+    assert check_sdnn_architecture(derived) == sdnn_fingerprint()
+    with pytest.raises(ValueError, match="Unsupported architecture configuration for the "
+                                         "sigma-delta profile"):
+        check_sdnn_architecture(load_loihi2_candidate())
+    check_sdnn_core(derived.tiles[31].cores[3], 8192)
+    with pytest.raises(ValueError, match="Expected one loihi_sigma_delta unit"):
+        check_sdnn_core(load_loihi2_candidate().tiles[0].cores[0], 1)
+    with pytest.raises(ValueError, match=r"capacity \(layer_4, 8193 neurons"):
+        check_sdnn_core(derived.tiles[0].cores[0], 8193, "layer_4")
+    with pytest.raises(ValueError, match="Expected external pre-soma buffer"):
+        check_sdnn_core(sdnn_with_buffer("dendrite", False).tiles[0].cores[0], 1)
+
+
+def test_the_architecture_profile_names_the_somas_and_the_assumptions():
+    profile = sdnn_architecture_profile(asdict(Allocation()))
+    assert profile["numerical_profile"] == SDNN_EXECUTION_PROFILE
+    assert SDNN_EXECUTION_PROFILE in profile["numerical_profiles"]
+    assert profile["soma_units"][SD_UNIT] == "sigma_delta_int32"
+    assert profile["soma_units"][SIGMA_UNIT] == "sigma_int32"
+    assert profile["soma_units"]["loihi_if_gated"] == "integrate_fire_int24_gated"
+    semantics = profile["semantics"]
+    assert (semantics["state_bits"], semantics["threshold_comparison"], semantics["wrap"],
+            semantics["events"], semantics["edge_delay_steps"]) == (32, ">=", False, "graded", 1)
+    assert profile["cost_assumptions"] == list(COST_ASSUMPTIONS)
+    assert profile["allocation"] == asdict(Allocation())
 
 
 def test_the_sdnn_fingerprint_differs_from_the_candidate_and_repeats():
