@@ -1,15 +1,16 @@
 """Where the tests marked ``thesis`` find the Thesis repository, and what they need from it.
 
-Five modules of this folder read files or import packages that live outside the
+Six modules of this folder read files or import packages that live outside the
 fork: the lava-dl checkout and the PilotNet LIF network file that
 ``SANA-FE-thesis/calibration/deployments/pilotnet_lif/fetch.py`` fetches, the
-network facts that the same script writes into the Thesis repository, the rate
-scenarios of the ``mixed-horizon-snn`` submodule, and Lava, some of them with
-this project's integer IF extension (the ``Lava`` submodule). ``ROOT`` is the
-folder that holds them, the environment variable ``SANAFE_THESIS_ROOT`` when it
-is set and the fork's parent folder otherwise. ``conftest.py`` uses ``absent``
-to fail such a module with one message, and a checkout of the fork alone runs
-``pytest -m "not thesis"``, which does not collect the five modules.
+PilotNet SDNN network file of the same checkout, the network facts that the
+same script writes into the Thesis repository, the rate scenarios of the
+``mixed-horizon-snn`` submodule, and Lava, some of them with this project's
+integer IF extension (the ``Lava`` submodule). ``ROOT`` is the folder that
+holds them, the environment variable ``SANAFE_THESIS_ROOT`` when it is set and
+the fork's parent folder otherwise. ``conftest.py`` uses ``absent`` to fail
+such a module with one message, and a checkout of the fork alone runs
+``pytest -m "not thesis"``, which does not collect the six modules.
 """
 import importlib.util
 import os
@@ -20,6 +21,7 @@ FETCH = "SANA-FE-thesis/calibration/deployments/pilotnet_lif/fetch.py"
 LAVA_DL_SRC = ROOT / "data" / "calibration" / "lava-dl" / "src"
 PILOTNET = (ROOT / "data" / "calibration" / "lava-dl" / "tutorials" / "lava" / "lib" / "dl"
             / "netx" / "pilotnet_snn" / "network.net")
+PILOTNET_SDNN = PILOTNET.parents[1] / "pilotnet_sdnn" / "network.net"
 FACTS_DIR = ROOT / "SANA-FE-thesis" / "calibration" / "deployments" / "pilotnet_lif"
 RATES = ROOT / "mixed-horizon-snn" / "rates" / "loihi2_scenarios.json"
 
@@ -40,6 +42,8 @@ REQUIREMENTS = {
                   "the integer IF extension lava.proc.qcfs of the Lava submodule"),
     "lava_dl": (LAVA_DL_SRC.is_dir, f"the lava-dl checkout {LAVA_DL_SRC} (fetched by {FETCH})"),
     "pilotnet": (PILOTNET.is_file, f"the network file {PILOTNET} (fetched by {FETCH})"),
+    "pilotnet_sdnn": (PILOTNET_SDNN.is_file,
+                      f"the network file {PILOTNET_SDNN} (fetched by {FETCH})"),
     "facts": ((FACTS_DIR / "network_facts.json").is_file,
               f"the network facts {FACTS_DIR / 'network_facts.json'} (a file of the Thesis "
               f"repository written by {FETCH})"),
@@ -52,6 +56,7 @@ MODULES = {
     "test_loihi2_counts.py": ("h5py", "lava_qcfs", "rates"),
     "test_graded_lava.py": ("lava", "lava_qcfs"),
     "test_sdnn_lava.py": ("lava",),
+    "test_sdnn_network.py": ("h5py", "lava", "lava_dl", "pilotnet_sdnn"),
 }
 
 

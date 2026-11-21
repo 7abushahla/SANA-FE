@@ -42,7 +42,9 @@ Neuron update (DendOp), ``neuron_updates``.
     step whether or not the neuron receives input. SANA-FE's LIF soma reports
     every neuron as updated in every step (``perf_trace['updated']``), so this
     rule equals the simulator's own count. A layer driven by its bias alone (the
-    input layer) is counted like every other layer.
+    input layer) is counted like every other layer. A sigma-delta network
+    (``sanafe.sdnn_network``) is counted as a LIF network is, a nonzero value
+    counting as a spike.
 
 Neurons receiving input, ``neurons_receiving``.
     The definition is this module's, an event-driven alternative to the rule above and
@@ -183,11 +185,15 @@ import numpy as np
 from sanafe.lif_network import (ORDERS, _conv_geometry, _neuron_layers,  # noqa: F401 (ORDERS)
                                 check_partition_layer, check_partition_layers, conv_synapses,
                                 neuron_positions)
+from sanafe.lava_sdnn import SDNN_EXECUTION_PROFILE
 from sanafe.loihi2_runtime import _positive_integer, _route_links
 
 CONVENTIONS = ("nonzero", "expanded")
 _IF_PROFILES = ("qcfs-if-int24-binary-v1", "qcfs-if-int24-binary-windowed-v1")
 _LIF_PROFILE = "lava-lif-int24-v1"
+# Profiles whose manifests carry a placement table, in the layout of netx_to_sanafe. They are
+# counted by the same rules.
+_PLACED_PROFILES = {_LIF_PROFILE: "LIF", SDNN_EXECUTION_PROFILE: "sigma-delta"}
 
 
 # ---------------------------------------------------------------------------
@@ -251,15 +257,17 @@ def _structure(manifest, connectivity):
                                  "weight": matrix.reshape(-1)})
         windows = manifest.get("valid_update_windows_zero_based")
         emitted = "expanded"  # the IF chain exporter emits every dense weight
-    elif profile == _LIF_PROFILE:
+    elif profile in _PLACED_PROFILES:
+        kind = _PLACED_PROFILES[profile]
         slices = [[(int(s["tile"]), int(s["core"]), int(s["start"]), int(s["stop"]))
                    for s in layer["slices"]] for layer in manifest["placement"]]
         if connectivity is None:
-            raise ValueError("a LIF manifest needs the expanded connectivity of its network "
+            raise ValueError(f"a {kind} manifest needs the expanded connectivity of its network "
                              "(expanded_connectivity)")
         windows = None
         if manifest.get("zero_weight_synapses") != "not emitted":
-            raise ValueError("the LIF manifest does not state that zero weights are not emitted")
+            raise ValueError(f"the {kind} manifest does not state that zero weights are not "
+                             "emitted")
         emitted = "nonzero"
     else:
         raise ValueError(f"unsupported execution profile {profile!r}")
@@ -370,10 +378,11 @@ def _check_manifest_fanout(manifest, structure, pair_tables, slice_of):
 
 
 def builder_partition(manifest):
-    """The partition ``netx_to_sanafe`` built, with the manifest's slice sizes.
+    """The partition ``netx_to_sanafe`` or ``sdnn_to_sanafe`` built, with its slice sizes.
 
     The partition the manifest records when the builder was given one, and
-    otherwise reader order under the name ``builder``.
+    otherwise reader order under the name ``builder``. The manifest has a
+    placement table, which the LIF and sigma-delta profiles carry.
     """
     if manifest.get("partition") is not None:
         return copy.deepcopy(manifest["partition"])
@@ -399,8 +408,8 @@ def _slice_indices(manifest, structure, partition):
                 sli[start:stop] = j
             out.append(sli)
         return out
-    if manifest.get("execution_profile") != _LIF_PROFILE:
-        raise ValueError("a partition other than the builder's needs a LIF manifest")
+    if manifest.get("execution_profile") not in _PLACED_PROFILES:
+        raise ValueError("a partition other than the builder's needs a LIF or sigma-delta manifest")
     layers = check_partition_layers(partition, len(structure["sizes"]))
     for k, spec in enumerate(layers):
         order, sizes = check_partition_layer(k, spec, structure["sizes"][k],
@@ -470,7 +479,7 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
                    for conn in structure["connectivity"]]
     # The check holds whenever the resolved partition is the one the manifest records, whether
     # the caller left it out or stated it.
-    if manifest.get("execution_profile") == _LIF_PROFILE and (
+    if manifest.get("execution_profile") in _PLACED_PROFILES and (
             partition is None or all(
                 np.array_equal(a, b) for a, b in
                 zip(slice_of, _slice_indices(manifest, structure, None)))):
@@ -560,7 +569,7 @@ def core_step_counts(manifest, traces, *, weights_per_read, message_bits, connec
         "schema": "loihi2-core-step-counts-v2",
         "execution_profile": manifest["execution_profile"],
         "partition": (builder_partition(manifest) if partition is None and
-                      manifest.get("execution_profile") == _LIF_PROFILE
+                      manifest.get("execution_profile") in _PLACED_PROFILES
                       else copy.deepcopy(partition) if partition is not None
                       else {"name": "builder", "layers": "one core per layer"}),
         "message_rule": "SANA-FE's, one message per spiking source neuron and destination core "
@@ -602,7 +611,7 @@ def message_trace_counts(manifest, result, *, message_bits):
     counts of ``core_step_counts`` under the convention the builder emitted.
     """
     _refuse_dense_lif_chain(manifest)
-    if manifest.get("execution_profile") == _LIF_PROFILE:
+    if manifest.get("execution_profile") in _PLACED_PROFILES:
         cores = sorted({(int(s["tile"]), int(s["core"])) for layer in manifest["placement"]
                         for s in layer["slices"]})
     else:

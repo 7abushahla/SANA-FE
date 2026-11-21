@@ -1,7 +1,7 @@
 """Collection of the test modules marked ``thesis`` (see ``thesis_tree.py``).
 
 When the marker expression deselects ``thesis`` (``pytest -m "not thesis"``),
-the five modules are not collected, so a checkout of the fork alone runs the
+the six modules are not collected, so a checkout of the fork alone runs the
 rest of the suite without importing what they need. Otherwise a module whose
 prerequisites are missing is replaced by one test, marked ``thesis``, that
 fails with a message naming every missing prerequisite. Nothing is skipped.
